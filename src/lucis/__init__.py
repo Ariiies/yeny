@@ -15,6 +15,9 @@ from .exceptions import (
 # Models importations
 from .models.search import SearchResult, SearchResponse
 
+# Storage backends
+from .storage.sqlite_storage import SQLiteStorage
+
 # for better engine exportations
 from .engines.plus import get_engine, HAS_NUMPY, HAS_POLARS
 
@@ -25,6 +28,9 @@ __all__ = [
     # Models
     "SearchResult",
     "SearchResponse",
+    
+    # Storage
+    "SQLiteStorage",
     
     # Exceptions
     "LucisError",
