@@ -1,15 +1,15 @@
 # Package metadata
 __version__ = "0.1.0"
-__author__ = "Luis Aries Meza Castillo"
+__author__ = "Aries Meza"
 
 # Main exportations
-from .main import Corpy
+from .main import Lucis
 from .exceptions import (
-    CorpyError,
-    CorpyEmptyCorpusError,
-    CorpyInvalidDocumentError,
-    CorpyEngineError,
-    CorpySearchError,
+    LucisError,
+    LucisEmptyCorpusError,
+    LucisInvalidDocumentError,
+    LucisEngineError,
+    LucisSearchError,
 )
 
 # Models importations
@@ -20,18 +20,18 @@ from .engines.plus import get_engine, HAS_NUMPY, HAS_POLARS
 
 __all__ = [
     # main Class
-    "Corpy",
+    "Lucis",
 
     # Models
     "SearchResult",
     "SearchResponse",
     
     # Exceptions
-    "CorpyError",
-    "CorpyEmptyCorpusError", 
-    "CorpyInvalidDocumentError",
-    "CorpyEngineError",
-    "CorpySearchError",
+    "LucisError",
+    "LucisEmptyCorpusError", 
+    "LucisInvalidDocumentError",
+    "LucisEngineError",
+    "LucisSearchError",
     
     # Utilities
     "get_engine",

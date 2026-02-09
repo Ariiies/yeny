@@ -1,8 +1,8 @@
-# Corpy
+# Lucis
 
 > **A minimalist NLP toolkit and search engine generator for Python.**
 
-Corpy is a lightweight, flexible library designed to help developers build and integrate search functionality into their applications with zero friction. 
+Lucis is a lightweight, flexible library designed to help developers build and integrate search functionality into their applications with zero friction. 
 
 It follows a "progressive power" philosophy:
 1.  **Core Engine**: Starts as a pure Python dependency-free toolkit (perfect for simple use cases or restricted environments).
@@ -21,8 +21,8 @@ It follows a "progressive power" philosophy:
 Since this project is currently in private beta, you can install it locally:
 
 ```bash
-git clone https://github.com/Ariiies/corpy.git
-cd corpy
+git clone https://github.com/Ariiies/lucis.git
+cd lucis
 
 # Install Core (No external dependencies)
 pip install .
@@ -36,18 +36,18 @@ pip install .[plus]
 ### 1. Basic Usage (Core)
 
 ```python
-from corpy import Corpy
+from lucis import Lucis
 
 # Your dataset (List or Dict)
 documents = {
     "doc1": "Python is amazing for data science and AI",
     "doc2": "Search engines are complex systems",
-    "doc3": "Corpy makes building searchers simple"
+    "doc3": "Lucis makes building searchers simple"
 }
 
 # Initialize and build index
 # This automatically chooses the best available engine (Plus if installed, else Core)
-cp = Corpy.from_dict(documents, name="demo_index")
+cp = Lucis.from_dict(documents, name="demo_index")
 
 # Search!
 results = cp.search("python search", top_k=2)
@@ -67,23 +67,23 @@ print(results.to_dict())
 Save your engine to disk and load it later:
 
 ```python
-# Save the index to 'corpy_data/' (default storage)
+# Save the index to 'lucis_data/' (default storage)
 cp.save()
 
 # ... later, in another script ...
-cp_loaded = Corpy(name="demo_index")
+cp_loaded = Lucis(name="demo_index")
 results = cp_loaded.search("data science")
 ```
 
 ## 🏗 Architecture
 
-Corpy is built on a modular architecture:
+Lucis is built on a modular architecture:
 
--   `corpy.engines`: implementation of search algorithms.
+-   `lucis.engines`: implementation of search algorithms.
     -   `CoreEngine`: Dictionary-based inverted index + Math implementation in pure Python.
     -   `PlusEngine`: Vectorized operations using `numpy.ndarray`.
--   `corpy.storage`: Handles data persistence (currently `JSONStorage`).
--   `corpy.utils`: Reusable NLP utilities (tokenizers, stopword filters).
+-   `lucis.storage`: Handles data persistence (currently `JSONStorage`).
+-   `lucis.utils`: Reusable NLP utilities (tokenizers, stopword filters).
 
 ## 🗺 Roadmap (v0.x -> v1.0)
 

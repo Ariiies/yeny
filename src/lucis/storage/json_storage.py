@@ -1,4 +1,4 @@
-# src/corpyplus/storage/json_storage.py
+# src/lucis/storage/json_storage.py
 import json
 import os
 from typing import Any, Dict

@@ -1,13 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import Any, List, Dict, Optional, Union, Tuple
-from ..exceptions import CorpyInvalidDocumentError
+from ..exceptions import LucisInvalidDocumentError
 
 # Type alias for document IDs - can be int, str, or any hashable type
 DocId = Any
 
 class BaseEngine(ABC):
     """
-    Abstract Base Class for all CorpyPlus engines.
+    Abstract Base Class for all Lucis engines.
     
     The engine is an orchestrator: it connects NLP processing, 
     indexing logic, and mathematical similarities.
@@ -79,6 +79,6 @@ class BaseEngine(ABC):
             self.id_type = "sequential"
         else:
             # For safety - should not happen due to type hints
-            raise CorpyInvalidDocumentError(detail="Corpus must be either a List[str] or Dict[Any, str].")
+            raise LucisInvalidDocumentError(detail="Corpus must be either a List[str] or Dict[Any, str].")
         
         return texts, id_map

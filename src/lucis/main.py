@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 from .engines.core import CoreEngine
 from .engines.base import DocId
 from .storage.json_storage import JSONStorage
-from .exceptions import CorpyEngineError
+from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
 
 # Engine registry - maps friendly names to engine classes
@@ -14,31 +14,31 @@ _ENGINE_REGISTRY = {
 }
 
 
-class Corpy:
+class Lucis:
     """
-    The friendly face of CorpyPlus.
+    The friendly face of Lucis.
     
-    Corpy is an orchestrator (Facade pattern) that simplifies building
+    Lucis is an orchestrator (Facade pattern) that simplifies building
     custom search engines. It connects engines, storage, and tokenizers
     behind a clean, minimal API.
 
-    Three ways to create a Corpy instance:
+    Three ways to create a Lucis instance:
     1. From scratch with data:
-        cp = Corpy.from_dict({"doc1": "hello world"}, name="my_search")
-        cp = Corpy.from_list(["hello world"], name="my_search")
+        cp = Lucis.from_dict({"doc1": "hello world"}, name="my_search")
+        cp = Lucis.from_list(["hello world"], name="my_search")
     
     2. Load an existing index from disk:
-        cp = Corpy(name="my_search")  # Auto-loads if exists
+        cp = Lucis(name="my_search")  # Auto-loads if exists
     
     3. Empty instance for later use:
-        cp = Corpy(name="my_search", autoload=False)
+        cp = Lucis(name="my_search", autoload=False)
         cp.index(data)
     """
 
     def __init__(
         self, 
         name: str = "default",
-        storage_dir: str = "corpy_data",
+        storage_dir: str = "lucis_data",
         engine: str = "core",
         autoload: bool = True,
     ):
@@ -61,11 +61,11 @@ class Corpy:
         self.storage = JSONStorage(directory=storage_dir)
 
         # 2. Configure engine
-        # The registry pattern lets us add engines without touching Corpy's code
+        # The registry pattern lets us add engines without touching Lucis's code
         engine_class = _ENGINE_REGISTRY.get(engine)
         if engine_class is None:
             available = ", ".join(_ENGINE_REGISTRY.keys())
-            raise CorpyEngineError(
+            raise LucisEngineError(
                 engine_name=engine,
                 detail=f"Unknown engine '{engine}'. Available: {available}"
             )
@@ -73,7 +73,7 @@ class Corpy:
 
         # 3. Smart persistence: if the index already exists on disk, load it
         # This enables the "pick up where you left off" workflow:
-        #   cp = Corpy(name="my_index")  →  ready to search immediately
+        #   cp = Lucis(name="my_index")  →  ready to search immediately
         if autoload and self.storage.exists(name):
             self.load()
 
@@ -84,9 +84,9 @@ class Corpy:
         data: Dict[Any, str], 
         name: str = "default", 
         **kwargs
-    ) -> "Corpy":
+    ) -> "Lucis":
         """
-        Creates a Corpy instance from a dictionary {id: text}.
+        Creates a Lucis instance from a dictionary {id: text}.
         
         Preserves original keys as document IDs in search results.
         This is the recommended format when you have meaningful IDs
@@ -98,10 +98,10 @@ class Corpy:
             **kwargs: Additional arguments passed to __init__ (storage_dir, engine, etc.)
 
         Returns:
-            A ready-to-search Corpy instance.
+            A ready-to-search Lucis instance.
 
         Example:
-            cp = Corpy.from_dict({
+            cp = Lucis.from_dict({
                 "doc_001": "Python es un lenguaje versátil",
                 "doc_002": "El amor por la programación crece cada día"
             })
@@ -118,9 +118,9 @@ class Corpy:
         data: List[str], 
         name: str = "default", 
         **kwargs
-    ) -> "Corpy":
+    ) -> "Lucis":
         """
-        Creates a Corpy instance from a list of text documents.
+        Creates a Lucis instance from a list of text documents.
         
         Document IDs will be auto-generated as sequential integers (0, 1, 2...).
         This is the simplest way to get started when IDs don't matter.
@@ -131,10 +131,10 @@ class Corpy:
             **kwargs: Additional arguments passed to __init__ (storage_dir, engine, etc.)
 
         Returns:
-            A ready-to-search Corpy instance.
+            A ready-to-search Lucis instance.
 
         Example:
-            cp = Corpy.from_list([
+            cp = Lucis.from_list([
                 "Python es un lenguaje versátil",
                 "El amor por la programación crece cada día"
             ])
@@ -166,7 +166,7 @@ class Corpy:
         """
         Searches the indexed corpus for documents matching the query.
 
-        The engine returns raw tuples; Corpy wraps them in a SearchResponse
+        The engine returns raw tuples; Lucis wraps them in a SearchResponse
         with full context: query, tokens, timing, and structured results.
 
         Args:
@@ -185,7 +185,7 @@ class Corpy:
             print(response.to_dict())             # JSON-ready dict
         """
         if not self._is_indexed:
-            raise CorpyEngineError(
+            raise LucisEngineError(
                 engine_name=self.engine.name,
                 detail="No index built yet. Use .index(data), .from_dict(), or .from_list() first."
             )
@@ -251,4 +251,4 @@ class Corpy:
         status = "indexed" if self._is_indexed else "empty"
         docs = self.engine.total_docs if self._is_indexed else 0
         id_t = self.engine.id_type if self._is_indexed else "N/A"
-        return f"Corpy(name='{self.name}', engine='{self.engine.name}', docs={docs}, idx_type='{id_t}', status='{status}')"
+        return f"Lucis(name='{self.name}', engine='{self.engine.name}', docs={docs}, idx_type='{id_t}', status='{status}')"

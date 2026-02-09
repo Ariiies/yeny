@@ -38,7 +38,7 @@ class NumpyEngine:
     - Operaciones matriciales nativas
     
     Requisitos:
-    - numpy instalado: pip install corpyplus[numpy]
+    - numpy instalado: pip install lucis[plus]
     """
     
     __slots__ = ('np',)
@@ -48,7 +48,7 @@ class NumpyEngine:
             raise ImportError(
                 "NumPy no está instalado. Instálalo con:\n"
                 "  pip install numpy\n"
-                "  o: pip install corpyplus[numpy]"
+                "  o: pip install lucis[plus]"
             )
         import numpy as np
         self.np = np
@@ -205,7 +205,7 @@ class PolarsEngine:
     - Bajo consumo de memoria con streaming
     
     Requisitos:
-    - polars instalado: pip install corpyplus[polars]
+    - polars instalado: pip install lucis[plus]
     """
     
     __slots__ = ('pl',)
@@ -215,7 +215,7 @@ class PolarsEngine:
             raise ImportError(
                 "Polars no está instalado. Instálalo con:\n"
                 "  pip install polars\n"
-                "  o: pip install corpyplus[polars]"
+                "  o: pip install lucis[plus]"
             )
         import polars as pl
         self.pl = pl

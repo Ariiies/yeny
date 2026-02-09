@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "corpy"
+name = "lucis"
 version = "0.1.0"
 authors = [
-  { name="Luis Aries Meza Castillo", email="luisaries@gmail.com" },
+  { name="Aries Meza", email="luisaries@gmail.com" },
 ]
-description = "A minimalist toolkit for nlp and helper to built light searchers."
+description = "A minimalist NLP toolkit and search engine generator for Python."
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [

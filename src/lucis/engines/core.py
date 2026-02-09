@@ -7,11 +7,11 @@ from ..utils.index.stats import get_doc_len, compute_tfidf, compute_idf
 from ..utils.math.core import sparse_cosine_similarity, sort_results
 from ..utils.decorators import doc_input
 from ..utils.nlp import word_tokenizer
-from ..exceptions import CorpyEmptyCorpusError
+from ..exceptions import LucisEmptyCorpusError
 
 class CoreEngine(BaseEngine):
     """
-    The heart of CorpyPlus.
+    The heart of Lucis.
     Uses pure Python dictionaries and math for reliable, dependency-free searching.
     """
 
@@ -39,7 +39,7 @@ class CoreEngine(BaseEngine):
         texts, self.id_map = self._normalize_corpus(corpus)
 
         if not texts:
-           raise CorpyEmptyCorpusError("Cannot index data: the corpus is empty.")
+           raise LucisEmptyCorpusError("Cannot index data: the corpus is empty.")
         
         self.total_docs = len(texts)
         if self.total_docs == 0:

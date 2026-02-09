@@ -29,7 +29,7 @@ class SearchResult:
 @dataclass(frozen=True)
 class SearchResponse:
     """
-    Complete structured response from a Corpy search.
+    Complete structured response from a Lucis search.
 
     Provides all context needed to understand, display, or further process
     search results — from the original query to timing metadata.

@@ -1,28 +1,28 @@
 """
-Custom exceptions for CorpyPlus.
+Custom exceptions for Lucis.
 
 Exceptions hierarchy:
-    CorpyError (base)
-    ├── CorpyEmptyCorpusError    - Empty corpus
-    ├── CorpyInvalidDocumentError - Invalid document
-    ├── CorpyEngineError         - Engine error
-    └── CorpySearchError         - Search error
+    LucisError (base)
+    ├── LucisEmptyCorpusError    - Empty corpus
+    ├── LucisInvalidDocumentError - Invalid document
+    ├── LucisEngineError         - Engine error
+    └── LucisSearchError         - Search error
 """
 
 
-class CorpyError(Exception):
-    """Base Exception for Corpy."""
+class LucisError(Exception):
+    """Base Exception for Lucis."""
     pass
 
 
-class CorpyEmptyCorpusError(CorpyError):
+class LucisEmptyCorpusError(LucisError):
     """Raised when the corpus is empty or has no valid documents."""
     
     def __init__(self, message: str = "The corpus is empty or contains no valid documents"):
         super().__init__(message)
 
 
-class CorpyInvalidDocumentError(CorpyError):
+class LucisInvalidDocumentError(LucisError):
     """Raised when a document is invalid (wrong type, etc.)."""
     
     def __init__(self, doc_index: int | None = None, detail: str = ""):
@@ -38,7 +38,7 @@ class CorpyInvalidDocumentError(CorpyError):
         self.doc_index = doc_index
 
 
-class CorpyEngineError(CorpyError):
+class LucisEngineError(LucisError):
     """Raised when there is an error related to the computation engine."""
     
     def __init__(self, engine_name: str, detail: str = ""):
@@ -49,7 +49,7 @@ class CorpyEngineError(CorpyError):
         self.engine_name = engine_name
 
 
-class CorpySearchError(CorpyError):
+class LucisSearchError(LucisError):
     """Raised when there is an error during search."""
     
     def __init__(self, query: str = "", detail: str = ""):
@@ -62,7 +62,7 @@ class CorpySearchError(CorpyError):
         self.query = query
 
 
-class CorpyTokenizationError(CorpyError):
+class LucisTokenizationError(LucisError):
     """Raised when there is an error during tokenization."""
     
     def __init__(self, detail: str = "Error during tokenization"):

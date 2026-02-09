@@ -1,6 +1,6 @@
 import functools
 from typing import Callable, List, Union, Any
-from ..exceptions import CorpyInvalidDocumentError
+from ..exceptions import LucisInvalidDocumentError
 
 # input corpus tokenizer helper decorator
 def corpus_input(tokenizer_func: Callable[[str], List[str]]):
@@ -70,7 +70,7 @@ def doc_input(tokenizer_func: Callable[[str], List[str]]):
                 query_index = 0
             
             if query_index >= len(args_list):
-                raise CorpyInvalidDocumentError(detail="No query argument provided.")
+                raise LucisInvalidDocumentError(detail="No query argument provided.")
             
             query = args_list[query_index]
             
@@ -85,7 +85,7 @@ def doc_input(tokenizer_func: Callable[[str], List[str]]):
                 # Empty list - pass through
                 pass
             else:
-                raise CorpyInvalidDocumentError(detail="Query must be a string or a list of strings.")
+                raise LucisInvalidDocumentError(detail="Query must be a string or a list of strings.")
             
             # Call the wrapped function with processed arguments
             result = func(*args_list, **kwargs)

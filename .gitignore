@@ -52,7 +52,7 @@ test_data/
 playground.py
 playground2.py
 dataset.py
-corpy_data/
+lucis_data/
 *.mp4
 *.avi
 *.mov
