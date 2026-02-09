@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "corpy"
+version = "0.1.0"
+authors = [
+  { name="Luis Aries Meza Castillo", email="luisaries@gmail.com" },
+]
+description = "A minimalist toolkit for nlp and helper to built light searchers."
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [] # Core no tiene dependencias externas
+
+[project.optional-dependencies]
+plus = ["numpy", "polars"] # Para cuando el usuario quiera usar el PlusEngine
+
+[tool.setuptools.packages.find]
+where = ["src"]

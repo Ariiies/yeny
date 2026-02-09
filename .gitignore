@@ -1,0 +1,72 @@
+# General Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / Packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+
+# Testing and Coverage
+.coverage
+.tox/
+.nox/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+test_data/
+
+# Project specific ignores (Playground & Local Data)
+playground.py
+playground2.py
+dataset.py
+corpy_data/
+*.mp4
+*.avi
+*.mov
+
+# Local debugging stores
+*.json
+!src/**/stopwords_*.json
+!tests/**/*.json
+# Explicitly keep source and config, ignore root garbage
+/*
+!src/
+!tests/
+!pyproject.toml
+!README.md
+!MANIFEST.in
+!.gitignore
+!LICENSE
