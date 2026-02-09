@@ -4,7 +4,7 @@ from .core import (
     get_corpus_bows,
     get_vocabulary,
     )
-from .plus import build_index_plus
+
 from .stats import (
     get_tf_count,
     get_df_count,
