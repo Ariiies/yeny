@@ -20,6 +20,9 @@ dependencies = [] # Core no tiene dependencias externas
 
 [project.optional-dependencies]
 plus = ["numpy", "polars"] # Para cuando el usuario quiera usar el PlusEngine
+alchemy = ["sqlalchemy>=2.0"]  # Para AlchemyStorage (MySQL, PostgreSQL, etc.)
+mysql = ["sqlalchemy>=2.0", "pymysql"]  # AlchemyStorage + MySQL driver
+postgresql = ["sqlalchemy>=2.0", "psycopg2-binary"]  # AlchemyStorage + PostgreSQL driver
 
 [tool.setuptools.packages.find]
 where = ["src"]

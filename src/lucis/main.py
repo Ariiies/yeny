@@ -8,6 +8,17 @@ from .storage.sqlite_storage import SQLiteStorage
 from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
 
+# Lazy import flag — AlchemyStorage requires sqlalchemy (optional dep)
+_AlchemyStorage = None
+
+def _get_alchemy_storage_class():
+    """Lazy-load AlchemyStorage to avoid hard dependency on sqlalchemy."""
+    global _AlchemyStorage
+    if _AlchemyStorage is None:
+        from .storage.alchemy_storage import AlchemyStorage
+        _AlchemyStorage = AlchemyStorage
+    return _AlchemyStorage
+
 # Engine registry - maps friendly names to engine classes
 # As new engines are added, register them here
 _ENGINE_REGISTRY = {
@@ -43,6 +54,7 @@ class Lucis:
         storage_dir: str = "lucis_data",
         storage_type: str = "json",
         db_path: Optional[str] = None,
+        alchemy_url: Optional[str] = None,
         storage: Optional[BaseStorage] = None,
         engine: str = "core",
         autoload: bool = True,
@@ -54,8 +66,10 @@ class Lucis:
         Args:
             name: Identifier for the index. Used for persistence (filename/table).
             storage_dir: Directory where the JSON index files are stored (only for storage_type="json").
-            storage_type: Backend to use for persistence — "json" or "sqlite".
+            storage_type: Backend to use for persistence — "json", "sqlite", or "alchemy".
             db_path: Path to the SQLite database (required when storage_type="sqlite" and no *storage* is given).
+            alchemy_url: SQLAlchemy connection URL (required when storage_type="alchemy" and no *storage* is given).
+                Example: "mysql+pymysql://user:pass@localhost/mydb"
             storage: A pre-built BaseStorage instance (overrides storage_type/db_path/storage_dir).
             engine: Which engine to use. Currently supported: "core".
             autoload: If True and an index with this name exists on disk, load it automatically.
@@ -67,6 +81,15 @@ class Lucis:
         if storage is not None:
             # Advanced users can inject their own storage instance
             self.storage = storage
+        elif storage_type == "alchemy":
+            if alchemy_url is None:
+                raise ValueError(
+                    "alchemy_url is required when storage_type='alchemy'. "
+                    "Example: Lucis(storage_type='alchemy', "
+                    "alchemy_url='mysql+pymysql://user:pass@localhost/mydb')"
+                )
+            AlchemyStorage = _get_alchemy_storage_class()
+            self.storage = AlchemyStorage(url=alchemy_url)
         elif storage_type == "sqlite":
             if db_path is None:
                 raise ValueError(
@@ -286,6 +309,110 @@ class Lucis:
         kwargs.setdefault("storage_type", "sqlite")
         kwargs.setdefault("db_path", db_path)
         instance = cls(name=name, autoload=False, **kwargs)
+        instance.index(data)
+        return instance
+
+    @classmethod
+    def from_alchemy_table(
+        cls,
+        table_name: str,
+        url: str,
+        text_column: str,
+        id_column: Optional[str] = None,
+        where_clause: Optional[str] = None,
+        schema: Optional[str] = None,
+        name: str = "default",
+        **kwargs,
+    ) -> "Lucis":
+        """
+        Create a Lucis instance by reading rows from a table via SQLAlchemy.
+
+        Works with any database supported by SQLAlchemy (MySQL, PostgreSQL,
+        MariaDB, etc.).  The index is automatically persisted back to the
+        **same** database.
+
+        Args:
+            table_name: Name of the source table.
+            url: SQLAlchemy connection URL.
+                Example: ``"mysql+pymysql://user:pass@localhost/mydb"``
+            text_column: Column that contains the document text.
+            id_column: Column to use as document ID (optional).
+            where_clause: Optional SQL ``WHERE`` filter (without the ``WHERE`` keyword).
+            schema: Database schema (e.g. ``"public"`` for PostgreSQL).
+            name: Identifier for the persisted index.
+            **kwargs: Extra arguments forwarded to ``Lucis.__init__``.
+
+        Returns:
+            A ready-to-search Lucis instance.
+
+        Example::
+
+            luc = Lucis.from_alchemy_table(
+                table_name="articles",
+                url="mysql+pymysql://root:secret@localhost/blog",
+                text_column="content",
+                id_column="article_id",
+            )
+            results = luc.search("python tutorial")
+        """
+        AlchemyStorage = _get_alchemy_storage_class()
+        storage = AlchemyStorage(url=url)
+
+        data = storage.read_table(
+            table_name=table_name,
+            text_column=text_column,
+            id_column=id_column,
+            where_clause=where_clause,
+            schema=schema,
+        )
+
+        kwargs.setdefault("storage_type", "alchemy")
+        kwargs.setdefault("alchemy_url", url)
+        # Pass the already-built storage so we don't create a second engine
+        instance = cls(name=name, autoload=False, storage=storage, **kwargs)
+        instance.index(data)
+        return instance
+
+    @classmethod
+    def from_alchemy_query(
+        cls,
+        query: str,
+        url: str,
+        name: str = "default",
+        **kwargs,
+    ) -> "Lucis":
+        """
+        Create a Lucis instance from an arbitrary SQL query via SQLAlchemy.
+
+        * If the query returns **one** column → treated as a list of texts.
+        * If it returns **two or more** columns → first column is the ID,
+          second column is the text.
+
+        Args:
+            query: A ``SELECT`` statement to execute.
+            url: SQLAlchemy connection URL.
+            name: Identifier for the persisted index.
+            **kwargs: Extra arguments forwarded to ``Lucis.__init__``.
+
+        Returns:
+            A ready-to-search Lucis instance.
+
+        Example::
+
+            luc = Lucis.from_alchemy_query(
+                query="SELECT id, title FROM posts WHERE published = 1",
+                url="mysql+pymysql://root:secret@localhost/blog",
+                name="published_posts",
+            )
+        """
+        AlchemyStorage = _get_alchemy_storage_class()
+        storage = AlchemyStorage(url=url)
+
+        data = storage.read_query(query)
+
+        kwargs.setdefault("storage_type", "alchemy")
+        kwargs.setdefault("alchemy_url", url)
+        instance = cls(name=name, autoload=False, storage=storage, **kwargs)
         instance.index(data)
         return instance
 

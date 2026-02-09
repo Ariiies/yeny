@@ -18,6 +18,13 @@ from .models.search import SearchResult, SearchResponse
 # Storage backends
 from .storage.sqlite_storage import SQLiteStorage
 
+# AlchemyStorage is lazy-loaded (requires sqlalchemy)
+def __getattr__(name):
+    if name == "AlchemyStorage":
+        from .storage.alchemy_storage import AlchemyStorage
+        return AlchemyStorage
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 # for better engine exportations
 from .engines.plus import get_engine, HAS_NUMPY, HAS_POLARS
 
@@ -31,6 +38,7 @@ __all__ = [
     
     # Storage
     "SQLiteStorage",
+    "AlchemyStorage",
     
     # Exceptions
     "LucisError",
