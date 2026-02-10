@@ -23,9 +23,7 @@ def ngram_tokenizer(n: int = 2) -> Callable[[str], list[str]]:
     """
     def tokenizer(text: str) -> list[str]:
         words = text.split()
-        if len(words) < n:
-            return [text] if text.strip() else []
-        return [' '.join(words[i:i+n]) for i in range(len(words) - n + 1)]
+        return ([text] if text.strip() else []) if len(words) < n else [' '.join(words[i:i+n]) for i in range(len(words) - n + 1)]
     
     tokenizer.__name__ = f"ngram_{n}_tokenizer"
     return tokenizer
@@ -38,10 +36,8 @@ def char_ngram_tokenizer(n: int = 3) -> Callable[[str], list[str]]:
     Useful for fuzzy search and language detection.
     """
     def tokenizer(text: str) -> list[str]:
-        text = text.replace(' ', '_')  # Preserve spaces as underscores
-        if len(text) < n:
-            return [text] if text else []
-        return [text[i:i+n] for i in range(len(text) - n + 1)]
+
+        return ([text] if text else []) if len(text) < n else [text[i:i+n].replace(" ", "_").lower() for i in range(len(text)-(n-1))]
     
     tokenizer.__name__ = f"char_{n}gram_tokenizer"
     return tokenizer
