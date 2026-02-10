@@ -37,15 +37,15 @@ class Lucis:
 
     Three ways to create a Lucis instance:
     1. From scratch with data:
-        cp = Lucis.from_dict({"doc1": "hello world"}, name="my_search")
-        cp = Lucis.from_list(["hello world"], name="my_search")
+        lu = Lucis.from_dict({"doc1": "hello world"}, name="my_search")
+        lu = Lucis.from_list(["hello world"], name="my_search")
     
     2. Load an existing index from disk:
-        cp = Lucis(name="my_search")  # Auto-loads if exists
+        lu = Lucis(name="my_search")  # Auto-loads if exists
     
     3. Empty instance for later use:
-        cp = Lucis(name="my_search", autoload=False)
-        cp.index(data)
+        lu = Lucis(name="my_search", autoload=False)
+        lu.index(data)
     """
 
     def __init__(
@@ -114,7 +114,7 @@ class Lucis:
 
         # 3. Smart persistence: if the index already exists on disk, load it
         # This enables the "pick up where you left off" workflow:
-        #   cp = Lucis(name="my_index")  →  ready to search immediately
+        #   lu = Lucis(name="my_index")  →  ready to search immediately
         if autoload and self.storage.exists(name):
             self.load()
 
@@ -142,11 +142,11 @@ class Lucis:
             A ready-to-search Lucis instance.
 
         Example:
-            cp = Lucis.from_dict({
+            lu = Lucis.from_dict({
                 "doc_001": "Python es un lenguaje versátil",
                 "doc_002": "El amor por la programación crece cada día"
             })
-            results = cp.search("programación python")
+            results = lu.search("programación python")
         """
         # autoload=False to avoid loading stale data before indexing fresh data
         instance = cls(name=name, autoload=False, **kwargs)
@@ -175,11 +175,11 @@ class Lucis:
             A ready-to-search Lucis instance.
 
         Example:
-            cp = Lucis.from_list([
+            lu = Lucis.from_list([
                 "Python es un lenguaje versátil",
                 "El amor por la programación crece cada día"
             ])
-            results = cp.search("programación")
+            results = lu.search("programación")
         """
         instance = cls(name=name, autoload=False, **kwargs)
         instance.index(data)
@@ -442,14 +442,14 @@ class Lucis:
         with full context: query, tokens, timing, and structured results.
 
         Args:
-            query: A search string ("amor python") or pre-tokenized list (["amor", "python"]).
+            query: A search string ("love python") or pre-tokenized list (["love", "python"]).
             top_k: Maximum number of results to return.
 
         Returns:
             SearchResponse with ranked results and search metadata.
 
         Example:
-            response = cp.search("programación python", top_k=5)
+            response = lu.search("programación python", top_k=5)
             print(response.total_results)        # 5
             print(response.results[0].doc_id)     # "doc_001"
             print(response.results[0].score)      # 0.3903
@@ -499,7 +499,7 @@ class Lucis:
         Persists the current index to storage.
         
         Uses self.name by default, or a custom name if provided.
-        This allows "save as" functionality: cp.save("backup_v2")
+        This allows "save as" functionality: lu.save("backup_v2")
 
         Args:
             name: Optional custom name. Falls back to self.name.
