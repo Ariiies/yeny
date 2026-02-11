@@ -18,6 +18,9 @@ from .models.search import SearchResult, SearchResponse
 # Storage backends
 from .storage.sqlite_storage import SQLiteStorage
 
+# Worker (Phase 4 — Shadow Indexing)
+from .worker import IndexWorker
+
 # AlchemyStorage is lazy-loaded (requires sqlalchemy)
 def __getattr__(name):
     if name == "AlchemyStorage":
@@ -46,6 +49,9 @@ __all__ = [
     "LucisInvalidDocumentError",
     "LucisEngineError",
     "LucisSearchError",
+    
+    # Worker
+    "IndexWorker",
     
     # Utilities
     "get_engine",

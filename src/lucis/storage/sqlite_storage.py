@@ -1,5 +1,6 @@
 # src/lucis/storage/sqlite_storage.py
 import sqlite3
+from datetime import datetime
 from typing import Any, Dict, Optional
 from .base import BaseStorage
 
@@ -119,6 +120,13 @@ class SQLiteStorage(BaseStorage):
                 length          INTEGER NOT NULL,
                 PRIMARY KEY (index_name, doc_internal_id),
                 FOREIGN KEY (index_name) REFERENCES lucis_metadata(index_name)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lucis_aliases (
+                alias_name      TEXT PRIMARY KEY,
+                target_index    TEXT NOT NULL
             )
         """)
 
@@ -274,13 +282,82 @@ class SQLiteStorage(BaseStorage):
         }
 
     def exists(self, name: str) -> bool:
-        """Return ``True`` if an index called *name* has been persisted."""
+        """Return ``True`` if *name* can be resolved to a persisted index.
+
+        Checks in order:
+        1. Is *name* an alias that points to an existing physical index?
+        2. Is *name* itself a physical index in ``lucis_metadata``?
+        """
+        resolved = self.resolve_alias(name)
         cur = self.conn.cursor()
         cur.execute(
             "SELECT 1 FROM lucis_metadata WHERE index_name = ? LIMIT 1",
-            (name,),
+            (resolved,),
         )
         return cur.fetchone() is not None
+
+    #  Alias / versioning support                                         #
+
+    def resolve_alias(self, name: str) -> str:
+        """Resolve *name* to a physical index name.
+
+        If *name* is a registered alias, return its target.
+        Otherwise return *name* unchanged.
+        """
+        target = self.get_alias(name)
+        return target if target is not None else name
+
+    def set_alias(self, alias_name: str, target_index: str) -> None:
+        """Create or update an alias → target mapping."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT OR REPLACE INTO lucis_aliases (alias_name, target_index) "
+            "VALUES (?, ?)",
+            (alias_name, target_index),
+        )
+        self.conn.commit()
+
+    def get_alias(self, alias_name: str) -> Optional[str]:
+        """Return the physical index name for *alias_name*, or ``None``."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT target_index FROM lucis_aliases WHERE alias_name = ?",
+            (alias_name,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    def list_aliases(self) -> Dict[str, str]:
+        """Return all aliases as ``{alias_name: target_index}``."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT alias_name, target_index FROM lucis_aliases ORDER BY alias_name"
+        )
+        return {row[0]: row[1] for row in cur.fetchall()}
+
+    def delete_alias(self, alias_name: str) -> None:
+        """Remove an alias (does NOT delete the physical index)."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "DELETE FROM lucis_aliases WHERE alias_name = ?",
+            (alias_name,),
+        )
+        self.conn.commit()
+
+    def _generate_versioned_name(self, base_name: str) -> str:
+        """Return ``base_name__vYYYYMMDD_HHMMSS``."""
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"{base_name}__v{ts}"
+
+    def list_versions(self, base_name: str) -> list:
+        """Return all physical versions of *base_name*, sorted oldest → newest."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT index_name FROM lucis_metadata "
+            "WHERE index_name LIKE ? ORDER BY index_name",
+            (f"{base_name}__v%",),
+        )
+        return [row[0] for row in cur.fetchall()]
 
     #  Extras                                                              #
 

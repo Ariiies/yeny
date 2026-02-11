@@ -1,5 +1,6 @@
 import time
-from typing import Any, Dict, List, Optional, Union
+import threading
+from typing import Any, Callable, Dict, List, Optional, Union
 from .engines.core import CoreEngine
 from .engines.base import DocId
 from .storage.base import BaseStorage
@@ -7,6 +8,7 @@ from .storage.json_storage import JSONStorage
 from .storage.sqlite_storage import SQLiteStorage
 from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
+from worker import IndexWorker
 
 # Lazy import flag — AlchemyStorage requires sqlalchemy (optional dep)
 _AlchemyStorage = None
@@ -77,6 +79,10 @@ class Lucis:
         self.name = name
         self._is_indexed = False
 
+        # Background rebuild state (Phase 3)
+        self._rebuild_thread: Optional[threading.Thread] = None
+        self._rebuild_error: Optional[Exception] = None
+
         # 1. Configure storage
         if storage is not None:
             # Advanced users can inject their own storage instance
@@ -115,6 +121,7 @@ class Lucis:
         # 3. Smart persistence: if the index already exists on disk, load it
         # This enables the "pick up where you left off" workflow:
         #   lu = Lucis(name="my_index")  →  ready to search immediately
+        # The name may be an alias — exists() resolves it transparently.
         if autoload and self.storage.exists(name):
             self.load()
 
@@ -498,26 +505,352 @@ class Lucis:
         """
         Persists the current index to storage.
         
-        Uses self.name by default, or a custom name if provided.
-        This allows "save as" functionality: lu.save("backup_v2")
+        On database-backed storages (SQLite, Alchemy) this creates a
+        versioned physical index (e.g. ``my_idx__v20260210_143022``)
+        and points the logical alias to it.  On JSON storage the
+        behaviour is unchanged (no versioning).
 
         Args:
             name: Optional custom name. Falls back to self.name.
         """
         save_name = name or self.name
-        self.engine.persist(save_name)
+        # Generate a versioned physical name (no-op on JSONStorage)
+        physical_name = self.storage._generate_versioned_name(save_name)
+        self.engine.persist(physical_name)
+        # Point the logical alias to the new physical index
+        self.storage.set_alias(save_name, physical_name)
 
     def load(self, name: Optional[str] = None) -> None:
         """
         Loads a previously saved index from storage.
 
+        If *name* is an alias, it is resolved to the physical index
+        name transparently.
+
         Args:
             name: Optional custom name. Falls back to self.name.
         """
         load_name = name or self.name
-        self.engine.load_engine(load_name)
+        # Resolve alias → physical name (passthrough if no alias exists)
+        physical_name = self.storage.resolve_alias(load_name)
+        self.engine.load_engine(physical_name)
         self._is_indexed = True
-    
+
+    # Shadow Rebuild 
+
+    def reindex(self, data: Union[List[str], Dict[Any, str]]) -> None:
+        """
+        Rebuild the index with fresh data, creating a new version.
+
+        The previous version remains in storage so you can ``rollback()``
+        if needed.  The alias is swapped atomically to the new version.
+
+        Args:
+            data: New corpus — ``Dict[id, text]`` or ``List[text]``.
+
+        Example::
+
+            new_data = storage.read_table("articles", text_column="content", id_column="id")
+            luc.reindex(new_data)
+            # → alias now points to the new version
+        """
+        self.engine.build_index(data)
+        self._is_indexed = True
+        self.save()
+
+    def rollback(self) -> None:
+        """
+        Roll back the alias to the previous index version.
+
+        Looks at all physical versions for ``self.name``, finds the one
+        right before the current target, swaps the alias, and reloads
+        the engine.
+
+        Raises:
+            LucisEngineError: If there is no alias or no previous version.
+
+        Example::
+
+            luc.rollback()
+            # → alias points to the version before the current one
+        """
+        current_target = self.storage.get_alias(self.name)
+        if current_target is None:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=f"No alias found for '{self.name}'. Cannot rollback."
+            )
+
+        versions = self.storage.list_versions(self.name)
+        if len(versions) < 2:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=f"No previous version to rollback to for '{self.name}'."
+            )
+
+        try:
+            current_idx = versions.index(current_target)
+        except ValueError:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=(
+                    f"Current target '{current_target}' not found in "
+                    f"versions list. The physical index may have been deleted."
+                )
+            )
+
+        if current_idx == 0:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail="Already at the oldest version. Cannot rollback further."
+            )
+
+        previous = versions[current_idx - 1]
+        self.storage.set_alias(self.name, previous)
+        self.load()
+
+    def list_versions(self) -> List[str]:
+        """
+        List all physical versions of this index.
+
+        Returns a list of physical index names sorted oldest → newest.
+
+        Returns:
+            List of versioned physical names.
+
+        Example::
+
+            luc.list_versions()
+            # ['articles__v20260210_143022', 'articles__v20260210_150545']
+        """
+        return self.storage.list_versions(self.name)
+
+    def purge_old_versions(self, keep: int = 2) -> int:
+        """
+        Delete old index versions, keeping the *keep* most recent ones.
+
+        The version currently pointed to by the alias is **always** kept,
+        even if it falls outside the *keep* window.
+
+        Args:
+            keep: Number of most-recent versions to retain (default 2).
+
+        Returns:
+            Number of versions deleted.
+
+        Example::
+
+            deleted = luc.purge_old_versions(keep=2)
+            print(f"Cleaned up {deleted} old versions")
+        """
+        versions = self.storage.list_versions(self.name)
+        if len(versions) <= keep:
+            return 0
+
+        # Current alias target must be protected
+        current_target = self.storage.get_alias(self.name)
+
+        # Keep the N most recent + the current target
+        to_keep = set(versions[-keep:])
+        if current_target:
+            to_keep.add(current_target)
+
+        to_delete = [v for v in versions if v not in to_keep]
+        for v in to_delete:
+            self.storage.delete(v)
+
+        return len(to_delete)
+
+    # ── Phase 3: Background Rebuild ──────────────────────────────────── #
+
+    def reindex_async(
+        self,
+        data: Union[List[str], Dict[Any, str]],
+        on_complete: Optional[Callable[[str], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
+        auto_swap: bool = True,
+    ) -> None:
+        """
+        Rebuild the index in a background thread.
+
+        While the rebuild is running, ``search()`` continues to use the
+        current (active) engine with **zero downtime**.  When the new
+        index is ready it is persisted, the alias is swapped, and
+        (optionally) the live engine is replaced atomically.
+
+        Args:
+            data: New corpus — ``Dict[id, text]`` or ``List[text]``.
+            on_complete: Callback ``fn(physical_name)`` invoked when the
+                rebuild finishes successfully.
+            on_error: Callback ``fn(exception)`` invoked if the rebuild fails.
+            auto_swap: If ``True`` (default), the live engine is
+                swapped to the new version automatically.  If ``False``,
+                the alias is updated but you must call ``load()`` yourself
+                to pick up the new version.
+
+        Raises:
+            LucisEngineError: If a rebuild is already in progress.
+
+        Example::
+
+            luc.reindex_async(new_data)
+
+            while luc.is_rebuilding():
+                results = luc.search("query")   # ← uses active index
+                time.sleep(0.5)
+
+            luc.wait_for_reindex()               # ← ensures completion
+            results = luc.search("query")        # ← uses new index
+        """
+        if self.is_rebuilding():
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail="A background rebuild is already in progress. "
+                       "Call wait_for_reindex() before starting another.",
+            )
+
+        self._rebuild_error = None
+
+        # Capture references for the worker closure
+        engine_class = type(self.engine)
+        storage = self.storage
+        index_name = self.name
+
+        def _worker() -> None:
+            try:
+                # 1. Build in an isolated engine (no impact on live searches)
+                shadow_engine = engine_class(storage=storage)
+                shadow_engine.build_index(data)
+
+                # 2. Persist with a new versioned name + swap alias
+                physical_name = storage._generate_versioned_name(index_name)
+                shadow_engine.persist(physical_name)
+                storage.set_alias(index_name, physical_name)
+
+                # 3. Hot-swap the live engine (GIL makes reference swap atomic)
+                if auto_swap:
+                    self.engine = shadow_engine
+                    self._is_indexed = True
+
+                if on_complete:
+                    on_complete(physical_name)
+
+            except Exception as exc:
+                self._rebuild_error = exc
+                if on_error:
+                    on_error(exc)
+
+        self._rebuild_thread = threading.Thread(
+            target=_worker,
+            name=f"lucis-reindex-{index_name}",
+            daemon=True,
+        )
+        self._rebuild_thread.start()
+
+    def is_rebuilding(self) -> bool:
+        """
+        Return ``True`` if a background rebuild is in progress.
+
+        Example::
+
+            if luc.is_rebuilding():
+                print("Rebuild in progress…")
+        """
+        return (
+            self._rebuild_thread is not None
+            and self._rebuild_thread.is_alive()
+        )
+
+    def wait_for_reindex(self, timeout: Optional[float] = None) -> None:
+        """
+        Block until the background rebuild finishes.
+
+        If the rebuild raised an exception, it is re-raised here so the
+        caller can handle it.
+
+        Args:
+            timeout: Maximum seconds to wait.  ``None`` means wait
+                indefinitely.
+
+        Raises:
+            LucisEngineError: If no rebuild has been started.
+            Exception: Re-raises the original error from the worker thread.
+
+        Example::
+
+            luc.reindex_async(new_data)
+            luc.wait_for_reindex(timeout=30)
+            print("Rebuild done!")
+        """
+        if self._rebuild_thread is None:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail="No background rebuild to wait for.",
+            )
+
+        self._rebuild_thread.join(timeout=timeout)
+
+        if self._rebuild_error is not None:
+            raise self._rebuild_error
+
+    # ── Phase 4: Worker / Automation ───────────────────────────────── #
+
+    def create_worker(
+        self,
+        data_fn: Callable[[], Union[List[str], Dict[Any, str]]],
+        interval: float = 60,
+        change_detector: Optional[Callable[[], bool]] = None,
+        auto_purge: bool = True,
+        keep_versions: int = 3,
+        on_rebuild: Optional[Callable[[str], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
+        on_cycle: Optional[Callable[[int, bool], None]] = None,
+    ) -> "IndexWorker":
+        """
+        Create an ``IndexWorker`` bound to this Lucis instance.
+
+        The worker runs a daemon loop that periodically fetches fresh
+        data, rebuilds the index, swaps the alias, and (optionally)
+        purges old versions — all with **zero downtime** for searches.
+
+        Args:
+            data_fn: Callable that returns fresh data each cycle.
+            interval: Seconds between cycles (default 60).
+            change_detector: Optional ``() → bool``.  When provided,
+                the rebuild only runs if this returns ``True``.
+            auto_purge: Automatically clean old versions (default True).
+            keep_versions: Versions to retain when purging (default 3).
+            on_rebuild: Callback ``fn(physical_name)`` on success.
+            on_error: Callback ``fn(exception)`` on failure.
+            on_cycle: Callback ``fn(cycle_number, skipped)`` every cycle.
+
+        Returns:
+            An ``IndexWorker`` instance (not yet started).
+            Call ``.start()`` to begin the loop.
+
+        Example::
+
+            def fetch():
+                return storage.read_table("articles", text_column="body", id_column="id")
+
+            worker = luc.create_worker(data_fn=fetch, interval=30)
+            worker.start()
+            # ... later ...
+            worker.stop()
+        """
+        from .worker import IndexWorker
+        return IndexWorker(
+            lucis=self,
+            data_fn=data_fn,
+            interval=interval,
+            change_detector=change_detector,
+            auto_purge=auto_purge,
+            keep_versions=keep_versions,
+            on_rebuild=on_rebuild,
+            on_error=on_error,
+            on_cycle=on_cycle,
+        )
+
     # info and debugging
     def __repr__(self) -> str:
         status = "indexed" if self._is_indexed else "empty"
