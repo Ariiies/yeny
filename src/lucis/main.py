@@ -8,7 +8,7 @@ from .storage.json_storage import JSONStorage
 from .storage.sqlite_storage import SQLiteStorage
 from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
-from worker import IndexWorker
+from .worker import IndexWorker
 
 # Lazy import flag — AlchemyStorage requires sqlalchemy (optional dep)
 _AlchemyStorage = None
@@ -78,6 +78,7 @@ class Lucis:
         """
         self.name = name
         self._is_indexed = False
+        self._source_info: Optional[Dict[str, Optional[str]]] = None
 
         # Background rebuild state (Phase 3)
         self._rebuild_thread: Optional[threading.Thread] = None
@@ -254,6 +255,14 @@ class Lucis:
         kwargs.setdefault("storage_type", "sqlite")
         kwargs.setdefault("db_path", db_path)
         instance = cls(name=name, autoload=False, **kwargs)
+        instance._source_info = {
+            "type": "table",
+            "table_name": table_name,
+            "text_column": text_column,
+            "id_column": id_column,
+            "where_clause": where_clause,
+            "query": None,
+        }
         instance.index(data)
         return instance
 
@@ -316,6 +325,14 @@ class Lucis:
         kwargs.setdefault("storage_type", "sqlite")
         kwargs.setdefault("db_path", db_path)
         instance = cls(name=name, autoload=False, **kwargs)
+        instance._source_info = {
+            "type": "query",
+            "table_name": None,
+            "text_column": None,
+            "id_column": None,
+            "where_clause": None,
+            "query": query,
+        }
         instance.index(data)
         return instance
 
@@ -377,6 +394,14 @@ class Lucis:
         kwargs.setdefault("alchemy_url", url)
         # Pass the already-built storage so we don't create a second engine
         instance = cls(name=name, autoload=False, storage=storage, **kwargs)
+        instance._source_info = {
+            "type": "table",
+            "table_name": table_name,
+            "text_column": text_column,
+            "id_column": id_column,
+            "where_clause": where_clause,
+            "query": None,
+        }
         instance.index(data)
         return instance
 
@@ -420,6 +445,14 @@ class Lucis:
         kwargs.setdefault("storage_type", "alchemy")
         kwargs.setdefault("alchemy_url", url)
         instance = cls(name=name, autoload=False, storage=storage, **kwargs)
+        instance._source_info = {
+            "type": "query",
+            "table_name": None,
+            "text_column": None,
+            "id_column": None,
+            "where_clause": None,
+            "query": query,
+        }
         instance.index(data)
         return instance
 
@@ -519,6 +552,9 @@ class Lucis:
         self.engine.persist(physical_name)
         # Point the logical alias to the new physical index
         self.storage.set_alias(save_name, physical_name)
+        # Persist source info so the worker can auto-generate data_fn
+        if self._source_info is not None:
+            self.storage.save_source_info(physical_name, self._source_info)
 
     def load(self, name: Optional[str] = None) -> None:
         """
@@ -535,6 +571,10 @@ class Lucis:
         physical_name = self.storage.resolve_alias(load_name)
         self.engine.load_engine(physical_name)
         self._is_indexed = True
+        # Restore source info (if available) so create_worker() works
+        source = self.storage.load_source_info(physical_name)
+        if source is not None:
+            self._source_info = source
 
     # Shadow Rebuild 
 
@@ -661,7 +701,7 @@ class Lucis:
 
         return len(to_delete)
 
-    # ── Phase 3: Background Rebuild ──────────────────────────────────── #
+    # Phase 3: Background Rebuild
 
     def reindex_async(
         self,
@@ -793,11 +833,97 @@ class Lucis:
         if self._rebuild_error is not None:
             raise self._rebuild_error
 
-    # ── Phase 4: Worker / Automation ───────────────────────────────── #
+    # Phase 4: Worker / Automation 
+
+    def _auto_data_fn(self) -> Callable[[], Union[List[str], Dict[Any, str]]]:
+        """Auto-generate a data_fn based on stored _source_info."""
+        info = self._source_info
+        storage = self.storage
+
+        if info["type"] == "table":
+            table_name = info["table_name"]
+            text_col = info["text_column"]
+            id_col = info["id_column"]
+            where = info.get("where_clause")
+
+            if hasattr(storage, "read_table"):
+                def fetch():
+                    return storage.read_table(
+                        table_name, text_col, id_col, where
+                    )
+                return fetch
+            else:
+                # SQLiteStorage — build SQL manually
+                cols = f"{id_col}, {text_col}" if id_col else text_col
+                sql = f"SELECT {cols} FROM {table_name}"
+                if where:
+                    sql += f" WHERE {where}"
+                db_path = getattr(storage, "db_path", None)
+                def fetch_sqlite():
+                    import sqlite3
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.execute(sql)
+                    if id_col:
+                        data = {str(row[0]): row[1] for row in cursor}
+                    else:
+                        data = [row[0] for row in cursor]
+                    conn.close()
+                    return data
+                return fetch_sqlite
+
+        elif info["type"] == "query":
+            query_str = info["query"]
+
+            if hasattr(storage, "read_query"):
+                def fetch_q():
+                    return storage.read_query(query_str)
+                return fetch_q
+            else:
+                db_path = getattr(storage, "db_path", None)
+                def fetch_q_sqlite():
+                    import sqlite3
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.execute(query_str)
+                    first = cursor.fetchone()
+                    if first is None:
+                        conn.close()
+                        return []
+                    cursor = conn.execute(query_str)
+                    if len(first) == 1:
+                        data = [row[0] for row in cursor]
+                    else:
+                        data = {str(row[0]): row[1] for row in cursor}
+                    conn.close()
+                    return data
+                return fetch_q_sqlite
+
+        raise LucisEngineError(
+            engine_name=self.engine.name,
+            detail=f"Cannot auto-generate data_fn: unknown source type '{info.get('type')}'",
+        )
+
+    def _auto_change_detector(self) -> Optional[Callable[[], bool]]:
+        """Auto-generate a count-based change detector if source is a table."""
+        info = self._source_info
+        if info is None or info["type"] != "table":
+            return None
+
+        table_name = info["table_name"]
+        storage = self.storage
+        last_count = [self.engine.total_docs if self._is_indexed else 0]
+
+        def detect():
+            current = storage.count_rows(table_name)
+            if current != last_count[0]:
+                last_count[0] = current
+                return True
+            return False
+
+        return detect
 
     def create_worker(
         self,
-        data_fn: Callable[[], Union[List[str], Dict[Any, str]]],
+        data_fn: Optional[Callable[[], Union[List[str], Dict[Any, str]]]] = None,
         interval: float = 60,
         change_detector: Optional[Callable[[], bool]] = None,
         auto_purge: bool = True,
@@ -813,11 +939,19 @@ class Lucis:
         data, rebuilds the index, swaps the alias, and (optionally)
         purges old versions — all with **zero downtime** for searches.
 
+        If the index was created from a database table/query (via
+        ``from_alchemy_table``, ``from_sqlite_table``, etc.), both
+        ``data_fn`` and ``change_detector`` are **auto-generated**
+        when not provided — the worker just works out of the box.
+
         Args:
             data_fn: Callable that returns fresh data each cycle.
+                If ``None``, auto-generated from source metadata.
             interval: Seconds between cycles (default 60).
             change_detector: Optional ``() → bool``.  When provided,
                 the rebuild only runs if this returns ``True``.
+                If ``None`` and source is a table, auto-generated
+                using ``COUNT(*)`` comparison.
             auto_purge: Automatically clean old versions (default True).
             keep_versions: Versions to retain when purging (default 3).
             on_rebuild: Callback ``fn(physical_name)`` on success.
@@ -828,16 +962,37 @@ class Lucis:
             An ``IndexWorker`` instance (not yet started).
             Call ``.start()`` to begin the loop.
 
-        Example::
+        Example — zero config (auto data_fn)::
 
-            def fetch():
-                return storage.read_table("articles", text_column="body", id_column="id")
-
-            worker = luc.create_worker(data_fn=fetch, interval=30)
+            luc = Lucis.from_alchemy_table("articles", url=URL,
+                                           text_column="content",
+                                           id_column="article_id",
+                                           name="articles_idx")
+            worker = luc.create_worker(interval=60)
             worker.start()
-            # ... later ...
-            worker.stop()
+
+        Example — custom data_fn::
+
+            worker = luc.create_worker(data_fn=my_fetch, interval=30)
+            worker.start()
         """
+        # Auto-generate data_fn if not provided
+        if data_fn is None:
+            if self._source_info is None:
+                raise LucisEngineError(
+                    engine_name=self.engine.name,
+                    detail=(
+                        "Cannot auto-generate data_fn: no source info available. "
+                        "Either create the index with from_alchemy_table / "
+                        "from_sqlite_table, or provide data_fn explicitly."
+                    ),
+                )
+            data_fn = self._auto_data_fn()
+
+        # Auto-generate change_detector if not provided
+        if change_detector is None and self._source_info is not None:
+            change_detector = self._auto_change_detector()
+
         from .worker import IndexWorker
         return IndexWorker(
             lucis=self,

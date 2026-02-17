@@ -1,4 +1,3 @@
-# src/lucis/storage/alchemy_storage.py
 """
 Production storage backend powered by SQLAlchemy.
 
@@ -454,7 +453,7 @@ class AlchemyStorage(BaseStorage):
             ).fetchall()
         return [row[0] for row in rows]
 
-    # ── Alias / versioning support ─────────────────────────────────── #
+    # Alias / versioning support
 
     def resolve_alias(self, name: str) -> str:
         """Resolve *name* to a physical index name.
@@ -524,6 +523,52 @@ class AlchemyStorage(BaseStorage):
                 .order_by(self._t_metadata.c.index_name)
             ).fetchall()
         return [row[0] for row in rows]
+
+    # Source-info persistence (smart worker support)
+
+    def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
+        """Persist data-source metadata into ``lucis_metadata``."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                self._t_metadata.update()
+                .where(self._t_metadata.c.index_name == name)
+                .values(
+                    source_table=info.get("table_name"),
+                    source_column=info.get("text_column"),
+                    source_id_column=info.get("id_column"),
+                )
+            )
+
+    def load_source_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """Load source metadata from ``lucis_metadata``."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(
+                    self._t_metadata.c.source_table,
+                    self._t_metadata.c.source_column,
+                    self._t_metadata.c.source_id_column,
+                ).where(self._t_metadata.c.index_name == name)
+            ).fetchone()
+
+        if row is None or row[0] is None:
+            return None
+
+        return {
+            "type": "table",
+            "table_name": row[0],
+            "text_column": row[1],
+            "id_column": row[2],
+            "where_clause": None,
+            "query": None,
+        }
+
+    def count_rows(self, table_name: str) -> Optional[int]:
+        """Return ``SELECT COUNT(*) FROM <table_name>``."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                sa_text(f"SELECT COUNT(*) FROM {table_name}")
+            )
+            return result.scalar()
 
     # Read helpers
 

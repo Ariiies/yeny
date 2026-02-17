@@ -59,3 +59,24 @@ class BaseStorage(ABC):
         Backends that don't support versioning simply return *base_name*.
         """
         return base_name
+
+    # Source-info persistence (smart worker support)
+
+    def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
+        """Persist data-source metadata alongside the index.
+
+        *info* is a dict with keys like ``type``, ``table_name``,
+        ``text_column``, ``id_column``, ``where_clause``, ``query``.
+        """
+        pass  # no-op for backends that don't support it
+
+    def load_source_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """Load previously-saved source metadata for *name*.
+
+        Returns ``None`` if nothing was stored.
+        """
+        return None
+
+    def count_rows(self, table_name: str) -> Optional[int]:
+        """Return the row count of a user table, or ``None`` if unsupported."""
+        return None

@@ -359,6 +359,50 @@ class SQLiteStorage(BaseStorage):
         )
         return [row[0] for row in cur.fetchall()]
 
+    #  Source-info persistence (smart worker support)                       #
+
+    def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
+        """Persist data-source metadata into ``lucis_metadata``."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE lucis_metadata "
+            "SET source_table = ?, source_column = ?, source_id_column = ? "
+            "WHERE index_name = ?",
+            (
+                info.get("table_name"),
+                info.get("text_column"),
+                info.get("id_column"),
+                name,
+            ),
+        )
+        self.conn.commit()
+
+    def load_source_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """Load source metadata from ``lucis_metadata``."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT source_table, source_column, source_id_column "
+            "FROM lucis_metadata WHERE index_name = ?",
+            (name,),
+        )
+        row = cur.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return {
+            "type": "table",
+            "table_name": row[0],
+            "text_column": row[1],
+            "id_column": row[2],
+            "where_clause": None,
+            "query": None,
+        }
+
+    def count_rows(self, table_name: str) -> Optional[int]:
+        """Return ``SELECT COUNT(*) FROM <table_name>``."""
+        cur = self.conn.cursor()
+        cur.execute(f"SELECT COUNT(*) FROM {table_name}")
+        return cur.fetchone()[0]
+
     #  Extras                                                              #
 
     def delete(self, name: str) -> None:

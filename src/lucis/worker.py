@@ -1,4 +1,3 @@
-# src/lucis/worker.py
 """
 IndexWorker — automated background index rebuilder.
 
