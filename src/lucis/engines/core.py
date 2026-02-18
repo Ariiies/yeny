@@ -5,8 +5,6 @@ from .base import BaseEngine, DocId
 from ..utils.index.core import build_index as build_idx_func
 from ..utils.index.stats import get_doc_len, compute_tfidf, compute_idf
 from ..utils.math.core import sparse_cosine_similarity, sort_results
-from ..utils.decorators import doc_input
-from ..utils.nlp import word_tokenizer
 from ..exceptions import LucisEmptyCorpusError
 
 class CoreEngine(BaseEngine):
@@ -15,8 +13,8 @@ class CoreEngine(BaseEngine):
     Uses pure Python dictionaries and math for reliable, dependency-free searching.
     """
 
-    def __init__(self, storage: Optional[Any] = None):
-        super().__init__(storage=storage)
+    def __init__(self, storage: Optional[Any] = None, tokenizer: Optional[Any] = None):
+        super().__init__(storage=storage, tokenizer=tokenizer)
         # Save vectors to avoid recomputing on each search
         self.doc_vectors: Dict[int, Dict[str, float]] = {}
 
@@ -45,13 +43,16 @@ class CoreEngine(BaseEngine):
         if self.total_docs == 0:
             return
 
-        # 1. Build the inverted index (Core)
-        self.index = build_idx_func(texts)
+        # 1. Tokenize with the configured tokenizer
+        tokenized = [self.tokenizer(doc) for doc in texts]
+
+        # 2. Build the inverted index (Core)
+        self.index = build_idx_func(tokenized)
         
-        # 2. Calculate document lengths for TF normalization
+        # 3. Calculate document lengths for TF normalization
         self.doc_lengths = get_doc_len(self.index, self.total_docs)
         
-        # 3. Pre-calculate TF-IDF vectors for each document
+        # 4. Pre-calculate TF-IDF vectors for each document
         # This makes subsequent searches O(n_documents) instead of recalculating everything
         self._precompute_all_vectors()
 
@@ -70,8 +71,7 @@ class CoreEngine(BaseEngine):
                     doc_vector[word] = score
             self.doc_vectors[doc_id] = doc_vector
 
-    @doc_input(word_tokenizer)
-    def search(self, query: List[str], top_k: int = 10) -> List[Tuple[DocId, float]]:
+    def search(self, query: Union[str, List[str]], top_k: int = 10) -> List[Tuple[DocId, float]]:
         """
         Finds documents most similar to the query.
         
@@ -80,6 +80,10 @@ class CoreEngine(BaseEngine):
         - If indexed with Dict: returns original keys ("doc_001", "doc_002"...)
         - If indexed with List: returns integers (0, 1, 2...)
         """
+        # Tokenize with the configured tokenizer if query is a raw string
+        if isinstance(query, str):
+            query = self.tokenizer(query)
+
         if not query or not self.index:
             return []
 

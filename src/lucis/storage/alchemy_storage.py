@@ -152,6 +152,8 @@ class AlchemyStorage(BaseStorage):
             Column("source_table", String(255), nullable=True),
             Column("source_column", String(255), nullable=True),
             Column("source_id_column", String(255), nullable=True),
+            Column("source_query", Text, nullable=True),
+            Column("source_where", Text, nullable=True),
         )
 
         self._t_inverted_index = Table(
@@ -536,6 +538,8 @@ class AlchemyStorage(BaseStorage):
                     source_table=info.get("table_name"),
                     source_column=info.get("text_column"),
                     source_id_column=info.get("id_column"),
+                    source_query=info.get("query"),
+                    source_where=info.get("where_clause"),
                 )
             )
 
@@ -547,20 +551,39 @@ class AlchemyStorage(BaseStorage):
                     self._t_metadata.c.source_table,
                     self._t_metadata.c.source_column,
                     self._t_metadata.c.source_id_column,
+                    self._t_metadata.c.source_query,
+                    self._t_metadata.c.source_where,
                 ).where(self._t_metadata.c.index_name == name)
             ).fetchone()
 
-        if row is None or row[0] is None:
+        if row is None:
             return None
 
-        return {
-            "type": "table",
-            "table_name": row[0],
-            "text_column": row[1],
-            "id_column": row[2],
-            "where_clause": None,
-            "query": None,
-        }
+        source_table, source_column, source_id_column, source_query, source_where = row
+
+        # Query-based source
+        if source_query is not None:
+            return {
+                "type": "query",
+                "table_name": None,
+                "text_column": None,
+                "id_column": None,
+                "where_clause": None,
+                "query": source_query,
+            }
+
+        # Table-based source
+        if source_table is not None:
+            return {
+                "type": "table",
+                "table_name": source_table,
+                "text_column": source_column,
+                "id_column": source_id_column,
+                "where_clause": source_where,
+                "query": None,
+            }
+
+        return None
 
     def count_rows(self, table_name: str) -> Optional[int]:
         """Return ``SELECT COUNT(*) FROM <table_name>``."""

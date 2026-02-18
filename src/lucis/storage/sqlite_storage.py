@@ -64,6 +64,8 @@ class SQLiteStorage(BaseStorage):
                 source_table    TEXT,
                 source_column   TEXT,
                 source_id_column TEXT,
+                source_query    TEXT,
+                source_where    TEXT,
                 created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -366,12 +368,15 @@ class SQLiteStorage(BaseStorage):
         cur = self.conn.cursor()
         cur.execute(
             "UPDATE lucis_metadata "
-            "SET source_table = ?, source_column = ?, source_id_column = ? "
+            "SET source_table = ?, source_column = ?, source_id_column = ?, "
+            "source_query = ?, source_where = ? "
             "WHERE index_name = ?",
             (
                 info.get("table_name"),
                 info.get("text_column"),
                 info.get("id_column"),
+                info.get("query"),
+                info.get("where_clause"),
                 name,
             ),
         )
@@ -381,21 +386,40 @@ class SQLiteStorage(BaseStorage):
         """Load source metadata from ``lucis_metadata``."""
         cur = self.conn.cursor()
         cur.execute(
-            "SELECT source_table, source_column, source_id_column "
+            "SELECT source_table, source_column, source_id_column, "
+            "source_query, source_where "
             "FROM lucis_metadata WHERE index_name = ?",
             (name,),
         )
         row = cur.fetchone()
-        if row is None or row[0] is None:
+        if row is None:
             return None
-        return {
-            "type": "table",
-            "table_name": row[0],
-            "text_column": row[1],
-            "id_column": row[2],
-            "where_clause": None,
-            "query": None,
-        }
+
+        source_table, source_column, source_id_column, source_query, source_where = row
+
+        # Query-based source
+        if source_query is not None:
+            return {
+                "type": "query",
+                "table_name": None,
+                "text_column": None,
+                "id_column": None,
+                "where_clause": None,
+                "query": source_query,
+            }
+
+        # Table-based source
+        if source_table is not None:
+            return {
+                "type": "table",
+                "table_name": source_table,
+                "text_column": source_column,
+                "id_column": source_id_column,
+                "where_clause": source_where,
+                "query": None,
+            }
+
+        return None
 
     def count_rows(self, table_name: str) -> Optional[int]:
         """Return ``SELECT COUNT(*) FROM <table_name>``."""
