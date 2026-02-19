@@ -5,6 +5,7 @@ from .base import BaseEngine, DocId
 from ..utils.index.core import build_index as build_idx_func
 from ..utils.index.stats import get_doc_len, compute_tfidf, compute_idf
 from ..utils.math.core import sparse_cosine_similarity, sort_results
+from ..utils.nlp import simple_tokenizer
 from ..exceptions import LucisEmptyCorpusError
 
 class CoreEngine(BaseEngine):
@@ -13,8 +14,8 @@ class CoreEngine(BaseEngine):
     Uses pure Python dictionaries and math for reliable, dependency-free searching.
     """
 
-    def __init__(self, storage: Optional[Any] = None, tokenizer: Optional[Any] = None):
-        super().__init__(storage=storage, tokenizer=tokenizer)
+    def __init__(self, storage: Optional[Any] = None, preprocessor: Optional[Any] = None):
+        super().__init__(storage=storage, preprocessor=preprocessor)
         # Save vectors to avoid recomputing on each search
         self.doc_vectors: Dict[int, Dict[str, float]] = {}
 
@@ -43,8 +44,12 @@ class CoreEngine(BaseEngine):
         if self.total_docs == 0:
             return
 
-        # 1. Tokenize with the configured tokenizer
-        tokenized = [self.tokenizer(doc) for doc in texts]
+        # 1. Preprocess with the configured preprocessor.
+        # If it returns str (text-only preprocessor), apply simple_tokenizer as fallback.
+        tokenized = []
+        for doc in texts:
+            result = self.preprocessor(doc)
+            tokenized.append(simple_tokenizer(result) if isinstance(result, str) else result)
 
         # 2. Build the inverted index (Core)
         self.index = build_idx_func(tokenized)
@@ -80,9 +85,12 @@ class CoreEngine(BaseEngine):
         - If indexed with Dict: returns original keys ("doc_001", "doc_002"...)
         - If indexed with List: returns integers (0, 1, 2...)
         """
-        # Tokenize with the configured tokenizer if query is a raw string
+        # Preprocess query if it is a raw string
         if isinstance(query, str):
-            query = self.tokenizer(query)
+            query = self.preprocessor(query)
+            # Fallback: if preprocessor returned str instead of list[str], apply simple_tokenizer
+            if isinstance(query, str):
+                query = simple_tokenizer(query)
 
         if not query or not self.index:
             return []

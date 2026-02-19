@@ -8,7 +8,7 @@ from .storage.json_storage import JSONStorage
 from .storage.sqlite_storage import SQLiteStorage
 from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
-from .utils.nlp import word_tokenizer
+from .utils.nlp import word_tokenizer, simple_tokenizer
 from .worker import IndexWorker
 
 # Lazy import flag — AlchemyStorage requires sqlalchemy (optional dep)
@@ -60,7 +60,7 @@ class Lucis:
         alchemy_url: Optional[str] = None,
         storage: Optional[BaseStorage] = None,
         engine: str = "core",
-        tokenizer: Optional[Callable[[str], List[str]]] = None,
+        preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = None,
         autoload: bool = True,
     ):
         """
@@ -76,16 +76,26 @@ class Lucis:
                 Example: "mysql+pymysql://user:pass@localhost/mydb"
             storage: A pre-built BaseStorage instance (overrides storage_type/db_path/storage_dir).
             engine: Which engine to use. Currently supported: "core".
-            tokenizer: Custom tokenizer function ``(str) → list[str]``. Defaults to word_tokenizer.
-                Any function matching that signature works. The same tokenizer is used for
-                both indexing and searching to ensure consistent vector spaces.
-                Example: ``char_ngram_tokenizer(3)`` for character n-gram based search.
+            preprocessor: Text preprocessor function ``(str) → str | list[str]``. Defaults to word_tokenizer.
+                Can return ``list[str]`` (tokens used directly) or ``str`` (Lucis will apply
+                simple_tokenizer as a final tokenization step). The same preprocessor is used
+                for both indexing and searching to ensure a consistent vector space.
+                Examples::
+
+                    # Custom pipeline: clean + tokenize
+                    Lucis(preprocessor=lambda t: word_tokenizer(remove_stopwords(t)))
+
+                    # Char n-gram search (e.g. for emails or encrypted data)
+                    Lucis(preprocessor=char_ngram_tokenizer(3))
+
+                    # Text-only preprocessing — Lucis tokenizes the returned str automatically
+                    Lucis(preprocessor=lambda t: t.lower().strip())
             autoload: If True and an index with this name exists on disk, load it automatically.
         """
         self.name = name
         self._is_indexed = False
         self._source_info: Optional[Dict[str, Optional[str]]] = None
-        self.tokenizer: Callable[[str], List[str]] = tokenizer or word_tokenizer
+        self.preprocessor: Callable[[str], Union[str, List[str]]] = preprocessor or word_tokenizer
 
         # Background rebuild state (Phase 3)
         self._rebuild_thread: Optional[threading.Thread] = None
@@ -124,7 +134,7 @@ class Lucis:
                 engine_name=engine,
                 detail=f"Unknown engine '{engine}'. Available: {available}"
             )
-        self.engine = engine_class(storage=self.storage, tokenizer=self.tokenizer)
+        self.engine = engine_class(storage=self.storage, preprocessor=self.preprocessor)
 
         # 3. Smart persistence: if the index already exists on disk, load it
         # This enables the "pick up where you left off" workflow:
@@ -512,9 +522,11 @@ class Lucis:
         # Preserve the original query before tokenization
         original_query = query
 
-        # Tokenize here to capture the tokens for the response
+        # Preprocess + tokenize to capture the tokens for the response
         if isinstance(query, str):
-            tokens = self.tokenizer(query)
+            processed = self.preprocessor(query)
+            # Fallback: if preprocessor returned str instead of list[str], apply simple_tokenizer
+            tokens = simple_tokenizer(processed) if isinstance(processed, str) else processed
         else:
             tokens = list(query)
 
@@ -760,12 +772,12 @@ class Lucis:
         engine_class = type(self.engine)
         storage = self.storage
         index_name = self.name
-        tokenizer = self.tokenizer
+        preprocessor = self.preprocessor
 
         def _worker() -> None:
             try:
                 # 1. Build in an isolated engine (no impact on live searches)
-                shadow_engine = engine_class(storage=storage, tokenizer=tokenizer)
+                shadow_engine = engine_class(storage=storage, preprocessor=preprocessor)
                 shadow_engine.build_index(data)
 
                 # 2. Persist with a new versioned name + swap alias

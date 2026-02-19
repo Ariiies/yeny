@@ -18,7 +18,7 @@ class BaseEngine(ABC):
     - Dict[str, str]: Dictionary with {id: text}, preserves original IDs
     """
 
-    def __init__(self, storage: Optional[Any] = None, tokenizer: Optional[Callable[[str], List[str]]] = None):
+    def __init__(self, storage: Optional[Any] = None, preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = None):
         self.index: Dict[str, Dict[int, int]] = {}
         self.total_docs: int = 0
         # doc_len is vital for TF calculations
@@ -28,8 +28,10 @@ class BaseEngine(ABC):
         # Essential for returning meaningful results to the user
         self.id_map: Dict[int, DocId] = {}
         self.id_type: str = "none"  # "sequential", "custom" o "none"
-        # Configurable tokenizer — injected from Lucis or defaults to word_tokenizer
-        self.tokenizer: Callable[[str], List[str]] = tokenizer or word_tokenizer
+        # Configurable preprocessor — injected from Lucis or defaults to word_tokenizer.
+        # Can return str (Lucis will tokenize with simple_tokenizer as fallback)
+        # or list[str] (used directly as tokens).
+        self.preprocessor: Callable[[str], Union[str, List[str]]] = preprocessor or word_tokenizer
 
     @property
     @abstractmethod
