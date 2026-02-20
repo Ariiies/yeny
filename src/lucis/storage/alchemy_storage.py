@@ -19,9 +19,10 @@ For PostgreSQL::
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any, Dict, Optional, Union
+
+from ..utils.serialization import dumps as _dumps, loads as _loads
 
 try:
     from sqlalchemy import (
@@ -262,7 +263,7 @@ class AlchemyStorage(BaseStorage):
                 {
                     "index_name": name,
                     "word": word,
-                    "postings": json.dumps(
+                    "postings": _dumps(
                         {int(doc_id): freq for doc_id, freq in docs.items()}
                     ),
                 }
@@ -276,7 +277,7 @@ class AlchemyStorage(BaseStorage):
                 {
                     "index_name": name,
                     "doc_internal_id": int(doc_id),
-                    "vector": json.dumps(vector),
+                    "vector": _dumps(vector),
                 }
                 for doc_id, vector in data["doc_vectors"].items()
             ]
@@ -341,7 +342,7 @@ class AlchemyStorage(BaseStorage):
             index: Dict[str, Dict[int, int]] = {}
             for word, postings_json in rows:
                 index[word] = {
-                    int(k): v for k, v in json.loads(postings_json).items()
+                    int(k): v for k, v in _loads(postings_json).items()
                 }
 
             # 3. Document vectors (one row per doc, JSON vector)
@@ -354,7 +355,7 @@ class AlchemyStorage(BaseStorage):
 
             doc_vectors: Dict[int, Dict[str, float]] = {}
             for doc_id, vector_json in rows:
-                doc_vectors[doc_id] = json.loads(vector_json)
+                doc_vectors[doc_id] = _loads(vector_json)
 
             # 4. ID mapping
             rows = conn.execute(

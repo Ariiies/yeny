@@ -921,23 +921,71 @@ class Lucis:
         )
 
     def _auto_change_detector(self) -> Optional[Callable[[], bool]]:
-        """Auto-generate a count-based change detector if source is a table."""
+        """Auto-generate a count-based change detector from source metadata.
+
+        Works for both ``"table"`` sources (uses ``count_rows``) and
+        ``"query"`` sources (wraps the original query in
+        ``SELECT COUNT(*) FROM (…)``).
+        """
         info = self._source_info
-        if info is None or info["type"] != "table":
+        if info is None:
             return None
 
-        table_name = info["table_name"]
         storage = self.storage
         last_count = [self.engine.total_docs if self._is_indexed else 0]
 
-        def detect():
-            current = storage.count_rows(table_name)
-            if current != last_count[0]:
-                last_count[0] = current
-                return True
-            return False
+        if info["type"] == "table":
+            table_name = info["table_name"]
 
-        return detect
+            def detect_table():
+                current = storage.count_rows(table_name)
+                if current != last_count[0]:
+                    last_count[0] = current
+                    return True
+                return False
+
+            return detect_table
+
+        elif info["type"] == "query":
+            query_str = info["query"]
+
+            if hasattr(storage, "_engine"):
+                # AlchemyStorage — use sa_text
+                from sqlalchemy import text as _sa_text
+
+                def detect_query_alchemy():
+                    with storage._engine.connect() as conn:
+                        current = conn.execute(
+                            _sa_text(
+                                f"SELECT COUNT(*) FROM ({query_str}) AS _lucis_subq"
+                            )
+                        ).scalar()
+                    if current != last_count[0]:
+                        last_count[0] = current
+                        return True
+                    return False
+
+                return detect_query_alchemy
+
+            else:
+                # SQLiteStorage — direct cursor
+                db_path = getattr(storage, "db_path", None)
+
+                def detect_query_sqlite():
+                    import sqlite3
+                    conn = sqlite3.connect(db_path)
+                    current = conn.execute(
+                        f"SELECT COUNT(*) FROM ({query_str})"
+                    ).fetchone()[0]
+                    conn.close()
+                    if current != last_count[0]:
+                        last_count[0] = current
+                        return True
+                    return False
+
+                return detect_query_sqlite
+
+        return None
 
     def create_worker(
         self,
@@ -945,7 +993,7 @@ class Lucis:
         interval: float = 60,
         change_detector: Optional[Callable[[], bool]] = None,
         auto_purge: bool = True,
-        keep_versions: int = 3,
+        keep_versions: int = 2,
         on_rebuild: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_cycle: Optional[Callable[[int, bool], None]] = None,
@@ -971,7 +1019,7 @@ class Lucis:
                 If ``None`` and source is a table, auto-generated
                 using ``COUNT(*)`` comparison.
             auto_purge: Automatically clean old versions (default True).
-            keep_versions: Versions to retain when purging (default 3).
+            keep_versions: Versions to retain when purging (default 2).
             on_rebuild: Callback ``fn(physical_name)`` on success.
             on_error: Callback ``fn(exception)`` on failure.
             on_cycle: Callback ``fn(cycle_number, skipped)`` every cycle.

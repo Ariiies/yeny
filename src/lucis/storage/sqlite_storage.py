@@ -1,6 +1,7 @@
 # src/lucis/storage/sqlite_storage.py
-import json
 import sqlite3
+
+from ..utils.serialization import dumps as _dumps, loads as _loads
 from datetime import datetime
 from typing import Any, Dict, Optional
 from .base import BaseStorage
@@ -155,7 +156,7 @@ class SQLiteStorage(BaseStorage):
                 (
                     name,
                     word,
-                    json.dumps(
+                    _dumps(
                         {int(doc_id): freq for doc_id, freq in docs.items()}
                     ),
                 )
@@ -168,7 +169,7 @@ class SQLiteStorage(BaseStorage):
 
             # 4. TF-IDF document vectors (one row per doc, vector as JSON)
             vec_rows = [
-                (name, int(doc_id), json.dumps(vector))
+                (name, int(doc_id), _dumps(vector))
                 for doc_id, vector in data["doc_vectors"].items()
             ]
             cur.executemany(
@@ -231,7 +232,7 @@ class SQLiteStorage(BaseStorage):
         index: Dict[str, Dict[int, int]] = {}
         for word, postings_json in cur.fetchall():
             index[word] = {
-                int(k): v for k, v in json.loads(postings_json).items()
+                int(k): v for k, v in _loads(postings_json).items()
             }
 
         # 3. Document vectors (one row per doc, JSON vector)
@@ -242,7 +243,7 @@ class SQLiteStorage(BaseStorage):
         )
         doc_vectors: Dict[int, Dict[str, float]] = {}
         for doc_id, vector_json in cur.fetchall():
-            doc_vectors[doc_id] = json.loads(vector_json)
+            doc_vectors[doc_id] = _loads(vector_json)
 
         # 4. ID mapping 
         cur.execute(
