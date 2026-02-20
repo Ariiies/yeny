@@ -1,4 +1,5 @@
 # src/lucis/storage/sqlite_storage.py
+import json
 import sqlite3
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -75,34 +76,20 @@ class SQLiteStorage(BaseStorage):
             CREATE TABLE IF NOT EXISTS lucis_inverted_index (
                 index_name      TEXT    NOT NULL,
                 word            TEXT    NOT NULL,
-                doc_internal_id INTEGER NOT NULL,
-                frequency       INTEGER NOT NULL,
-                PRIMARY KEY (index_name, word, doc_internal_id),
+                postings        TEXT    NOT NULL,
+                PRIMARY KEY (index_name, word),
                 FOREIGN KEY (index_name) REFERENCES lucis_metadata(index_name)
             )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_lucis_word
-            ON lucis_inverted_index(index_name, word)
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_lucis_doc
-            ON lucis_inverted_index(index_name, doc_internal_id)
         """)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lucis_doc_vectors (
                 index_name      TEXT    NOT NULL,
                 doc_internal_id INTEGER NOT NULL,
-                word            TEXT    NOT NULL,
-                tfidf_score     REAL    NOT NULL,
-                PRIMARY KEY (index_name, doc_internal_id, word),
+                vector          TEXT    NOT NULL,
+                PRIMARY KEY (index_name, doc_internal_id),
                 FOREIGN KEY (index_name) REFERENCES lucis_metadata(index_name)
             )
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_lucis_vector_doc
-            ON lucis_doc_vectors(index_name, doc_internal_id)
         """)
 
         cur.execute("""
@@ -163,25 +150,29 @@ class SQLiteStorage(BaseStorage):
             ):
                 cur.execute(f"DELETE FROM {table} WHERE index_name = ?", (name,))
 
-            # 3. Inverted index 
+            # 3. Inverted index (one row per word, postings as JSON)
             inv_rows = [
-                (name, word, int(doc_id), freq)
+                (
+                    name,
+                    word,
+                    json.dumps(
+                        {int(doc_id): freq for doc_id, freq in docs.items()}
+                    ),
+                )
                 for word, docs in data["index"].items()
-                for doc_id, freq in docs.items()
             ]
             cur.executemany(
-                "INSERT INTO lucis_inverted_index VALUES (?, ?, ?, ?)",
+                "INSERT INTO lucis_inverted_index VALUES (?, ?, ?)",
                 inv_rows,
             )
 
-            # 4. TF-IDF document vectors 
+            # 4. TF-IDF document vectors (one row per doc, vector as JSON)
             vec_rows = [
-                (name, int(doc_id), word, score)
+                (name, int(doc_id), json.dumps(vector))
                 for doc_id, vector in data["doc_vectors"].items()
-                for word, score in vector.items()
             ]
             cur.executemany(
-                "INSERT INTO lucis_doc_vectors VALUES (?, ?, ?, ?)",
+                "INSERT INTO lucis_doc_vectors VALUES (?, ?, ?)",
                 vec_rows,
             )
 
@@ -231,25 +222,27 @@ class SQLiteStorage(BaseStorage):
             raise FileNotFoundError(f"Index '{name}' not found in database")
         total_docs, id_type = meta
 
-        # 2. Inverted index 
+        # 2. Inverted index (one row per word, JSON postings)
         cur.execute(
-            "SELECT word, doc_internal_id, frequency "
+            "SELECT word, postings "
             "FROM lucis_inverted_index WHERE index_name = ?",
             (name,),
         )
         index: Dict[str, Dict[int, int]] = {}
-        for word, doc_id, freq in cur.fetchall():
-            index.setdefault(word, {})[doc_id] = freq
+        for word, postings_json in cur.fetchall():
+            index[word] = {
+                int(k): v for k, v in json.loads(postings_json).items()
+            }
 
-        # 3. Document vectors 
+        # 3. Document vectors (one row per doc, JSON vector)
         cur.execute(
-            "SELECT doc_internal_id, word, tfidf_score "
+            "SELECT doc_internal_id, vector "
             "FROM lucis_doc_vectors WHERE index_name = ?",
             (name,),
         )
         doc_vectors: Dict[int, Dict[str, float]] = {}
-        for doc_id, word, score in cur.fetchall():
-            doc_vectors.setdefault(doc_id, {})[word] = score
+        for doc_id, vector_json in cur.fetchall():
+            doc_vectors[doc_id] = json.loads(vector_json)
 
         # 4. ID mapping 
         cur.execute(

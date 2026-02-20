@@ -19,6 +19,7 @@ For PostgreSQL::
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Dict, Optional, Union
 
@@ -160,27 +161,14 @@ class AlchemyStorage(BaseStorage):
             "lucis_inverted_index",
             self._metadata,
             Column("index_name", String(255), nullable=False),
-            Column("word", String(255), nullable=False),
-            Column("doc_internal_id", Integer, nullable=False),
-            Column("frequency", Integer, nullable=False),
+            Column("word", String(255, collation="utf8mb4_bin"), nullable=False),
+            Column("postings", Text, nullable=False),
         )
-        # Composite primary key + indexes for fast lookups
         Index(
             "pk_lucis_inv",
             self._t_inverted_index.c.index_name,
             self._t_inverted_index.c.word,
-            self._t_inverted_index.c.doc_internal_id,
             unique=True,
-        )
-        Index(
-            "idx_lucis_inv_word",
-            self._t_inverted_index.c.index_name,
-            self._t_inverted_index.c.word,
-        )
-        Index(
-            "idx_lucis_inv_doc",
-            self._t_inverted_index.c.index_name,
-            self._t_inverted_index.c.doc_internal_id,
         )
 
         self._t_doc_vectors = Table(
@@ -188,20 +176,13 @@ class AlchemyStorage(BaseStorage):
             self._metadata,
             Column("index_name", String(255), nullable=False),
             Column("doc_internal_id", Integer, nullable=False),
-            Column("word", String(255), nullable=False),
-            Column("tfidf_score", Float, nullable=False),
+            Column("vector", Text, nullable=False),
         )
         Index(
             "pk_lucis_vec",
             self._t_doc_vectors.c.index_name,
             self._t_doc_vectors.c.doc_internal_id,
-            self._t_doc_vectors.c.word,
             unique=True,
-        )
-        Index(
-            "idx_lucis_vec_doc",
-            self._t_doc_vectors.c.index_name,
-            self._t_doc_vectors.c.doc_internal_id,
         )
 
         self._t_id_mapping = Table(
@@ -276,30 +257,28 @@ class AlchemyStorage(BaseStorage):
                     delete(table).where(table.c.index_name == name)
                 )
 
-            # 3. Inverted index
+            # 3. Inverted index (one row per word, postings as JSON)
             inv_rows = [
                 {
                     "index_name": name,
                     "word": word,
-                    "doc_internal_id": int(doc_id),
-                    "frequency": freq,
+                    "postings": json.dumps(
+                        {int(doc_id): freq for doc_id, freq in docs.items()}
+                    ),
                 }
                 for word, docs in data["index"].items()
-                for doc_id, freq in docs.items()
             ]
             if inv_rows:
                 conn.execute(self._t_inverted_index.insert(), inv_rows)
 
-            # 4. TF-IDF document vectors
+            # 4. TF-IDF document vectors (one row per doc, vector as JSON)
             vec_rows = [
                 {
                     "index_name": name,
                     "doc_internal_id": int(doc_id),
-                    "word": word,
-                    "tfidf_score": score,
+                    "vector": json.dumps(vector),
                 }
                 for doc_id, vector in data["doc_vectors"].items()
-                for word, score in vector.items()
             ]
             if vec_rows:
                 conn.execute(self._t_doc_vectors.insert(), vec_rows)
@@ -351,31 +330,31 @@ class AlchemyStorage(BaseStorage):
                 )
             total_docs, id_type = row
 
-            # 2. Inverted index
+            # 2. Inverted index (one row per word, JSON postings)
             rows = conn.execute(
                 select(
                     self._t_inverted_index.c.word,
-                    self._t_inverted_index.c.doc_internal_id,
-                    self._t_inverted_index.c.frequency,
+                    self._t_inverted_index.c.postings,
                 ).where(self._t_inverted_index.c.index_name == name)
             ).fetchall()
 
             index: Dict[str, Dict[int, int]] = {}
-            for word, doc_id, freq in rows:
-                index.setdefault(word, {})[doc_id] = freq
+            for word, postings_json in rows:
+                index[word] = {
+                    int(k): v for k, v in json.loads(postings_json).items()
+                }
 
-            # 3. Document vectors
+            # 3. Document vectors (one row per doc, JSON vector)
             rows = conn.execute(
                 select(
                     self._t_doc_vectors.c.doc_internal_id,
-                    self._t_doc_vectors.c.word,
-                    self._t_doc_vectors.c.tfidf_score,
+                    self._t_doc_vectors.c.vector,
                 ).where(self._t_doc_vectors.c.index_name == name)
             ).fetchall()
 
             doc_vectors: Dict[int, Dict[str, float]] = {}
-            for doc_id, word, score in rows:
-                doc_vectors.setdefault(doc_id, {})[word] = score
+            for doc_id, vector_json in rows:
+                doc_vectors[doc_id] = json.loads(vector_json)
 
             # 4. ID mapping
             rows = conn.execute(
