@@ -2,6 +2,7 @@ import time
 import threading
 from typing import Any, Callable, Dict, List, Optional, Union
 from .engines.core import CoreEngine
+from .engines.simple import SimpleEngine
 from .engines.base import DocId
 from .storage.base import BaseStorage
 from .storage.json_storage import JSONStorage
@@ -26,7 +27,7 @@ def _get_alchemy_storage_class():
 # As new engines are added, register them here
 _ENGINE_REGISTRY = {
     "core": CoreEngine,
-    # Future: "plus": PlusEngine, "numpy": NumpyEngine, etc.
+    "simple": SimpleEngine,
 }
 
 

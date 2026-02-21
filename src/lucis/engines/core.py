@@ -1,7 +1,7 @@
 from typing import Any, List, Dict, Tuple, Optional, Union
 from .base import BaseEngine, DocId
 
-# import utils functions (relative imports to avoid circular dependencies)
+# import utils functions 
 from ..utils.index.core import build_index as build_idx_func
 from ..utils.index.stats import get_doc_len, compute_tfidf, compute_idf
 from ..utils.math.core import sparse_cosine_similarity, sort_results
@@ -151,7 +151,8 @@ class CoreEngine(BaseEngine):
             "doc_lengths": self.doc_lengths,
             "doc_vectors": self.doc_vectors,
             "id_map": self.id_map,  # Essential for returning original IDs after loading
-            "id_type": self.id_type
+            "id_type": self.id_type,
+            "engine_name": self.name,
         }
         self.storage.save(state, name)
 

@@ -243,7 +243,7 @@ class AlchemyStorage(BaseStorage):
                     index_name=name,
                     total_docs=data["total_docs"],
                     id_type=data["id_type"],
-                    engine_name="CoreEngine",
+                    engine_name=data.get("engine_name", "CoreEngine"),
                 )
             )
 
@@ -273,15 +273,17 @@ class AlchemyStorage(BaseStorage):
                 conn.execute(self._t_inverted_index.insert(), inv_rows)
 
             # 4. TF-IDF document vectors (one row per doc, vector as JSON)
-            vec_rows = [
-                {
-                    "index_name": name,
-                    "doc_internal_id": int(doc_id),
-                    "vector": _dumps(vector),
-                }
-                for doc_id, vector in data["doc_vectors"].items()
-            ]
-            if vec_rows:
+            #    Optional: SimpleEngine does not produce doc_vectors
+            doc_vectors = data.get("doc_vectors", {})
+            if doc_vectors:
+                vec_rows = [
+                    {
+                        "index_name": name,
+                        "doc_internal_id": int(doc_id),
+                        "vector": _dumps(vector),
+                    }
+                    for doc_id, vector in doc_vectors.items()
+                ]
                 conn.execute(self._t_doc_vectors.insert(), vec_rows)
 
             # 5. ID mapping (internal → original)

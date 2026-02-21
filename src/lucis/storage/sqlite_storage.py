@@ -140,7 +140,7 @@ class SQLiteStorage(BaseStorage):
                 INSERT OR REPLACE INTO lucis_metadata
                     (index_name, total_docs, id_type, engine_name, updated_at)
                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (name, data["total_docs"], data["id_type"], "CoreEngine"))
+            """, (name, data["total_docs"], data["id_type"], data.get("engine_name", "CoreEngine")))
 
             # 2. Wipe previous data for this index 
             for table in (
@@ -168,14 +168,17 @@ class SQLiteStorage(BaseStorage):
             )
 
             # 4. TF-IDF document vectors (one row per doc, vector as JSON)
-            vec_rows = [
-                (name, int(doc_id), _dumps(vector))
-                for doc_id, vector in data["doc_vectors"].items()
-            ]
-            cur.executemany(
-                "INSERT INTO lucis_doc_vectors VALUES (?, ?, ?)",
-                vec_rows,
-            )
+            #    Optional: SimpleEngine does not produce doc_vectors
+            doc_vectors = data.get("doc_vectors", {})
+            if doc_vectors:
+                vec_rows = [
+                    (name, int(doc_id), _dumps(vector))
+                    for doc_id, vector in doc_vectors.items()
+                ]
+                cur.executemany(
+                    "INSERT INTO lucis_doc_vectors VALUES (?, ?, ?)",
+                    vec_rows,
+                )
 
             # 5. ID mapping (internal → original) 
             id_rows = [
