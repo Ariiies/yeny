@@ -59,14 +59,35 @@ class IndexWorker:
     During the entire rebuild cycle, the live index continues to serve
     search requests with zero downtime.
 
+    Supports two modes of operation:
+
+    **Full rebuild (default):**
+        Fetches the entire corpus via ``data_fn`` and calls
+        ``lucis.reindex(data)``.  Best for ``CoreEngine`` or when
+        the full dataset is small.
+
+    **Incremental update** (``incremental=True``):
+        Fetches only new documents via ``delta_fn`` and calls
+        ``lucis.add_documents(delta)``.  Best for ``LiteEngine``
+        where existing scores are not invalidated by new documents.
+        Falls back to full rebuild via ``data_fn`` if ``delta_fn``
+        is not provided.
+
     Args:
         lucis: The ``Lucis`` instance whose index will be managed.
         data_fn: A callable that returns fresh data
-            (``Dict[id, text]`` or ``List[text]``). Called each cycle.
+            (``Dict[id, text]`` or ``List[text]``). Called each cycle
+            for full rebuilds.
         interval: Seconds between rebuild cycles. Default 60.
         change_detector: Optional callable ``() → bool``. When provided,
             the worker only triggers a rebuild if this returns ``True``.
             If ``None``, a rebuild happens every cycle unconditionally.
+        incremental: If ``True``, the worker uses ``delta_fn`` to fetch
+            only new documents and calls ``add_documents()`` instead
+            of a full ``reindex()``. Default ``False``.
+        delta_fn: Callable that returns only the **new** documents
+            since the last cycle. Required when ``incremental=True``
+            unless you want to fall back to ``data_fn`` + full rebuild.
         auto_purge: If ``True``, old versions are automatically cleaned
             up after each successful rebuild. Default ``True``.
         keep_versions: Number of versions to retain when purging.
@@ -93,6 +114,8 @@ class IndexWorker:
         data_fn: Callable[[], Union[List[str], Dict[Any, str]]],
         interval: float = 60,
         change_detector: Optional[Callable[[], bool]] = None,
+        incremental: bool = False,
+        delta_fn: Optional[Callable[[], Union[List[str], Dict[Any, str]]]] = None,
         auto_purge: bool = True,
         keep_versions: int = 3,
         on_rebuild: Optional[Callable[[str], None]] = None,
@@ -103,6 +126,8 @@ class IndexWorker:
         self._data_fn = data_fn
         self._interval = interval
         self._change_detector = change_detector
+        self._incremental = incremental
+        self._delta_fn = delta_fn
         self._auto_purge = auto_purge
         self._keep_versions = keep_versions
         self._on_rebuild = on_rebuild
@@ -249,13 +274,23 @@ class IndexWorker:
             self._interruptible_sleep(self._interval)
 
     def _do_rebuild(self) -> None:
-        """Fetch data, rebuild index, swap alias, purge."""
+        """Fetch data, rebuild or incrementally update index, swap alias, purge."""
         start = time.perf_counter()
 
-        data = self._data_fn()
+        if self._incremental and self._delta_fn is not None:
+            # Incremental mode: fetch only new documents and add them
+            delta = self._delta_fn()
 
-        # Use the synchronous reindex (builds + saves + swaps alias)
-        self._lucis.reindex(data)
+            # Skip if no new documents
+            if not delta:
+                logger.debug("Incremental update: no new documents — skipping")
+                return
+
+            self._lucis.add_documents(delta)
+        else:
+            # Full rebuild mode (default)
+            data = self._data_fn()
+            self._lucis.reindex(data)
 
         elapsed = time.perf_counter() - start
         self.last_rebuild_time = round(elapsed, 3)
@@ -264,9 +299,11 @@ class IndexWorker:
         # Grab the current physical name for the callback
         physical_name = self._lucis.storage.get_alias(self._lucis.name) or "unknown"
 
+        mode = "incremental" if (self._incremental and self._delta_fn) else "full"
         logger.info(
-            "Rebuild %d complete in %.3fs → %s",
+            "Rebuild %d (%s) complete in %.3fs → %s",
             self.rebuilds,
+            mode,
             elapsed,
             physical_name,
         )

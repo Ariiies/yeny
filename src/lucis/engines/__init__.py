@@ -1,8 +1,8 @@
 
 from .core import CoreEngine
-from .simple import SimpleEngine
+from .lite import LiteEngine
 
 __all__ = [
     "CoreEngine",
-    "SimpleEngine",
+    "LiteEngine",
 ]

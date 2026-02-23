@@ -2,7 +2,7 @@ import time
 import threading
 from typing import Any, Callable, Dict, List, Optional, Union
 from .engines.core import CoreEngine
-from .engines.simple import SimpleEngine
+from .engines.lite import LiteEngine
 from .engines.base import DocId
 from .storage.base import BaseStorage
 from .storage.json_storage import JSONStorage
@@ -27,7 +27,7 @@ def _get_alchemy_storage_class():
 # As new engines are added, register them here
 _ENGINE_REGISTRY = {
     "core": CoreEngine,
-    "simple": SimpleEngine,
+    "lite": LiteEngine,
 }
 
 
@@ -96,7 +96,12 @@ class Lucis:
         self.name = name
         self._is_indexed = False
         self._source_info: Optional[Dict[str, Optional[str]]] = None
-        self.preprocessor: Callable[[str], Union[str, List[str]]] = preprocessor or word_tokenizer
+        # If user provides a preprocessor, use it globally.
+        # If None, the engine will use its own default:
+        #   CoreEngine → word_tokenizer
+        #   LiteEngine → char_ngram_tokenizer(3) + lowercase
+        self._user_preprocessor = preprocessor
+        self.preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = preprocessor
 
         # Background rebuild state (Phase 3)
         self._rebuild_thread: Optional[threading.Thread] = None
@@ -135,7 +140,10 @@ class Lucis:
                 engine_name=engine,
                 detail=f"Unknown engine '{engine}'. Available: {available}"
             )
-        self.engine = engine_class(storage=self.storage, preprocessor=self.preprocessor)
+        # Pass the user's preprocessor (may be None — the engine will use its own default)
+        self.engine = engine_class(storage=self.storage, preprocessor=self._user_preprocessor)
+        # Sync: Lucis.preprocessor always reflects the engine's resolved preprocessor
+        self.preprocessor = self.engine.preprocessor
 
         # 3. Smart persistence: if the index already exists on disk, load it
         # This enables the "pick up where you left off" workflow:
@@ -616,6 +624,41 @@ class Lucis:
         self._is_indexed = True
         self.save()
 
+    def add_documents(
+        self,
+        new_docs: Union[List[str], Dict[Any, str]],
+        persist: bool = True,
+    ) -> None:
+        """
+        Incrementally add new documents to the current index.
+
+        Args:
+            new_docs: New documents — ``Dict[id, text]`` or ``List[text]``.
+            persist: Whether to save the updated index to storage.
+
+        Raises:
+            LucisEngineError: If the engine does not support incremental
+                indexing (e.g., ``CoreEngine``).
+
+        Example::
+
+            luc.add_documents({"new_doc": "some text"})
+            luc.add_documents(["another document"])
+        """
+        if not hasattr(self.engine, "add_documents"):
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=(
+                    f"'{self.engine.name}' does not support incremental indexing. "
+                    "Use reindex() for a full rebuild, or switch to engine='lite'."
+                ),
+            )
+
+        self.engine.add_documents(new_docs)
+        self._is_indexed = True
+        if persist:
+            self.save()
+
     def rollback(self) -> None:
         """
         Roll back the alias to the previous index version.
@@ -921,6 +964,139 @@ class Lucis:
             detail=f"Cannot auto-generate data_fn: unknown source type '{info.get('type')}'",
         )
 
+    def _auto_delta_fn(
+        self,
+    ) -> Optional[Callable[[], Union[List[str], Dict[Any, str]]]]:
+        """Auto-generate a delta_fn that returns only NEW documents since last call.
+
+        Strategy selection:
+
+        1. **Table + id_column** (optimal): Uses ``WHERE id > last_max_id``
+           to fetch only new rows at the SQL level.
+        2. **Query or table without id_column** (universal): Fetches all
+           data via ``data_fn`` and diffs against already-indexed IDs
+           to extract only the new documents.
+
+        Returns ``None`` only when ``_source_info`` is missing entirely
+        (no auto-generation possible).
+        """
+        info = self._source_info
+        if info is None:
+            return None
+
+        storage = self.storage
+
+        # ── Optimized path: table + id_column → SQL-level delta ────
+        if info["type"] == "table" and info.get("id_column"):
+            return self._auto_delta_fn_by_id(info, storage)
+
+        # ── Universal path: fetch all → diff against known IDs ─────
+        return self._auto_delta_fn_universal()
+
+    def _auto_delta_fn_by_id(
+        self,
+        info: Dict[str, Optional[str]],
+        storage: Any,
+    ) -> Callable[[], Dict[str, str]]:
+        """Optimized delta: ``WHERE id > last_max_id`` at the SQL level."""
+        id_col = info["id_column"]
+        table_name = info["table_name"]
+        text_col = info["text_column"]
+        where = info.get("where_clause")
+
+        last_max = [0]
+
+        if hasattr(storage, "_engine"):
+            # AlchemyStorage
+            from sqlalchemy import text as _sa_text
+
+            with storage._engine.connect() as conn:
+                result = conn.execute(
+                    _sa_text(f"SELECT MAX({id_col}) FROM {table_name}")
+                ).scalar()
+                if result is not None:
+                    last_max[0] = result
+
+            def delta_alchemy():
+                from sqlalchemy import text as _sa_t
+                sql = f"SELECT {id_col}, {text_col} FROM {table_name} WHERE {id_col} > :last_id"
+                if where:
+                    sql += f" AND ({where})"
+                sql += f" ORDER BY {id_col}"
+                with storage._engine.connect() as conn:
+                    rows = conn.execute(
+                        _sa_t(sql), {"last_id": last_max[0]}
+                    ).fetchall()
+                if not rows:
+                    return {}
+                data = {str(row[0]): row[1] for row in rows}
+                last_max[0] = max(row[0] for row in rows)
+                return data
+
+            return delta_alchemy
+
+        else:
+            # SQLiteStorage
+            import sqlite3 as _sqlite3
+
+            db_path = getattr(storage, "db_path", None)
+            conn = _sqlite3.connect(db_path)
+            result = conn.execute(
+                f"SELECT MAX({id_col}) FROM {table_name}"
+            ).fetchone()[0]
+            conn.close()
+            if result is not None:
+                last_max[0] = result
+
+            def delta_sqlite():
+                import sqlite3
+                sql = f"SELECT {id_col}, {text_col} FROM {table_name} WHERE {id_col} > ?"
+                if where:
+                    sql += f" AND ({where})"
+                sql += f" ORDER BY {id_col}"
+                conn = sqlite3.connect(db_path)
+                rows = conn.execute(sql, (last_max[0],)).fetchall()
+                conn.close()
+                if not rows:
+                    return {}
+                data = {str(row[0]): row[1] for row in rows}
+                last_max[0] = max(row[0] for row in rows)
+                return data
+
+            return delta_sqlite
+
+    def _auto_delta_fn_universal(
+        self,
+    ) -> Callable[[], Union[List[str], Dict[Any, str]]]:
+        """Universal delta: fetch all data → diff against indexed IDs.
+
+        Less efficient than the SQL-level approach (still reads the full
+        table/query), but works with **any** source type and correctly
+        produces only the new documents for ``add_documents()``.
+        """
+        data_fn = self._auto_data_fn()
+        engine = self.engine
+
+        def delta_universal():
+            all_data = data_fn()
+
+            if isinstance(all_data, dict):
+                # Dict source → diff by key
+                known_ids = set(str(v) for v in engine.id_map.values())
+                new_data = {
+                    k: v for k, v in all_data.items()
+                    if str(k) not in known_ids
+                }
+                return new_data
+            else:
+                # List source → new items are beyond current total_docs
+                current_count = engine.total_docs
+                if len(all_data) <= current_count:
+                    return []
+                return all_data[current_count:]
+
+        return delta_universal
+
     def _auto_change_detector(self) -> Optional[Callable[[], bool]]:
         """Auto-generate a count-based change detector from source metadata.
 
@@ -993,6 +1169,8 @@ class Lucis:
         data_fn: Optional[Callable[[], Union[List[str], Dict[Any, str]]]] = None,
         interval: float = 60,
         change_detector: Optional[Callable[[], bool]] = None,
+        incremental: Optional[bool] = None,
+        delta_fn: Optional[Callable[[], Union[List[str], Dict[Any, str]]]] = None,
         auto_purge: bool = True,
         keep_versions: int = 2,
         on_rebuild: Optional[Callable[[str], None]] = None,
@@ -1011,6 +1189,17 @@ class Lucis:
         ``data_fn`` and ``change_detector`` are **auto-generated**
         when not provided — the worker just works out of the box.
 
+        **Incremental mode** (LiteEngine only):
+        When ``incremental=True`` (or auto-detected), the worker uses
+        ``delta_fn`` instead of ``data_fn`` to fetch only new rows and
+        calls ``add_documents()`` instead of ``reindex()``.  This is
+        significantly faster for append-heavy workloads.
+
+        If ``incremental`` is not specified:
+        - Auto-enabled when engine is ``LiteEngine`` and source is
+          a table with an ``id_column``.
+        - Falls back to full rebuild mode otherwise.
+
         Args:
             data_fn: Callable that returns fresh data each cycle.
                 If ``None``, auto-generated from source metadata.
@@ -1019,6 +1208,9 @@ class Lucis:
                 the rebuild only runs if this returns ``True``.
                 If ``None`` and source is a table, auto-generated
                 using ``COUNT(*)`` comparison.
+            incremental: Enable incremental mode.  ``None`` = auto-detect.
+            delta_fn: Callable returning only *new* documents since last
+                call.  Auto-generated for table sources with id_column.
             auto_purge: Automatically clean old versions (default True).
             keep_versions: Versions to retain when purging (default 2).
             on_rebuild: Callback ``fn(physical_name)`` on success.
@@ -1029,32 +1221,65 @@ class Lucis:
             An ``IndexWorker`` instance (not yet started).
             Call ``.start()`` to begin the loop.
 
-        Example — zero config (auto data_fn)::
+        Example — zero config (auto data_fn + auto incremental)::
 
             luc = Lucis.from_alchemy_table("articles", url=URL,
                                            text_column="content",
                                            id_column="article_id",
-                                           name="articles_idx")
+                                           name="articles_idx",
+                                           engine="lite")
             worker = luc.create_worker(interval=60)
             worker.start()
 
-        Example — custom data_fn::
+        Example — explicit incremental with custom delta_fn::
+
+            worker = luc.create_worker(
+                incremental=True,
+                delta_fn=my_delta_fetcher,
+                interval=30,
+            )
+            worker.start()
+
+        Example — full rebuild (default for CoreEngine)::
 
             worker = luc.create_worker(data_fn=my_fetch, interval=30)
             worker.start()
         """
-        # Auto-generate data_fn if not provided
+        # Auto-detect incremental mode
+        # LiteEngine → always incremental (uses add_documents)
+        # CoreEngine  → always full rebuild (uses reindex)
+        if incremental is None:
+            incremental = hasattr(self.engine, "add_documents")
+
+        # Auto-generate delta_fn for incremental mode 
+        if incremental and delta_fn is None:
+            delta_fn = self._auto_delta_fn()
+            if delta_fn is None:
+                # No source info at all — cannot auto-generate
+                import logging
+                logging.getLogger("lucis.worker").warning(
+                    "Cannot auto-generate delta_fn for incremental mode; "
+                    "falling back to full rebuild."
+                )
+                incremental = False
+
+        # Auto-generate data_fn (always needed as fallback)
         if data_fn is None:
             if self._source_info is None:
-                raise LucisEngineError(
-                    engine_name=self.engine.name,
-                    detail=(
-                        "Cannot auto-generate data_fn: no source info available. "
-                        "Either create the index with from_alchemy_table / "
-                        "from_sqlite_table, or provide data_fn explicitly."
-                    ),
-                )
-            data_fn = self._auto_data_fn()
+                if not incremental:
+                    raise LucisEngineError(
+                        engine_name=self.engine.name,
+                        detail=(
+                            "Cannot auto-generate data_fn: no source info available. "
+                            "Either create the index with from_alchemy_table / "
+                            "from_sqlite_table, or provide data_fn explicitly."
+                        ),
+                    )
+                # Incremental-only: data_fn not strictly needed,
+                # but we still create a no-op for the worker signature.
+                data_fn = lambda: {}
+            else:
+                data_fn = self._auto_data_fn()
 
         # Auto-generate change_detector if not provided
         if change_detector is None and self._source_info is not None:
@@ -1066,6 +1291,8 @@ class Lucis:
             data_fn=data_fn,
             interval=interval,
             change_detector=change_detector,
+            incremental=incremental,
+            delta_fn=delta_fn,
             auto_purge=auto_purge,
             keep_versions=keep_versions,
             on_rebuild=on_rebuild,

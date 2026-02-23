@@ -273,7 +273,7 @@ class AlchemyStorage(BaseStorage):
                 conn.execute(self._t_inverted_index.insert(), inv_rows)
 
             # 4. TF-IDF document vectors (one row per doc, vector as JSON)
-            #    Optional: SimpleEngine does not produce doc_vectors
+            #    Optional: LiteEngine does not produce doc_vectors
             doc_vectors = data.get("doc_vectors", {})
             if doc_vectors:
                 vec_rows = [

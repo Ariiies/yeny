@@ -1,20 +1,25 @@
-from typing import Any, List, Dict, Tuple, Optional, Union
+from typing import Any, Callable, List, Dict, Tuple, Optional, Union
 from .base import BaseEngine, DocId
 
 from ..utils.index.core import build_index as build_idx_func
 from ..utils.index.stats import get_doc_len
 from ..utils.math.core import sort_results
-from ..utils.nlp import simple_tokenizer
+from ..utils.nlp import simple_tokenizer, char_ngram_tokenizer
 from ..exceptions import LucisEmptyCorpusError
 
 
-class SimpleEngine(BaseEngine):
+def _default_lite_preprocessor(text: str) -> list[str]:
+    """Default preprocessor for LiteEngine: lowercase + char 3-grams."""
+    return char_ngram_tokenizer(3)(text.lower())
+
+
+class LiteEngine(BaseEngine):
     """
     Lightweight search engine based on normalized Term Frequency.
 
     Uses only the inverted index and document lengths — no TF-IDF vectors,
     no cosine similarity, no IDF.  This makes it significantly lighter
-    on both disk and RAM compared to CoreEngine and is a powefull solution for
+    on both disk and RAM compared to CoreEngine and is a powerful solution for
     some specific cases.
 
     Scoring formula:
@@ -30,12 +35,15 @@ class SimpleEngine(BaseEngine):
         - Use cases where IDF weighting is unnecessary.
     """
 
+    # LiteEngine defaults to char 3-gram tokenizer with lowercase
+    _default_preprocessor: Callable = staticmethod(_default_lite_preprocessor)
+
     def __init__(self, storage: Optional[Any] = None, preprocessor: Optional[Any] = None):
         super().__init__(storage=storage, preprocessor=preprocessor)
 
     @property
     def name(self) -> str:
-        return "SimpleEngine"
+        return "LiteEngine"
 
     def build_index(self, corpus: Union[List[str], Dict[str, str]]) -> None:
         """
@@ -142,3 +150,63 @@ class SimpleEngine(BaseEngine):
         self.doc_lengths = state["doc_lengths"]
         self.id_map = state.get("id_map", {i: i for i in range(self.total_docs)})
         self.id_type = state.get("id_type", "none")
+
+    # Incremental indexing
+
+    def add_documents(self, new_docs: Union[List[str], Dict[Any, str]]) -> None:
+        """
+        Incrementally add new documents to the existing index.
+        Args:
+            new_docs: New documents to add. Supports the same formats
+                as ``build_index``:
+
+                - ``List[str]``: IDs continue from ``self.total_docs``.
+                - ``Dict[Any, str]``: Preserves original keys.
+
+        Note:
+            Call ``persist()`` or ``Lucis.save()`` afterwards to
+            persist the updated index to storage.
+        """
+        # Determine the starting internal id for new documents
+        start_id = self.total_docs
+
+        # Normalize new documents
+        if isinstance(new_docs, dict):
+            new_texts = list(new_docs.values())
+            new_keys = list(new_docs.keys())
+            for i, key in enumerate(new_keys):
+                self.id_map[start_id + i] = key
+            if self.id_type == "none":
+                self.id_type = "custom"
+        elif isinstance(new_docs, list):
+            new_texts = new_docs
+            for i in range(len(new_texts)):
+                self.id_map[start_id + i] = start_id + i
+            if self.id_type == "none":
+                self.id_type = "sequential"
+        else:
+            raise ValueError("new_docs must be a List[str] or Dict[Any, str].")
+
+        if not new_texts:
+            return
+
+        # Preprocess each new document
+        tokenized_new = []
+        for doc in new_texts:
+            result = self.preprocessor(doc)
+            tokenized_new.append(
+                simple_tokenizer(result) if isinstance(result, str) else result
+            )
+
+        # Update inverted index and doc_lengths incrementally
+        for i, tokens in enumerate(tokenized_new):
+            doc_id = start_id + i
+            doc_length = len(tokens)
+            self.doc_lengths[doc_id] = doc_length
+
+            for token in tokens:
+                if token not in self.index:
+                    self.index[token] = {}
+                self.index[token][doc_id] = self.index[token].get(doc_id, 0) + 1
+
+        self.total_docs += len(new_texts)
