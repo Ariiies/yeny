@@ -19,7 +19,10 @@ from .models.search import SearchResult, SearchResponse
 from .storage.sqlite_storage import SQLiteStorage
 
 # Worker (Phase 4 — Shadow Indexing)
-from .worker import IndexWorker
+from .core.worker import IndexWorker
+
+# Shard constants (Phase 5 — Temporal Sharding)
+from .core.shard import LUCIS_GLOBAL_SHARD, LUCIS_DEFAULT_DATE_COLUMNS
 
 # AlchemyStorage is lazy-loaded (requires sqlalchemy)
 def __getattr__(name):
@@ -52,6 +55,10 @@ __all__ = [
     
     # Worker
     "IndexWorker",
+    
+    # Shard constants
+    "LUCIS_GLOBAL_SHARD",
+    "LUCIS_DEFAULT_DATE_COLUMNS",
     
     # Utilities
     "get_engine",

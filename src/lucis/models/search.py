@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List,  Union
+from typing import Any, Dict, List, Optional, Union
 from ..engines.base import DocId
 
 
@@ -20,10 +20,13 @@ class SearchResult:
         doc_id: The original document identifier (preserves input format).
         score: Cosine similarity score between query and document (0.0 to 1.0).
         rank: Position in the results list (1-based, most relevant first).
+        shard_key: The temporal shard this result came from (e.g. ``"2026_02"``).
+            ``None`` for non-sharded indices.
     """
     doc_id: DocId
     score: float
     rank: int
+    shard_key: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,8 @@ class SearchResponse:
         total_results: Number of documents found.
         search_time_ms: Wall-clock search time in milliseconds.
         results: Ranked list of SearchResult objects.
+        shards_searched: Number of shards queried (0 = non-sharded).
+        total_shards: Total shards in the index (0 = non-sharded).
     """
     query: Union[str, List[str]]
     tokens: List[str]
@@ -48,6 +53,8 @@ class SearchResponse:
     total_results: int
     search_time_ms: float
     results: List[SearchResult] = field(default_factory=list)
+    shards_searched: int = 0
+    total_shards: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes the response to a plain dict (JSON-ready)."""

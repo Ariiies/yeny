@@ -80,3 +80,25 @@ class BaseStorage(ABC):
     def count_rows(self, table_name: str) -> Optional[int]:
         """Return the row count of a user table, or ``None`` if unsupported."""
         return None
+
+    # Shard support (temporal partitioning)
+
+    def save_shard_registry(self, index_name: str, shard_keys: list) -> None:
+        """Persist the list of shard keys for a sharded index.
+
+        Args:
+            index_name: The versioned physical name of the parent index.
+            shard_keys: List of shard keys (e.g. ``["2026_01", "9999_99"]``).
+        """
+        pass  # no-op for backends without shard support
+
+    def load_shard_registry(self, index_name: str) -> list:
+        """Return the shard keys for *index_name*, or empty list.
+
+        An empty list means the index is **not** sharded (monolithic).
+        """
+        return []
+
+    def is_sharded(self, index_name: str) -> bool:
+        """Return ``True`` if *index_name* is a sharded index."""
+        return len(self.load_shard_registry(index_name)) > 0

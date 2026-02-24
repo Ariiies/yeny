@@ -138,6 +138,8 @@ class AlchemyStorage(BaseStorage):
         self._define_tables()
         # Create tables if they don't exist (safe, idempotent)
         self._metadata.create_all(self._engine)
+        # Upgrade TEXT → LONGTEXT on existing MySQL/MariaDB tables
+        self._upgrade_text_columns()
 
     # Table definitions
 
@@ -154,6 +156,7 @@ class AlchemyStorage(BaseStorage):
             Column("source_table", String(255), nullable=True),
             Column("source_column", String(255), nullable=True),
             Column("source_id_column", String(255), nullable=True),
+            Column("source_date_column", String(255), nullable=True),
             Column("source_query", Text, nullable=True),
             Column("source_where", Text, nullable=True),
         )
@@ -163,7 +166,7 @@ class AlchemyStorage(BaseStorage):
             self._metadata,
             Column("index_name", String(255), nullable=False),
             Column("word", String(255, collation="utf8mb4_bin"), nullable=False),
-            Column("postings", Text, nullable=False),
+            Column("postings", Text(2**24), nullable=False),
         )
         Index(
             "pk_lucis_inv",
@@ -177,7 +180,7 @@ class AlchemyStorage(BaseStorage):
             self._metadata,
             Column("index_name", String(255), nullable=False),
             Column("doc_internal_id", Integer, nullable=False),
-            Column("vector", Text, nullable=False),
+            Column("vector", Text(2**24), nullable=False),
         )
         Index(
             "pk_lucis_vec",
@@ -220,6 +223,61 @@ class AlchemyStorage(BaseStorage):
             Column("alias_name", String(255), primary_key=True),
             Column("target_index", String(255), nullable=False),
         )
+
+        self._t_shard_registry = Table(
+            "lucis_shard_registry",
+            self._metadata,
+            Column("index_name", String(255), nullable=False),
+            Column("shard_key", String(10), nullable=False),
+        )
+        Index(
+            "pk_lucis_shard_reg",
+            self._t_shard_registry.c.index_name,
+            self._t_shard_registry.c.shard_key,
+            unique=True,
+        )
+
+    # Internal helpers
+
+    def _upgrade_text_columns(self) -> None:
+        """Upgrade TEXT columns to LONGTEXT on MySQL/MariaDB for existing tables.
+
+        This is a no-op on non-MySQL backends (PostgreSQL TEXT is already
+        unlimited) and safe to call multiple times.
+        """
+        dialect = self._engine.dialect.name
+        if dialect not in ("mysql", "mariadb"):
+            return
+        alterations = [
+            ("lucis_inverted_index", "postings"),
+            ("lucis_doc_vectors", "vector"),
+        ]
+        with self._engine.begin() as conn:
+            for table_name, col_name in alterations:
+                try:
+                    row = conn.execute(
+                        sa_text(
+                            "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                            "WHERE TABLE_SCHEMA = DATABASE() "
+                            f"AND TABLE_NAME = :tbl AND COLUMN_NAME = :col"
+                        ),
+                        {"tbl": table_name, "col": col_name},
+                    ).fetchone()
+                    if row and row[0].lower() != "longtext":
+                        conn.execute(
+                            sa_text(
+                                f"ALTER TABLE `{table_name}` "
+                                f"MODIFY COLUMN `{col_name}` LONGTEXT NOT NULL"
+                            )
+                        )
+                except Exception:
+                    pass  # table may not exist yet on first run
+
+    @staticmethod
+    def _chunked_insert(conn: Any, table: Any, rows: list, chunk_size: int = 200) -> None:
+        """Insert *rows* into *table* in small batches to avoid max_allowed_packet errors."""
+        for i in range(0, len(rows), chunk_size):
+            conn.execute(table.insert(), rows[i : i + chunk_size])
 
     # BaseStorage interface 
 
@@ -270,7 +328,8 @@ class AlchemyStorage(BaseStorage):
                 for word, docs in data["index"].items()
             ]
             if inv_rows:
-                conn.execute(self._t_inverted_index.insert(), inv_rows)
+                # chunk_size=100: postings JSON puede ser muy grande por término
+                self._chunked_insert(conn, self._t_inverted_index, inv_rows, chunk_size=100)
 
             # 4. TF-IDF document vectors (one row per doc, vector as JSON)
             #    Optional: LiteEngine does not produce doc_vectors
@@ -284,7 +343,7 @@ class AlchemyStorage(BaseStorage):
                     }
                     for doc_id, vector in doc_vectors.items()
                 ]
-                conn.execute(self._t_doc_vectors.insert(), vec_rows)
+                self._chunked_insert(conn, self._t_doc_vectors, vec_rows, chunk_size=500)
 
             # 5. ID mapping (internal → original)
             id_rows = [
@@ -296,7 +355,7 @@ class AlchemyStorage(BaseStorage):
                 for internal_id, original_id in data["id_map"].items()
             ]
             if id_rows:
-                conn.execute(self._t_id_mapping.insert(), id_rows)
+                self._chunked_insert(conn, self._t_id_mapping, id_rows, chunk_size=1000)
 
             # 6. Document lengths
             len_rows = [
@@ -308,7 +367,7 @@ class AlchemyStorage(BaseStorage):
                 for doc_id, length in data["doc_lengths"].items()
             ]
             if len_rows:
-                conn.execute(self._t_doc_lengths.insert(), len_rows)
+                self._chunked_insert(conn, self._t_doc_lengths, len_rows, chunk_size=1000)
 
     def load(self, name: str) -> Dict[str, Any]:
         """
@@ -414,8 +473,38 @@ class AlchemyStorage(BaseStorage):
     # Extras 
 
     def delete(self, name: str) -> None:
-        """Remove all data for the given index from every ``lucis_*`` table."""
+        """Remove all data for the given index from every ``lucis_*`` table.
+
+        If the index is sharded, all shard entries and the shard
+        registry are cleaned up automatically.
+        """
+        # Collect shard children (if any)
+        shard_keys = self.load_shard_registry(name)
+
         with self._engine.begin() as conn:
+            # Delete shard data first
+            for key in shard_keys:
+                shard_name = f"{name}__shard__{key}"
+                for table in (
+                    self._t_inverted_index,
+                    self._t_doc_vectors,
+                    self._t_id_mapping,
+                    self._t_doc_lengths,
+                    self._t_metadata,
+                ):
+                    conn.execute(
+                        delete(table).where(table.c.index_name == shard_name)
+                    )
+
+            # Delete shard registry
+            if shard_keys:
+                conn.execute(
+                    delete(self._t_shard_registry).where(
+                        self._t_shard_registry.c.index_name == name
+                    )
+                )
+
+            # Delete parent / main entry
             for table in (
                 self._t_inverted_index,
                 self._t_doc_vectors,
@@ -499,11 +588,16 @@ class AlchemyStorage(BaseStorage):
         return f"{base_name}__v{ts}"
 
     def list_versions(self, base_name: str) -> list:
-        """Return all physical versions of *base_name*, sorted oldest → newest."""
+        """Return all physical versions of *base_name*, sorted oldest → newest.
+
+        Shard entries (``__shard__``) are excluded — only parent
+        version names are returned.
+        """
         with self._engine.connect() as conn:
             rows = conn.execute(
                 select(self._t_metadata.c.index_name)
                 .where(self._t_metadata.c.index_name.like(f"{base_name}__v%"))
+                .where(~self._t_metadata.c.index_name.like("%__shard__%"))
                 .order_by(self._t_metadata.c.index_name)
             ).fetchall()
         return [row[0] for row in rows]
@@ -520,6 +614,7 @@ class AlchemyStorage(BaseStorage):
                     source_table=info.get("table_name"),
                     source_column=info.get("text_column"),
                     source_id_column=info.get("id_column"),
+                    source_date_column=info.get("date_column"),
                     source_query=info.get("query"),
                     source_where=info.get("where_clause"),
                 )
@@ -533,6 +628,7 @@ class AlchemyStorage(BaseStorage):
                     self._t_metadata.c.source_table,
                     self._t_metadata.c.source_column,
                     self._t_metadata.c.source_id_column,
+                    self._t_metadata.c.source_date_column,
                     self._t_metadata.c.source_query,
                     self._t_metadata.c.source_where,
                 ).where(self._t_metadata.c.index_name == name)
@@ -541,7 +637,8 @@ class AlchemyStorage(BaseStorage):
         if row is None:
             return None
 
-        source_table, source_column, source_id_column, source_query, source_where = row
+        (source_table, source_column, source_id_column,
+         source_date_column, source_query, source_where) = row
 
         # Query-based source
         if source_query is not None:
@@ -550,6 +647,7 @@ class AlchemyStorage(BaseStorage):
                 "table_name": None,
                 "text_column": None,
                 "id_column": None,
+                "date_column": None,
                 "where_clause": None,
                 "query": source_query,
             }
@@ -561,6 +659,7 @@ class AlchemyStorage(BaseStorage):
                 "table_name": source_table,
                 "text_column": source_column,
                 "id_column": source_id_column,
+                "date_column": source_date_column,
                 "where_clause": source_where,
                 "query": None,
             }
@@ -574,6 +673,122 @@ class AlchemyStorage(BaseStorage):
                 sa_text(f"SELECT COUNT(*) FROM {table_name}")
             )
             return result.scalar()
+
+    # Shard support (temporal partitioning)
+
+    def save_shard_registry(self, index_name: str, shard_keys: list) -> None:
+        """Persist the shard keys for a sharded index."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                delete(self._t_shard_registry).where(
+                    self._t_shard_registry.c.index_name == index_name
+                )
+            )
+            if shard_keys:
+                rows = [
+                    {"index_name": index_name, "shard_key": key}
+                    for key in shard_keys
+                ]
+                conn.execute(self._t_shard_registry.insert(), rows)
+
+    def load_shard_registry(self, index_name: str) -> list:
+        """Return shard keys for *index_name*, sorted. Empty = not sharded."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(self._t_shard_registry.c.shard_key)
+                .where(self._t_shard_registry.c.index_name == index_name)
+                .order_by(self._t_shard_registry.c.shard_key)
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def detect_date_column(
+        self,
+        table_name: str,
+        schema: Optional[str] = None,
+    ) -> Optional[str]:
+        """Auto-detect a date column in the user table.
+
+        Checks for columns named ``created_at``, ``updated_at``, or
+        ``timestamp`` (in that order).
+
+        Returns:
+            The column name if found, otherwise ``None``.
+        """
+        from ..core.shard import LUCIS_DEFAULT_DATE_COLUMNS
+
+        user_meta = MetaData()
+        user_table = Table(
+            table_name, user_meta, autoload_with=self._engine, schema=schema
+        )
+        table_columns = {col.name for col in user_table.columns}
+        for candidate in LUCIS_DEFAULT_DATE_COLUMNS:
+            if candidate in table_columns:
+                return candidate
+        return None
+
+    def read_table_with_dates(
+        self,
+        table_name: str,
+        text_column: str,
+        id_column: Optional[str] = None,
+        date_column: Optional[str] = None,
+        where_clause: Optional[str] = None,
+        schema: Optional[str] = None,
+    ) -> tuple:
+        """Read rows with dates for shard routing.
+
+        Returns ``(data, dates)`` where:
+
+        - *data*: ``Dict[str, str]`` mapping ``{doc_id: text}``.
+        - *dates*: ``Dict[str, Any]`` mapping ``{doc_id: date_value}``.
+
+        When *id_column* is ``None``, row indices are used as string
+        keys (``"0"``, ``"1"``, …).
+        """
+        user_meta = MetaData()
+        user_table = Table(
+            table_name, user_meta, autoload_with=self._engine, schema=schema
+        )
+
+        cols = []
+        if id_column:
+            cols.append(user_table.c[id_column])
+        cols.append(user_table.c[text_column])
+        if date_column:
+            cols.append(user_table.c[date_column])
+
+        stmt = select(*cols)
+        if where_clause:
+            stmt = stmt.where(sa_text(where_clause))
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).fetchall()
+
+        data: Dict[str, str] = {}
+        dates: Dict[str, Any] = {}
+
+        if id_column and date_column:
+            for row in rows:
+                doc_id = str(row[0])
+                data[doc_id] = row[1]
+                dates[doc_id] = row[2]
+        elif id_column:
+            for row in rows:
+                doc_id = str(row[0])
+                data[doc_id] = row[1]
+                dates[doc_id] = None
+        elif date_column:
+            for i, row in enumerate(rows):
+                doc_id = str(i)
+                data[doc_id] = row[0]
+                dates[doc_id] = row[1]
+        else:
+            for i, row in enumerate(rows):
+                doc_id = str(i)
+                data[doc_id] = row[0]
+                dates[doc_id] = None
+
+        return data, dates
 
     # Read helpers
 

@@ -66,6 +66,7 @@ class SQLiteStorage(BaseStorage):
                 source_table    TEXT,
                 source_column   TEXT,
                 source_id_column TEXT,
+                source_date_column TEXT,
                 source_query    TEXT,
                 source_where    TEXT,
                 created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -117,6 +118,14 @@ class SQLiteStorage(BaseStorage):
             CREATE TABLE IF NOT EXISTS lucis_aliases (
                 alias_name      TEXT PRIMARY KEY,
                 target_index    TEXT NOT NULL
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lucis_shard_registry (
+                index_name  TEXT NOT NULL,
+                shard_key   TEXT NOT NULL,
+                PRIMARY KEY (index_name, shard_key)
             )
         """)
 
@@ -349,11 +358,15 @@ class SQLiteStorage(BaseStorage):
         return f"{base_name}__v{ts}"
 
     def list_versions(self, base_name: str) -> list:
-        """Return all physical versions of *base_name*, sorted oldest → newest."""
+        """Return all physical versions of *base_name*, sorted oldest → newest.
+
+        Shard entries (``__shard__``) are excluded.
+        """
         cur = self.conn.cursor()
         cur.execute(
             "SELECT index_name FROM lucis_metadata "
-            "WHERE index_name LIKE ? ORDER BY index_name",
+            "WHERE index_name LIKE ? AND index_name NOT LIKE '%__shard__%' "
+            "ORDER BY index_name",
             (f"{base_name}__v%",),
         )
         return [row[0] for row in cur.fetchall()]
@@ -366,12 +379,13 @@ class SQLiteStorage(BaseStorage):
         cur.execute(
             "UPDATE lucis_metadata "
             "SET source_table = ?, source_column = ?, source_id_column = ?, "
-            "source_query = ?, source_where = ? "
+            "source_date_column = ?, source_query = ?, source_where = ? "
             "WHERE index_name = ?",
             (
                 info.get("table_name"),
                 info.get("text_column"),
                 info.get("id_column"),
+                info.get("date_column"),
                 info.get("query"),
                 info.get("where_clause"),
                 name,
@@ -384,7 +398,7 @@ class SQLiteStorage(BaseStorage):
         cur = self.conn.cursor()
         cur.execute(
             "SELECT source_table, source_column, source_id_column, "
-            "source_query, source_where "
+            "source_date_column, source_query, source_where "
             "FROM lucis_metadata WHERE index_name = ?",
             (name,),
         )
@@ -392,7 +406,8 @@ class SQLiteStorage(BaseStorage):
         if row is None:
             return None
 
-        source_table, source_column, source_id_column, source_query, source_where = row
+        (source_table, source_column, source_id_column,
+         source_date_column, source_query, source_where) = row
 
         # Query-based source
         if source_query is not None:
@@ -401,6 +416,7 @@ class SQLiteStorage(BaseStorage):
                 "table_name": None,
                 "text_column": None,
                 "id_column": None,
+                "date_column": None,
                 "where_clause": None,
                 "query": source_query,
             }
@@ -412,6 +428,7 @@ class SQLiteStorage(BaseStorage):
                 "table_name": source_table,
                 "text_column": source_column,
                 "id_column": source_id_column,
+                "date_column": source_date_column,
                 "where_clause": source_where,
                 "query": None,
             }
@@ -424,11 +441,64 @@ class SQLiteStorage(BaseStorage):
         cur.execute(f"SELECT COUNT(*) FROM {table_name}")
         return cur.fetchone()[0]
 
+    # Shard support (temporal partitioning)
+
+    def save_shard_registry(self, index_name: str, shard_keys: list) -> None:
+        """Persist the shard keys for a sharded index."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "DELETE FROM lucis_shard_registry WHERE index_name = ?",
+            (index_name,),
+        )
+        if shard_keys:
+            cur.executemany(
+                "INSERT INTO lucis_shard_registry (index_name, shard_key) "
+                "VALUES (?, ?)",
+                [(index_name, key) for key in shard_keys],
+            )
+        self.conn.commit()
+
+    def load_shard_registry(self, index_name: str) -> list:
+        """Return shard keys for *index_name*, sorted. Empty = not sharded."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT shard_key FROM lucis_shard_registry "
+            "WHERE index_name = ? ORDER BY shard_key",
+            (index_name,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
     #  Extras                                                              #
 
     def delete(self, name: str) -> None:
-        """Remove all data for the given index from every ``lucis_*`` table."""
+        """Remove all data for the given index from every ``lucis_*`` table.
+
+        If the index is sharded, all shard entries and the shard
+        registry are cleaned up automatically.
+        """
+        shard_keys = self.load_shard_registry(name)
         cur = self.conn.cursor()
+
+        # Delete shard children first
+        for key in shard_keys:
+            shard_name = f"{name}__shard__{key}"
+            for table in (
+                "lucis_inverted_index",
+                "lucis_doc_vectors",
+                "lucis_id_mapping",
+                "lucis_doc_lengths",
+                "lucis_metadata",
+            ):
+                cur.execute(f"DELETE FROM {table} WHERE index_name = ?", (shard_name,))
+
+        # Delete shard registry
+        if shard_keys:
+            cur.execute(
+                "DELETE FROM lucis_shard_registry WHERE index_name = ?",
+                (name,),
+            )
+
+        # Delete parent / main entry
         for table in (
             "lucis_inverted_index",
             "lucis_doc_vectors",

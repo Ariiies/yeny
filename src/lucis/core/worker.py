@@ -144,7 +144,7 @@ class IndexWorker:
         self.errors: int = 0
         self.last_rebuild_time: Optional[float] = None
 
-    # Public API 
+    # Public API
 
     def start(self) -> None:
         """
@@ -274,23 +274,40 @@ class IndexWorker:
             self._interruptible_sleep(self._interval)
 
     def _do_rebuild(self) -> None:
-        """Fetch data, rebuild or incrementally update index, swap alias, purge."""
+        """Fetch data, rebuild or incrementally update index, swap alias, purge.
+
+        When the data/delta functions return ``(data, dates)`` tuples
+        (sharded mode), the dates are forwarded to Lucis for shard routing.
+        """
         start = time.perf_counter()
 
         if self._incremental and self._delta_fn is not None:
             # Incremental mode: fetch only new documents and add them
-            delta = self._delta_fn()
+            result = self._delta_fn()
 
-            # Skip if no new documents
-            if not delta:
-                logger.debug("Incremental update: no new documents — skipping")
-                return
-
-            self._lucis.add_documents(delta)
+            # Detect sharded mode: delta_fn returns (data, dates)
+            if isinstance(result, tuple) and len(result) == 2:
+                delta, dates = result
+                if not delta:
+                    logger.debug("Incremental update: no new documents — skipping")
+                    return
+                self._lucis.add_documents(delta, dates=dates)
+            else:
+                delta = result
+                if not delta:
+                    logger.debug("Incremental update: no new documents — skipping")
+                    return
+                self._lucis.add_documents(delta)
         else:
             # Full rebuild mode (default)
-            data = self._data_fn()
-            self._lucis.reindex(data)
+            result = self._data_fn()
+
+            # Detect sharded mode: data_fn returns (data, dates)
+            if isinstance(result, tuple) and len(result) == 2:
+                data, dates = result
+                self._lucis.reindex(data, dates=dates)
+            else:
+                self._lucis.reindex(result)
 
         elapsed = time.perf_counter() - start
         self.last_rebuild_time = round(elapsed, 3)

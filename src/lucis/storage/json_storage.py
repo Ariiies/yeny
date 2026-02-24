@@ -1,7 +1,7 @@
 # src/lucis/storage/json_storage.py
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 from .base import BaseStorage
 
 class JSONStorage(BaseStorage):
@@ -39,3 +39,19 @@ class JSONStorage(BaseStorage):
     def exists(self, name: str) -> bool:
         """Checks if the file exists on disk."""
         return os.path.exists(self._get_path(name))
+
+    # Shard support (temporal partitioning)
+
+    def save_shard_registry(self, index_name: str, shard_keys: list) -> None:
+        """Persist shard keys as ``{index_name}__shards.json``."""
+        path = os.path.join(self.directory, f"{index_name}__shards.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(shard_keys, f)
+
+    def load_shard_registry(self, index_name: str) -> list:
+        """Load shard keys from ``{index_name}__shards.json``."""
+        path = os.path.join(self.directory, f"{index_name}__shards.json")
+        if not os.path.exists(path):
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)

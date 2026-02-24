@@ -10,7 +10,13 @@ from .storage.sqlite_storage import SQLiteStorage
 from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
 from .utils.nlp import word_tokenizer, simple_tokenizer
-from .worker import IndexWorker
+from .core.worker import IndexWorker
+from .core.shard import (
+    ShardManager,
+    normalize_to_shard_key,
+    shard_key_in_range,
+    LUCIS_GLOBAL_SHARD,
+)
 
 # Lazy import flag — AlchemyStorage requires sqlalchemy (optional dep)
 _AlchemyStorage = None
@@ -74,7 +80,7 @@ class Lucis:
             storage_type: Backend to use for persistence — "json", "sqlite", or "alchemy".
             db_path: Path to the SQLite database (required when storage_type="sqlite" and no *storage* is given).
             alchemy_url: SQLAlchemy connection URL (required when storage_type="alchemy" and no *storage* is given).
-                Example: "mysql+pymysql://user:pass@localhost/mydb"
+            Example: "mysql+pymysql://user:pass@localhost/mydb"
             storage: A pre-built BaseStorage instance (overrides storage_type/db_path/storage_dir).
             engine: Which engine to use. Currently supported: "core".
             preprocessor: Text preprocessor function ``(str) → str | list[str]``. Defaults to word_tokenizer.
@@ -96,6 +102,7 @@ class Lucis:
         self.name = name
         self._is_indexed = False
         self._source_info: Optional[Dict[str, Optional[str]]] = None
+        self._shard_manager: Optional[ShardManager] = None
         # If user provides a preprocessor, use it globally.
         # If None, the engine will use its own default:
         #   CoreEngine → word_tokenizer
@@ -151,6 +158,28 @@ class Lucis:
         # The name may be an alias — exists() resolves it transparently.
         if autoload and self.storage.exists(name):
             self.load()
+
+    # Shard support
+
+    @property
+    def is_sharded(self) -> bool:
+        """``True`` if this index uses temporal sharding."""
+        return self._shard_manager is not None
+
+    @property
+    def total_docs(self) -> int:
+        """Total number of indexed documents (sharded or not)."""
+        if self._shard_manager is not None:
+            return self._shard_manager.total_docs
+        return self.engine.total_docs if self._is_indexed else 0
+
+    def _init_shard_manager(self) -> None:
+        """Initialize a ShardManager with current engine config."""
+        self._shard_manager = ShardManager(
+            engine_class=type(self.engine),
+            storage=self.storage,
+            preprocessor=self._user_preprocessor,
+        )
 
     # factory methods
     @classmethod
@@ -286,6 +315,7 @@ class Lucis:
             "table_name": table_name,
             "text_column": text_column,
             "id_column": id_column,
+            "date_column": None,
             "where_clause": where_clause,
             "query": None,
         }
@@ -356,6 +386,7 @@ class Lucis:
             "table_name": None,
             "text_column": None,
             "id_column": None,
+            "date_column": None,
             "where_clause": None,
             "query": query,
         }
@@ -369,6 +400,7 @@ class Lucis:
         url: str,
         text_column: str,
         id_column: Optional[str] = None,
+        date_column: Optional[str] = "auto",
         where_clause: Optional[str] = None,
         schema: Optional[str] = None,
         name: str = "default",
@@ -381,12 +413,26 @@ class Lucis:
         MariaDB, etc.).  The index is automatically persisted back to the
         **same** database.
 
+        **Temporal Sharding** (automatic):
+        If the table contains a ``created_at``, ``updated_at``, or
+        ``timestamp`` column (or a custom ``date_column``), the index
+        is automatically partitioned into monthly shards (YYYY_MM).
+        Documents with ``NULL`` dates go to the global shard
+        (``LUCIS_GLOBAL_SHARD = "9999_99"``).
+
+        To disable sharding, pass ``date_column=None``.
+
         Args:
             table_name: Name of the source table.
             url: SQLAlchemy connection URL.
                 Example: ``"mysql+pymysql://user:pass@localhost/mydb"``
             text_column: Column that contains the document text.
             id_column: Column to use as document ID (optional).
+            date_column: Column used for temporal sharding.
+                ``"auto"`` (default) auto-detects ``created_at``,
+                ``updated_at``, or ``timestamp``.
+                Pass a column name like ``"published_at"`` to override.
+                ``None`` disables sharding.
             where_clause: Optional SQL ``WHERE`` filter (without the ``WHERE`` keyword).
             schema: Database schema (e.g. ``"public"`` for PostgreSQL).
             name: Identifier for the persisted index.
@@ -404,17 +450,27 @@ class Lucis:
                 id_column="article_id",
             )
             results = luc.search("python tutorial")
+
+        Example — time-scoped search::
+
+            luc = Lucis.from_alchemy_table(
+                table_name="emails",
+                url="mysql+pymysql://root:secret@localhost/mail",
+                text_column="body",
+                id_column="email_id",
+                date_column="received_at",
+                engine="lite",
+            )
+            # Search only last month's emails:
+            results = luc.search("invoice", since="2026-01")
         """
         AlchemyStorage = _get_alchemy_storage_class()
         storage = AlchemyStorage(url=url)
 
-        data = storage.read_table(
-            table_name=table_name,
-            text_column=text_column,
-            id_column=id_column,
-            where_clause=where_clause,
-            schema=schema,
-        )
+        # Resolve date column
+        resolved_date_col = date_column
+        if date_column == "auto":
+            resolved_date_col = storage.detect_date_column(table_name, schema)
 
         kwargs.setdefault("storage_type", "alchemy")
         kwargs.setdefault("alchemy_url", url)
@@ -425,10 +481,32 @@ class Lucis:
             "table_name": table_name,
             "text_column": text_column,
             "id_column": id_column,
+            "date_column": resolved_date_col,
             "where_clause": where_clause,
             "query": None,
         }
-        instance.index(data)
+
+        if resolved_date_col:
+            # Sharded mode: read data with dates and build per-shard indices
+            data, dates = storage.read_table_with_dates(
+                table_name, text_column, id_column,
+                resolved_date_col, where_clause, schema,
+            )
+            instance._init_shard_manager()
+            instance._shard_manager.build_shards(data, dates)
+            instance._is_indexed = True
+            instance.save()
+        else:
+            # Non-sharded mode: current behavior
+            data = storage.read_table(
+                table_name=table_name,
+                text_column=text_column,
+                id_column=id_column,
+                where_clause=where_clause,
+                schema=schema,
+            )
+            instance.index(data)
+
         return instance
 
     @classmethod
@@ -476,6 +554,7 @@ class Lucis:
             "table_name": None,
             "text_column": None,
             "id_column": None,
+            "date_column": None,
             "where_clause": None,
             "query": query,
         }
@@ -500,16 +579,32 @@ class Lucis:
         if persist:
             self.save()
 
-    def search(self, query: Union[str, List[str]], top_k: int = 10) -> SearchResponse:
+    def search(
+        self,
+        query: Union[str, List[str]],
+        top_k: int = 10,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+    ) -> SearchResponse:
         """
         Searches the indexed corpus for documents matching the query.
 
         The engine returns raw tuples; Lucis wraps them in a SearchResponse
         with full context: query, tokens, timing, and structured results.
 
+        When the index is sharded (temporal partitioning), ``since`` and
+        ``until`` restrict the search to shards within the specified range.
+        Without these parameters, **all** shards are searched.
+
         Args:
             query: A search string ("love python") or pre-tokenized list (["love", "python"]).
             top_k: Maximum number of results to return.
+            since: Start of the temporal range (inclusive).  Accepts:
+                - Shard keys: ``"2026_01"``
+                - ISO dates: ``"2026-01-15"``
+                - Year-month: ``"2026-01"``
+                Ignored for non-sharded indices.
+            until: End of the temporal range (inclusive).  Same formats.
 
         Returns:
             SearchResponse with ranked results and search metadata.
@@ -521,6 +616,10 @@ class Lucis:
             print(response.results[0].score)      # 0.3903
             print(response.search_time_ms)        # 2.31
             print(response.to_dict())             # JSON-ready dict
+
+        Example — time-scoped::
+
+            response = lu.search("invoice", since="2026-01", until="2026-02")
         """
         if not self._is_indexed:
             raise LucisEngineError(
@@ -539,25 +638,61 @@ class Lucis:
         else:
             tokens = list(query)
 
-        # Time the engine search (the core computation)
+        # Time the search (the core computation)
         start = time.perf_counter()
-        raw_results = self.engine.search(tokens, top_k=top_k)
-        elapsed_ms = (time.perf_counter() - start) * 1000
 
-        # Wrap raw tuples into structured SearchResult objects
-        results = [
-            SearchResult(doc_id=doc_id, score=round(score, 6), rank=rank)
-            for rank, (doc_id, score) in enumerate(raw_results, start=1)
-        ]
+        if self._shard_manager:
+            # ── Sharded search: query relevant shards and merge ──
+            raw_results = self._shard_manager.search(
+                tokens, top_k=top_k, since=since, until=until,
+            )
+            elapsed_ms = (time.perf_counter() - start) * 1000
 
-        return SearchResponse(
-            query=original_query,
-            tokens=tokens,
-            engine=self.engine.name,
-            total_results=len(results),
-            search_time_ms=round(elapsed_ms, 2),
-            results=results,
-        )
+            # raw_results: [(doc_id, score, shard_key), ...]
+            results = [
+                SearchResult(
+                    doc_id=doc_id, score=round(score, 6),
+                    rank=rank, shard_key=shard_key,
+                )
+                for rank, (doc_id, score, shard_key) in enumerate(raw_results, start=1)
+            ]
+
+            # Count shards actually queried
+            since_key = normalize_to_shard_key(since)
+            until_key = normalize_to_shard_key(until)
+            shards_searched = sum(
+                1 for k in self._shard_manager.shards
+                if shard_key_in_range(k, since_key, until_key)
+            )
+
+            return SearchResponse(
+                query=original_query,
+                tokens=tokens,
+                engine=self.engine.name,
+                total_results=len(results),
+                search_time_ms=round(elapsed_ms, 2),
+                results=results,
+                shards_searched=shards_searched,
+                total_shards=len(self._shard_manager.shards),
+            )
+        else:
+            # ── Single-engine search (non-sharded) ──
+            raw_results = self.engine.search(tokens, top_k=top_k)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            results = [
+                SearchResult(doc_id=doc_id, score=round(score, 6), rank=rank)
+                for rank, (doc_id, score) in enumerate(raw_results, start=1)
+            ]
+
+            return SearchResponse(
+                query=original_query,
+                tokens=tokens,
+                engine=self.engine.name,
+                total_results=len(results),
+                search_time_ms=round(elapsed_ms, 2),
+                results=results,
+            )
 
     # persistence methods
     def save(self, name: Optional[str] = None) -> None:
@@ -569,15 +704,37 @@ class Lucis:
         and points the logical alias to it.  On JSON storage the
         behaviour is unchanged (no versioning).
 
+        When sharded, each shard is persisted independently and a
+        shard registry is saved alongside the parent metadata.
+
         Args:
             name: Optional custom name. Falls back to self.name.
         """
         save_name = name or self.name
-        # Generate a versioned physical name (no-op on JSONStorage)
         physical_name = self.storage._generate_versioned_name(save_name)
-        self.engine.persist(physical_name)
+
+        if self._shard_manager:
+            # ── Sharded save ──
+            # 1. Persist each shard engine
+            self._shard_manager.persist_all(physical_name)
+
+            # 2. Create parent metadata entry (empty index data, just metadata)
+            parent_state = {
+                "index": {},
+                "total_docs": self._shard_manager.total_docs,
+                "doc_lengths": {},
+                "id_map": {},
+                "id_type": self._shard_manager.id_type,
+                "engine_name": self.engine.name,
+            }
+            self.storage.save(parent_state, physical_name)
+        else:
+            # ── Single-engine save ──
+            self.engine.persist(physical_name)
+
         # Point the logical alias to the new physical index
         self.storage.set_alias(save_name, physical_name)
+
         # Persist source info so the worker can auto-generate data_fn
         if self._source_info is not None:
             self.storage.save_source_info(physical_name, self._source_info)
@@ -587,16 +744,28 @@ class Lucis:
         Loads a previously saved index from storage.
 
         If *name* is an alias, it is resolved to the physical index
-        name transparently.
+        name transparently.  Automatically detects whether the index
+        is sharded and loads all shards if so.
 
         Args:
             name: Optional custom name. Falls back to self.name.
         """
         load_name = name or self.name
-        # Resolve alias → physical name (passthrough if no alias exists)
         physical_name = self.storage.resolve_alias(load_name)
-        self.engine.load_engine(physical_name)
-        self._is_indexed = True
+
+        # Check if this is a sharded index
+        shard_keys = self.storage.load_shard_registry(physical_name)
+
+        if shard_keys:
+            # ── Sharded load ──
+            self._init_shard_manager()
+            self._shard_manager.load_all(physical_name, shard_keys)
+            self._is_indexed = True
+        else:
+            # ── Single-engine load ──
+            self.engine.load_engine(physical_name)
+            self._is_indexed = True
+
         # Restore source info (if available) so create_worker() works
         source = self.storage.load_source_info(physical_name)
         if source is not None:
@@ -604,15 +773,24 @@ class Lucis:
 
     # Shadow Rebuild 
 
-    def reindex(self, data: Union[List[str], Dict[Any, str]]) -> None:
+    def reindex(
+        self,
+        data: Union[List[str], Dict[Any, str]],
+        dates: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Rebuild the index with fresh data, creating a new version.
 
         The previous version remains in storage so you can ``rollback()``
         if needed.  The alias is swapped atomically to the new version.
 
+        When the index is sharded and *dates* is provided, documents are
+        re-routed to their correct temporal shards.
+
         Args:
             data: New corpus — ``Dict[id, text]`` or ``List[text]``.
+            dates: Optional ``{doc_id: date_value}`` for shard routing.
+                Required for sharded indices; ignored otherwise.
 
         Example::
 
@@ -620,32 +798,45 @@ class Lucis:
             luc.reindex(new_data)
             # → alias now points to the new version
         """
-        self.engine.build_index(data)
+        if self._shard_manager and dates is not None:
+            self._shard_manager.shards.clear()
+            self._shard_manager.build_shards(data, dates)
+        else:
+            self.engine.build_index(data)
         self._is_indexed = True
         self.save()
 
     def add_documents(
         self,
         new_docs: Union[List[str], Dict[Any, str]],
+        dates: Optional[Dict[str, Any]] = None,
         persist: bool = True,
     ) -> None:
         """
         Incrementally add new documents to the current index.
 
+        When the index is sharded, new documents are routed to the
+        correct shard based on *dates*.
+
         Args:
             new_docs: New documents — ``Dict[id, text]`` or ``List[text]``.
+            dates: Optional ``{doc_id: date_value}`` for shard routing.
             persist: Whether to save the updated index to storage.
 
         Raises:
             LucisEngineError: If the engine does not support incremental
-                indexing (e.g., ``CoreEngine``).
+                indexing (e.g., ``CoreEngine``) and index is not sharded.
 
         Example::
 
             luc.add_documents({"new_doc": "some text"})
             luc.add_documents(["another document"])
         """
-        if not hasattr(self.engine, "add_documents"):
+        if self._shard_manager and dates is not None:
+            self._shard_manager.add_documents(new_docs, dates)
+        elif hasattr(self.engine, "add_documents"):
+            self.engine.add_documents(new_docs)
+        else:
             raise LucisEngineError(
                 engine_name=self.engine.name,
                 detail=(
@@ -654,7 +845,6 @@ class Lucis:
                 ),
             )
 
-        self.engine.add_documents(new_docs)
         self._is_indexed = True
         if persist:
             self.save()
@@ -897,10 +1087,16 @@ class Lucis:
 
     # Phase 4: Worker / Automation 
 
-    def _auto_data_fn(self) -> Callable[[], Union[List[str], Dict[Any, str]]]:
-        """Auto-generate a data_fn based on stored _source_info."""
+    def _auto_data_fn(self) -> Callable:
+        """Auto-generate a data_fn based on stored _source_info.
+
+        For sharded indices (``date_column`` present), the returned
+        callable produces ``(data, dates)`` tuples.  For non-sharded
+        indices, it returns ``Dict`` or ``List`` as before.
+        """
         info = self._source_info
         storage = self.storage
+        date_col = info.get("date_column")
 
         if info["type"] == "table":
             table_name = info["table_name"]
@@ -908,30 +1104,39 @@ class Lucis:
             id_col = info["id_column"]
             where = info.get("where_clause")
 
+            # ── Sharded: return (data, dates) ──
+            if date_col and hasattr(storage, "read_table_with_dates"):
+                def fetch_with_dates():
+                    return storage.read_table_with_dates(
+                        table_name, text_col, id_col, date_col, where,
+                    )
+                return fetch_with_dates
+
+            # Non-sharded: Alchemy
             if hasattr(storage, "read_table"):
                 def fetch():
                     return storage.read_table(
                         table_name, text_col, id_col, where
                     )
                 return fetch
-            else:
-                # SQLiteStorage — build SQL manually
-                cols = f"{id_col}, {text_col}" if id_col else text_col
-                sql = f"SELECT {cols} FROM {table_name}"
-                if where:
-                    sql += f" WHERE {where}"
-                db_path = getattr(storage, "db_path", None)
-                def fetch_sqlite():
-                    import sqlite3
-                    conn = sqlite3.connect(db_path)
-                    cursor = conn.execute(sql)
-                    if id_col:
-                        data = {str(row[0]): row[1] for row in cursor}
-                    else:
-                        data = [row[0] for row in cursor]
-                    conn.close()
-                    return data
-                return fetch_sqlite
+
+            # Non-sharded: SQLite
+            cols = f"{id_col}, {text_col}" if id_col else text_col
+            sql = f"SELECT {cols} FROM {table_name}"
+            if where:
+                sql += f" WHERE {where}"
+            db_path = getattr(storage, "db_path", None)
+            def fetch_sqlite():
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                cursor = conn.execute(sql)
+                if id_col:
+                    data = {str(row[0]): row[1] for row in cursor}
+                else:
+                    data = [row[0] for row in cursor]
+                conn.close()
+                return data
+            return fetch_sqlite
 
         elif info["type"] == "query":
             query_str = info["query"]
@@ -998,10 +1203,15 @@ class Lucis:
         info: Dict[str, Optional[str]],
         storage: Any,
     ) -> Callable[[], Dict[str, str]]:
-        """Optimized delta: ``WHERE id > last_max_id`` at the SQL level."""
+        """Optimized delta: ``WHERE id > last_max_id`` at the SQL level.
+
+        When a ``date_column`` is present, the returned callable
+        produces ``(data, dates)`` tuples for shard routing.
+        """
         id_col = info["id_column"]
         table_name = info["table_name"]
         text_col = info["text_column"]
+        date_col = info.get("date_column")
         where = info.get("where_clause")
 
         last_max = [0]
@@ -1017,23 +1227,44 @@ class Lucis:
                 if result is not None:
                     last_max[0] = result
 
-            def delta_alchemy():
-                from sqlalchemy import text as _sa_t
-                sql = f"SELECT {id_col}, {text_col} FROM {table_name} WHERE {id_col} > :last_id"
-                if where:
-                    sql += f" AND ({where})"
-                sql += f" ORDER BY {id_col}"
-                with storage._engine.connect() as conn:
-                    rows = conn.execute(
-                        _sa_t(sql), {"last_id": last_max[0]}
-                    ).fetchall()
-                if not rows:
-                    return {}
-                data = {str(row[0]): row[1] for row in rows}
-                last_max[0] = max(row[0] for row in rows)
-                return data
-
-            return delta_alchemy
+            if date_col:
+                def delta_alchemy_sharded():
+                    from sqlalchemy import text as _sa_t
+                    sql = (
+                        f"SELECT {id_col}, {text_col}, {date_col} "
+                        f"FROM {table_name} WHERE {id_col} > :last_id"
+                    )
+                    if where:
+                        sql += f" AND ({where})"
+                    sql += f" ORDER BY {id_col}"
+                    with storage._engine.connect() as conn:
+                        rows = conn.execute(
+                            _sa_t(sql), {"last_id": last_max[0]}
+                        ).fetchall()
+                    if not rows:
+                        return {}, {}
+                    data = {str(row[0]): row[1] for row in rows}
+                    dates = {str(row[0]): row[2] for row in rows}
+                    last_max[0] = max(row[0] for row in rows)
+                    return data, dates
+                return delta_alchemy_sharded
+            else:
+                def delta_alchemy():
+                    from sqlalchemy import text as _sa_t
+                    sql = f"SELECT {id_col}, {text_col} FROM {table_name} WHERE {id_col} > :last_id"
+                    if where:
+                        sql += f" AND ({where})"
+                    sql += f" ORDER BY {id_col}"
+                    with storage._engine.connect() as conn:
+                        rows = conn.execute(
+                            _sa_t(sql), {"last_id": last_max[0]}
+                        ).fetchall()
+                    if not rows:
+                        return {}
+                    data = {str(row[0]): row[1] for row in rows}
+                    last_max[0] = max(row[0] for row in rows)
+                    return data
+                return delta_alchemy
 
         else:
             # SQLiteStorage
@@ -1048,40 +1279,76 @@ class Lucis:
             if result is not None:
                 last_max[0] = result
 
-            def delta_sqlite():
-                import sqlite3
-                sql = f"SELECT {id_col}, {text_col} FROM {table_name} WHERE {id_col} > ?"
-                if where:
-                    sql += f" AND ({where})"
-                sql += f" ORDER BY {id_col}"
-                conn = sqlite3.connect(db_path)
-                rows = conn.execute(sql, (last_max[0],)).fetchall()
-                conn.close()
-                if not rows:
-                    return {}
-                data = {str(row[0]): row[1] for row in rows}
-                last_max[0] = max(row[0] for row in rows)
-                return data
-
-            return delta_sqlite
+            if date_col:
+                def delta_sqlite_sharded():
+                    import sqlite3
+                    sql = (
+                        f"SELECT {id_col}, {text_col}, {date_col} "
+                        f"FROM {table_name} WHERE {id_col} > ?"
+                    )
+                    if where:
+                        sql += f" AND ({where})"
+                    sql += f" ORDER BY {id_col}"
+                    conn = sqlite3.connect(db_path)
+                    rows = conn.execute(sql, (last_max[0],)).fetchall()
+                    conn.close()
+                    if not rows:
+                        return {}, {}
+                    data = {str(row[0]): row[1] for row in rows}
+                    dates = {str(row[0]): row[2] for row in rows}
+                    last_max[0] = max(row[0] for row in rows)
+                    return data, dates
+                return delta_sqlite_sharded
+            else:
+                def delta_sqlite():
+                    import sqlite3
+                    sql = f"SELECT {id_col}, {text_col} FROM {table_name} WHERE {id_col} > ?"
+                    if where:
+                        sql += f" AND ({where})"
+                    sql += f" ORDER BY {id_col}"
+                    conn = sqlite3.connect(db_path)
+                    rows = conn.execute(sql, (last_max[0],)).fetchall()
+                    conn.close()
+                    if not rows:
+                        return {}
+                    data = {str(row[0]): row[1] for row in rows}
+                    last_max[0] = max(row[0] for row in rows)
+                    return data
+                return delta_sqlite
 
     def _auto_delta_fn_universal(
         self,
-    ) -> Callable[[], Union[List[str], Dict[Any, str]]]:
+    ) -> Callable:
         """Universal delta: fetch all data → diff against indexed IDs.
 
         Less efficient than the SQL-level approach (still reads the full
         table/query), but works with **any** source type and correctly
         produces only the new documents for ``add_documents()``.
+
+        When the data_fn returns ``(data, dates)`` tuples (sharded mode),
+        the delta also returns ``(new_data, new_dates)``.
         """
         data_fn = self._auto_data_fn()
+        shard_manager = self._shard_manager
         engine = self.engine
 
         def delta_universal():
-            all_data = data_fn()
+            result = data_fn()
 
+            # Detect sharded mode: data_fn returns (data, dates)
+            if isinstance(result, tuple) and len(result) == 2:
+                all_data, all_dates = result
+                known_ids = set(str(v) for v in shard_manager.id_map.values())
+                new_data = {
+                    k: v for k, v in all_data.items()
+                    if str(k) not in known_ids
+                }
+                new_dates = {k: v for k, v in all_dates.items() if k in new_data}
+                return new_data, new_dates
+
+            # Non-sharded mode
+            all_data = result
             if isinstance(all_data, dict):
-                # Dict source → diff by key
                 known_ids = set(str(v) for v in engine.id_map.values())
                 new_data = {
                     k: v for k, v in all_data.items()
@@ -1089,7 +1356,6 @@ class Lucis:
                 }
                 return new_data
             else:
-                # List source → new items are beyond current total_docs
                 current_count = engine.total_docs
                 if len(all_data) <= current_count:
                     return []
@@ -1109,7 +1375,10 @@ class Lucis:
             return None
 
         storage = self.storage
-        last_count = [self.engine.total_docs if self._is_indexed else 0]
+        if self._shard_manager is not None:
+            last_count = [self._shard_manager.total_docs]
+        else:
+            last_count = [self.engine.total_docs if self._is_indexed else 0]
 
         if info["type"] == "table":
             table_name = info["table_name"]
@@ -1285,7 +1554,7 @@ class Lucis:
         if change_detector is None and self._source_info is not None:
             change_detector = self._auto_change_detector()
 
-        from .worker import IndexWorker
+        from .core.worker import IndexWorker
         return IndexWorker(
             lucis=self,
             data_fn=data_fn,
@@ -1303,6 +1572,18 @@ class Lucis:
     # info and debugging
     def __repr__(self) -> str:
         status = "indexed" if self._is_indexed else "empty"
-        docs = self.engine.total_docs if self._is_indexed else 0
-        id_t = self.engine.id_type if self._is_indexed else "N/A"
-        return f"Lucis(name='{self.name}', engine='{self.engine.name}', docs={docs}, idx_type='{id_t}', status='{status}')"
+
+        if self._shard_manager:
+            docs = self._shard_manager.total_docs
+            n_shards = len(self._shard_manager.shards)
+            return (
+                f"Lucis(name='{self.name}', engine='{self.engine.name}', "
+                f"docs={docs}, shards={n_shards}, status='{status}')"
+            )
+        else:
+            docs = self.engine.total_docs if self._is_indexed else 0
+            id_t = self.engine.id_type if self._is_indexed else "N/A"
+            return (
+                f"Lucis(name='{self.name}', engine='{self.engine.name}', "
+                f"docs={docs}, idx_type='{id_t}', status='{status}')"
+            )
