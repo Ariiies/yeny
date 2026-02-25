@@ -20,7 +20,7 @@ For PostgreSQL::
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from ..utils.serialization import dumps as _dumps, loads as _loads
 
@@ -39,6 +39,8 @@ try:
         inspect,
         select,
         delete,
+        func as sa_func,
+        literal as sa_literal,
     )
     from sqlalchemy.engine import Engine, Connection
     from sqlalchemy.orm import Session
@@ -278,6 +280,71 @@ class AlchemyStorage(BaseStorage):
         """Insert *rows* into *table* in small batches to avoid max_allowed_packet errors."""
         for i in range(0, len(rows), chunk_size):
             conn.execute(table.insert(), rows[i : i + chunk_size])
+
+    # Cross-field search support
+
+    def _build_text_expr(self, table: Any, text_column: Union[str, List[str]]) -> Any:
+        """Build a SQLAlchemy expression for one or more text columns.
+
+        When *text_column* is a list of column names, the columns are
+        concatenated with a space separator at the SQL level.  NULL
+        values are coalesced to empty strings so they don't poison the
+        result.
+
+        Args:
+            table: A reflected SQLAlchemy ``Table`` object.
+            text_column: A single column name or a list of column names.
+
+        Returns:
+            A SQLAlchemy column expression suitable for ``select()``.
+        """
+        if isinstance(text_column, str):
+            return table.c[text_column]
+        if len(text_column) == 1:
+            return table.c[text_column[0]]
+
+        dialect = self._engine.dialect.name
+        if dialect in ("mysql", "mariadb"):
+            # CONCAT_WS handles NULLs by skipping them
+            return sa_func.concat_ws(
+                ' ', *[table.c[col] for col in text_column]
+            )
+        else:
+            # PostgreSQL / SQLite: COALESCE + ||
+            parts = [
+                sa_func.coalesce(table.c[col], sa_literal(''))
+                for col in text_column
+            ]
+            expr = parts[0]
+            for part in parts[1:]:
+                expr = expr.concat(sa_literal(' ')).concat(part)
+            return expr
+
+    def _sql_concat_columns(self, text_column: Union[str, List[str]]) -> str:
+        """Return a raw SQL fragment for concatenating text columns.
+
+        Used by auto-generated delta functions that build SQL strings
+        directly (via ``sa_text()``).
+
+        Args:
+            text_column: Single column name or list of column names.
+
+        Returns:
+            A SQL expression string, e.g. ``"CONCAT_WS(' ', col1, col2)"``
+            on MySQL or ``"COALESCE(col1, '') || ' ' || COALESCE(col2, '')"``
+            on PostgreSQL/SQLite.
+        """
+        if isinstance(text_column, str):
+            return text_column
+        if len(text_column) == 1:
+            return text_column[0]
+
+        dialect = self._engine.dialect.name
+        if dialect in ("mysql", "mariadb"):
+            return f"CONCAT_WS(' ', {', '.join(text_column)})"
+        else:
+            coalesced = [f"COALESCE({col}, '')" for col in text_column]
+            return " || ' ' || ".join(coalesced)
 
     # BaseStorage interface 
 
@@ -606,13 +673,17 @@ class AlchemyStorage(BaseStorage):
 
     def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
         """Persist data-source metadata into ``lucis_metadata``."""
+        import json as _json
+        text_col = info.get("text_column")
+        # Multi-column: serialize as JSON list; single column: plain string
+        source_column = _json.dumps(text_col) if isinstance(text_col, list) else text_col
         with self._engine.begin() as conn:
             conn.execute(
                 self._t_metadata.update()
                 .where(self._t_metadata.c.index_name == name)
                 .values(
                     source_table=info.get("table_name"),
-                    source_column=info.get("text_column"),
+                    source_column=source_column,
                     source_id_column=info.get("id_column"),
                     source_date_column=info.get("date_column"),
                     source_query=info.get("query"),
@@ -640,6 +711,14 @@ class AlchemyStorage(BaseStorage):
         (source_table, source_column, source_id_column,
          source_date_column, source_query, source_where) = row
 
+        # Deserialize text_column: JSON list for multi-column, plain string for single
+        import json as _json
+        try:
+            parsed_col = _json.loads(source_column) if source_column else source_column
+            text_column = parsed_col if isinstance(parsed_col, list) else source_column
+        except (TypeError, ValueError):
+            text_column = source_column
+
         # Query-based source
         if source_query is not None:
             return {
@@ -657,7 +736,7 @@ class AlchemyStorage(BaseStorage):
             return {
                 "type": "table",
                 "table_name": source_table,
-                "text_column": source_column,
+                "text_column": text_column,
                 "id_column": source_id_column,
                 "date_column": source_date_column,
                 "where_clause": source_where,
@@ -729,13 +808,16 @@ class AlchemyStorage(BaseStorage):
     def read_table_with_dates(
         self,
         table_name: str,
-        text_column: str,
+        text_column: Union[str, List[str]],
         id_column: Optional[str] = None,
         date_column: Optional[str] = None,
         where_clause: Optional[str] = None,
         schema: Optional[str] = None,
     ) -> tuple:
         """Read rows with dates for shard routing.
+
+        Supports **cross-field search**: pass a list of column names
+        to concatenate them into a single document at the SQL level.
 
         Returns ``(data, dates)`` where:
 
@@ -750,10 +832,11 @@ class AlchemyStorage(BaseStorage):
             table_name, user_meta, autoload_with=self._engine, schema=schema
         )
 
+        text_expr = self._build_text_expr(user_table, text_column)
         cols = []
         if id_column:
             cols.append(user_table.c[id_column])
-        cols.append(user_table.c[text_column])
+        cols.append(text_expr)
         if date_column:
             cols.append(user_table.c[date_column])
 
@@ -795,7 +878,7 @@ class AlchemyStorage(BaseStorage):
     def read_table(
         self,
         table_name: str,
-        text_column: str,
+        text_column: Union[str, List[str]],
         id_column: Optional[str] = None,
         where_clause: Optional[str] = None,
         schema: Optional[str] = None,
@@ -806,9 +889,14 @@ class AlchemyStorage(BaseStorage):
 
         This is a convenience helper so users don't have to write raw SQL.
 
+        Supports **cross-field search**: pass a list of column names
+        to concatenate them into a single document at the SQL level.
+
         Args:
             table_name: Name of the source table.
-            text_column: Column that contains the document text.
+            text_column: Column name (or list of column names) that
+                contain the document text.  When a list is given, the
+                columns are concatenated with spaces at the SQL level.
             id_column: Column to use as document ID (optional).
                 If ``None``, results are returned as a ``list[str]``.
             where_clause: Optional SQL ``WHERE`` filter
@@ -818,14 +906,19 @@ class AlchemyStorage(BaseStorage):
         Returns:
             ``Dict[str, str]`` if *id_column* is given, else ``list[str]``.
 
-        Example::
+        Example — single column::
 
-            storage = AlchemyStorage(url="mysql+pymysql://…")
             data = storage.read_table(
                 "articles", text_column="content", id_column="article_id"
             )
-            luc = Lucis(name="articles_idx", storage=storage)
-            luc.index(data)
+
+        Example — cross-field (multiple columns)::
+
+            data = storage.read_table(
+                "articles",
+                text_column=["title", "content", "tags"],
+                id_column="article_id",
+            )
         """
         # Reflect the user table from the database
         user_meta = MetaData()
@@ -833,10 +926,11 @@ class AlchemyStorage(BaseStorage):
             table_name, user_meta, autoload_with=self._engine, schema=schema
         )
 
+        text_expr = self._build_text_expr(user_table, text_column)
         if id_column:
-            cols = [user_table.c[id_column], user_table.c[text_column]]
+            cols = [user_table.c[id_column], text_expr]
         else:
-            cols = [user_table.c[text_column]]
+            cols = [text_expr]
 
         stmt = select(*cols)
         if where_clause:

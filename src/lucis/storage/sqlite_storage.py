@@ -375,6 +375,10 @@ class SQLiteStorage(BaseStorage):
 
     def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
         """Persist data-source metadata into ``lucis_metadata``."""
+        import json as _json
+        text_col = info.get("text_column")
+        # Multi-column: serialize as JSON list; single column: plain string
+        source_column = _json.dumps(text_col) if isinstance(text_col, list) else text_col
         cur = self.conn.cursor()
         cur.execute(
             "UPDATE lucis_metadata "
@@ -383,7 +387,7 @@ class SQLiteStorage(BaseStorage):
             "WHERE index_name = ?",
             (
                 info.get("table_name"),
-                info.get("text_column"),
+                source_column,
                 info.get("id_column"),
                 info.get("date_column"),
                 info.get("query"),
@@ -409,6 +413,14 @@ class SQLiteStorage(BaseStorage):
         (source_table, source_column, source_id_column,
          source_date_column, source_query, source_where) = row
 
+        # Deserialize text_column: JSON list for multi-column, plain string for single
+        import json as _json
+        try:
+            parsed_col = _json.loads(source_column) if source_column else source_column
+            text_column = parsed_col if isinstance(parsed_col, list) else source_column
+        except (TypeError, ValueError):
+            text_column = source_column
+
         # Query-based source
         if source_query is not None:
             return {
@@ -426,7 +438,7 @@ class SQLiteStorage(BaseStorage):
             return {
                 "type": "table",
                 "table_name": source_table,
-                "text_column": source_column,
+                "text_column": text_column,
                 "id_column": source_id_column,
                 "date_column": source_date_column,
                 "where_clause": source_where,

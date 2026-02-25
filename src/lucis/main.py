@@ -37,6 +37,27 @@ _ENGINE_REGISTRY = {
 }
 
 
+def _build_sql_text_expr(text_column):
+    """Build a raw SQL expression for single or multi-column text.
+
+    Used for SQLite raw SQL queries.  Concatenates multiple columns
+    with spaces using ``||`` and wraps each in ``COALESCE(col, '')``
+    to handle NULLs.
+
+    Args:
+        text_column: A single column name (str) or list of column names.
+
+    Returns:
+        A SQL expression string.
+    """
+    if isinstance(text_column, str):
+        return text_column
+    if len(text_column) == 1:
+        return text_column[0]
+    coalesced = [f"COALESCE({col}, '')" for col in text_column]
+    return " || ' ' || ".join(coalesced)
+
+
 class Lucis:
     """
     The friendly face of Lucis.
@@ -253,7 +274,7 @@ class Lucis:
         cls,
         table_name: str,
         db_path: str,
-        text_column: str,
+        text_column: Union[str, List[str]],
         id_column: Optional[str] = None,
         where_clause: Optional[str] = None,
         name: str = "default",
@@ -268,7 +289,10 @@ class Lucis:
         Args:
             table_name: Name of the source table.
             db_path: Path to the SQLite database file.
-            text_column: Column that contains the document text.
+            text_column: Column name (or list of column names) containing
+                the document text.  When a list is given (cross-field
+                search), the columns are concatenated with spaces at the
+                SQL level.
             id_column: Column to use as document ID (optional).
             where_clause: Optional SQL ``WHERE`` filter (without the ``WHERE`` keyword).
             name: Identifier for the persisted index.
@@ -289,7 +313,8 @@ class Lucis:
         """
         import sqlite3 as _sqlite3
 
-        cols = f"{id_column}, {text_column}" if id_column else text_column
+        text_expr = _build_sql_text_expr(text_column)
+        cols = f"{id_column}, {text_expr}" if id_column else text_expr
         query = f"SELECT {cols} FROM {table_name}"
         if where_clause:
             query += f" WHERE {where_clause}"
@@ -398,7 +423,7 @@ class Lucis:
         cls,
         table_name: str,
         url: str,
-        text_column: str,
+        text_column: Union[str, List[str]],
         id_column: Optional[str] = None,
         date_column: Optional[str] = "auto",
         where_clause: Optional[str] = None,
@@ -426,7 +451,10 @@ class Lucis:
             table_name: Name of the source table.
             url: SQLAlchemy connection URL.
                 Example: ``"mysql+pymysql://user:pass@localhost/mydb"``
-            text_column: Column that contains the document text.
+            text_column: Column name (or list of column names) containing
+                the document text.  When a list is given (**cross-field
+                search**), the columns are concatenated with spaces at the
+                SQL level into a single searchable document.
             id_column: Column to use as document ID (optional).
             date_column: Column used for temporal sharding.
                 ``"auto"`` (default) auto-detects ``created_at``,
@@ -463,6 +491,16 @@ class Lucis:
             )
             # Search only last month's emails:
             results = luc.search("invoice", since="2026-01")
+
+        Example — cross-field search::
+
+            luc = Lucis.from_alchemy_table(
+                table_name="articles",
+                url="mysql+pymysql://root:secret@localhost/blog",
+                text_column=["title", "content", "tags"],
+                id_column="article_id",
+            )
+            results = luc.search("python tutorial")
         """
         AlchemyStorage = _get_alchemy_storage_class()
         storage = AlchemyStorage(url=url)
@@ -1121,7 +1159,8 @@ class Lucis:
                 return fetch
 
             # Non-sharded: SQLite
-            cols = f"{id_col}, {text_col}" if id_col else text_col
+            text_expr = _build_sql_text_expr(text_col)
+            cols = f"{id_col}, {text_expr}" if id_col else text_expr
             sql = f"SELECT {cols} FROM {table_name}"
             if where:
                 sql += f" WHERE {where}"
@@ -1227,11 +1266,14 @@ class Lucis:
                 if result is not None:
                     last_max[0] = result
 
+            # Build text expression for multi-column support
+            text_expr = storage._sql_concat_columns(text_col)
+
             if date_col:
                 def delta_alchemy_sharded():
                     from sqlalchemy import text as _sa_t
                     sql = (
-                        f"SELECT {id_col}, {text_col}, {date_col} "
+                        f"SELECT {id_col}, {text_expr}, {date_col} "
                         f"FROM {table_name} WHERE {id_col} > :last_id"
                     )
                     if where:
@@ -1251,7 +1293,7 @@ class Lucis:
             else:
                 def delta_alchemy():
                     from sqlalchemy import text as _sa_t
-                    sql = f"SELECT {id_col}, {text_col} FROM {table_name} WHERE {id_col} > :last_id"
+                    sql = f"SELECT {id_col}, {text_expr} FROM {table_name} WHERE {id_col} > :last_id"
                     if where:
                         sql += f" AND ({where})"
                     sql += f" ORDER BY {id_col}"
@@ -1279,11 +1321,14 @@ class Lucis:
             if result is not None:
                 last_max[0] = result
 
+            # Build text expression for multi-column support
+            text_expr = _build_sql_text_expr(text_col)
+
             if date_col:
                 def delta_sqlite_sharded():
                     import sqlite3
                     sql = (
-                        f"SELECT {id_col}, {text_col}, {date_col} "
+                        f"SELECT {id_col}, {text_expr}, {date_col} "
                         f"FROM {table_name} WHERE {id_col} > ?"
                     )
                     if where:
@@ -1302,7 +1347,7 @@ class Lucis:
             else:
                 def delta_sqlite():
                     import sqlite3
-                    sql = f"SELECT {id_col}, {text_col} FROM {table_name} WHERE {id_col} > ?"
+                    sql = f"SELECT {id_col}, {text_expr} FROM {table_name} WHERE {id_col} > ?"
                     if where:
                         sql += f" AND ({where})"
                     sql += f" ORDER BY {id_col}"
