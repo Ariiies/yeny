@@ -155,9 +155,14 @@ class IndexWorker:
         """
         Start the worker loop in a daemon thread.
 
-        The worker will immediately begin its first cycle. Calling
-        ``start()`` on an already-running worker is a no-op with a
-        warning.
+        The worker will immediately begin its first cycle.  Calling
+        ``start()`` on an already-running worker is a no-op (a warning
+        is logged).
+
+        Raises:
+            RuntimeError: Not raised directly, but if the underlying
+                thread cannot be started the Python runtime will propagate
+                the error.
         """
         if self.is_running():
             logger.warning("IndexWorker is already running — ignoring start()")
@@ -197,7 +202,13 @@ class IndexWorker:
         logger.info("IndexWorker stopped for '%s'", self._lucis.name)
 
     def is_running(self) -> bool:
-        """Return ``True`` if the worker thread is alive."""
+        """Return ``True`` if the worker thread is currently alive.
+
+        Returns:
+            ``True`` while the daemon thread is running, ``False``
+            after :meth:`stop` completes or before :meth:`start` is
+            called.
+        """
         return self._thread is not None and self._thread.is_alive()
 
     def trigger_now(self) -> None:
@@ -214,7 +225,13 @@ class IndexWorker:
 
     @property
     def stats(self) -> Dict[str, Any]:
-        """Return a snapshot of worker statistics."""
+        """Return a snapshot of worker statistics.
+
+        Returns:
+            Dict with keys ``running``, ``interval``, ``cycles``,
+            ``rebuilds``, ``errors``, ``last_rebuild_time``,
+            ``index_name``, ``auto_purge``, and ``keep_versions``.
+        """
         return {
             "running": self.is_running(),
             "interval": self._interval,
@@ -351,7 +368,11 @@ class IndexWorker:
                 logger.warning("Auto-purge failed: %s", exc)
 
     def _interruptible_sleep(self, seconds: float) -> None:
-        """Sleep for *seconds*, waking early if ``_stop_event`` is set."""
+        """Sleep for *seconds*, returning early if ``_stop_event`` is set.
+
+        Args:
+            seconds: Total sleep duration in seconds.
+        """
         end_time = time.monotonic() + seconds
         while time.monotonic() < end_time:
             if self._stop_event.is_set():
@@ -361,6 +382,7 @@ class IndexWorker:
             time.sleep(min(0.25, max(0, remaining)))
 
     def __repr__(self) -> str:
+        """Return an informative string representation of the worker."""
         status = "running" if self.is_running() else "stopped"
         mode = "incremental" if self._incremental else ("streaming" if self._streaming_fn else "full-rebuild")
         return (

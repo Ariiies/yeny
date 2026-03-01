@@ -23,7 +23,12 @@ from .core.shard import (
 _AlchemyStorage = None
 
 def _get_alchemy_storage_class():
-    """Lazy-load AlchemyStorage to avoid hard dependency on sqlalchemy."""
+    """Lazy-load ``AlchemyStorage`` to avoid a hard dependency on SQLAlchemy.
+
+    Returns:
+        The :class:`~lucis.storage.AlchemyStorage` class, imported on
+        first call and cached globally afterwards.
+    """
     global _AlchemyStorage
     if _AlchemyStorage is None:
         from .storage.alchemy_storage import AlchemyStorage
@@ -196,7 +201,9 @@ class Lucis:
         return self.engine.total_docs if self._is_indexed else 0
 
     def _init_shard_manager(self) -> None:
-        """Initialize a ShardManager with current engine config."""
+        """Initialise a :class:`~lucis.core.shard.ShardManager` bound to
+        the current engine class, storage backend, and preprocessor.
+        """
         self._shard_manager = ShardManager(
             engine_class=type(self.engine),
             storage=self.storage,
@@ -1133,8 +1140,11 @@ class Lucis:
         self._rebuild_thread.start()
 
     def is_rebuilding(self) -> bool:
-        """
-        Return ``True`` if a background rebuild is in progress.
+        """Return ``True`` if a background rebuild is currently in progress.
+
+        Returns:
+            ``True`` while the rebuild thread started by
+            :meth:`reindex_async` is alive.
 
         Example::
 
@@ -1181,11 +1191,19 @@ class Lucis:
     # Phase 4: Worker / Automation 
 
     def _auto_data_fn(self) -> Callable:
-        """Auto-generate a data_fn based on stored _source_info.
+        """Auto-generate a ``data_fn`` callable from stored ``_source_info``.
 
         For sharded indices (``date_column`` present), the returned
         callable produces ``(data, dates)`` tuples.  For non-sharded
         indices, it returns ``Dict`` or ``List`` as before.
+
+        Returns:
+            A no-argument callable that fetches the full corpus from
+            the configured data source.
+
+        Raises:
+            LucisEngineError: If ``_source_info`` is missing or has an
+                unknown ``type`` field.
         """
         info = self._source_info
         storage = self.storage
@@ -1797,6 +1815,7 @@ class Lucis:
 
     # info and debugging
     def __repr__(self) -> str:
+        """Return an informative string representation of the Lucis instance."""
         status = "indexed" if self._is_indexed else "empty"
 
         if self._shard_manager:

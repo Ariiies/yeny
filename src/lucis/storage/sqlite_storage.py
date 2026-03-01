@@ -137,9 +137,17 @@ class SQLiteStorage(BaseStorage):
         """
         Persist the engine state into the ``lucis_*`` tables.
 
-        ``data`` is the bundle produced by ``CoreEngine.persist()`` and
+        ``data`` is the bundle produced by ``BaseEngine.persist()`` and
         contains the keys: *index*, *doc_vectors*, *id_map*, *doc_lengths*,
         *total_docs*, *id_type*.
+
+        Args:
+            data: Engine-state dict to persist.
+            name: Physical index name (storage key).
+
+        Raises:
+            RuntimeError: If the write fails (transaction is rolled back
+                automatically).
         """
         cur = self.conn.cursor()
 
@@ -219,9 +227,18 @@ class SQLiteStorage(BaseStorage):
         """
         Reconstruct an engine state dict from the ``lucis_*`` tables.
 
-        The returned dict has the same shape that ``CoreEngine.load_engine``
+        The returned dict has the same shape that ``BaseEngine.load_engine``
         expects: *index*, *doc_vectors*, *id_map*, *doc_lengths*,
         *total_docs*, *id_type*.
+
+        Args:
+            name: Physical index name (same key used in :meth:`save`).
+
+        Returns:
+            Engine-state dict ready to be passed to ``BaseEngine.load_engine``.
+
+        Raises:
+            FileNotFoundError: If *name* is not found in ``lucis_metadata``.
         """
         cur = self.conn.cursor()
 
@@ -295,6 +312,13 @@ class SQLiteStorage(BaseStorage):
         Checks in order:
         1. Is *name* an alias that points to an existing physical index?
         2. Is *name* itself a physical index in ``lucis_metadata``?
+
+        Args:
+            name: Logical alias or physical index name to check.
+
+        Returns:
+            ``True`` if the index (or its alias target) exists in
+            ``lucis_metadata``.
         """
         resolved = self.resolve_alias(name)
         cur = self.conn.cursor()
@@ -311,12 +335,24 @@ class SQLiteStorage(BaseStorage):
 
         If *name* is a registered alias, return its target.
         Otherwise return *name* unchanged.
+
+        Args:
+            name: Logical alias or physical index name.
+
+        Returns:
+            Physical index name the alias points to, or *name* if it
+            is not a registered alias.
         """
         target = self.get_alias(name)
         return target if target is not None else name
 
     def set_alias(self, alias_name: str, target_index: str) -> None:
-        """Create or update an alias → target mapping."""
+        """Create or update an alias → target mapping.
+
+        Args:
+            alias_name: Logical name users reference the index by.
+            target_index: Physical versioned name the alias points to.
+        """
         cur = self.conn.cursor()
         cur.execute(
             "INSERT OR REPLACE INTO lucis_aliases (alias_name, target_index) "
@@ -326,7 +362,15 @@ class SQLiteStorage(BaseStorage):
         self.conn.commit()
 
     def get_alias(self, alias_name: str) -> Optional[str]:
-        """Return the physical index name for *alias_name*, or ``None``."""
+        """Return the physical index name for *alias_name*.
+
+        Args:
+            alias_name: The logical alias to look up.
+
+        Returns:
+            Physical index name the alias points to, or ``None`` if
+            *alias_name* is not registered.
+        """
         cur = self.conn.cursor()
         cur.execute(
             "SELECT target_index FROM lucis_aliases WHERE alias_name = ?",
@@ -336,7 +380,11 @@ class SQLiteStorage(BaseStorage):
         return row[0] if row else None
 
     def list_aliases(self) -> Dict[str, str]:
-        """Return all aliases as ``{alias_name: target_index}``."""
+        """Return all registered aliases.
+
+        Returns:
+            ``{alias_name: target_index}`` dict sorted by alias name.
+        """
         cur = self.conn.cursor()
         cur.execute(
             "SELECT alias_name, target_index FROM lucis_aliases ORDER BY alias_name"
@@ -344,7 +392,11 @@ class SQLiteStorage(BaseStorage):
         return {row[0]: row[1] for row in cur.fetchall()}
 
     def delete_alias(self, alias_name: str) -> None:
-        """Remove an alias (does NOT delete the physical index)."""
+        """Remove an alias (does **not** delete the physical index).
+
+        Args:
+            alias_name: The alias to remove.
+        """
         cur = self.conn.cursor()
         cur.execute(
             "DELETE FROM lucis_aliases WHERE alias_name = ?",
@@ -360,7 +412,15 @@ class SQLiteStorage(BaseStorage):
     def list_versions(self, base_name: str) -> list:
         """Return all physical versions of *base_name*, sorted oldest → newest.
 
-        Shard entries (``__shard__``) are excluded.
+        Shard entries (``__shard__``) are excluded — only parent
+        version names are returned.
+
+        Args:
+            base_name: The logical/alias name whose versions to list.
+
+        Returns:
+            Sorted list of versioned physical names, e.g.
+            ``["articles__v20260210_143022", "articles__v20260210_150545"]``.
         """
         cur = self.conn.cursor()
         cur.execute(
@@ -374,7 +434,15 @@ class SQLiteStorage(BaseStorage):
     #  Source-info persistence (smart worker support)                       #
 
     def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
-        """Persist data-source metadata into ``lucis_metadata``."""
+        """Persist data-source metadata into ``lucis_metadata``.
+
+        Args:
+            name: Physical index name to associate the metadata with.
+            info: Source-info dict with keys such as ``type``,
+                ``table_name``, ``text_column`` (str or list),
+                ``id_column``, ``date_column``, ``where_clause``,
+                and ``query``.
+        """
         import json as _json
         text_col = info.get("text_column")
         # Multi-column: serialize as JSON list; single column: plain string
@@ -398,7 +466,15 @@ class SQLiteStorage(BaseStorage):
         self.conn.commit()
 
     def load_source_info(self, name: str) -> Optional[Dict[str, Any]]:
-        """Load source metadata from ``lucis_metadata``."""
+        """Load source metadata from ``lucis_metadata``.
+
+        Args:
+            name: Physical index name whose metadata to retrieve.
+
+        Returns:
+            Source-info dict (see :meth:`save_source_info` for key
+            descriptions), or ``None`` if no metadata was stored.
+        """
         cur = self.conn.cursor()
         cur.execute(
             "SELECT source_table, source_column, source_id_column, "
@@ -448,7 +524,14 @@ class SQLiteStorage(BaseStorage):
         return None
 
     def count_rows(self, table_name: str) -> Optional[int]:
-        """Return ``SELECT COUNT(*) FROM <table_name>``."""
+        """Return ``SELECT COUNT(*) FROM <table_name>``.
+
+        Args:
+            table_name: Name of the user table to count rows in.
+
+        Returns:
+            Integer row count.
+        """
         cur = self.conn.cursor()
         cur.execute(f"SELECT COUNT(*) FROM {table_name}")
         return cur.fetchone()[0]
@@ -456,7 +539,13 @@ class SQLiteStorage(BaseStorage):
     # Shard support (temporal partitioning)
 
     def save_shard_registry(self, index_name: str, shard_keys: list) -> None:
-        """Persist the shard keys for a sharded index."""
+        """Persist the shard keys for a sharded index.
+
+        Args:
+            index_name: The versioned physical name of the parent index.
+            shard_keys: List of shard keys to register
+                (e.g. ``["2026_01", "9999_99"]``).
+        """
         cur = self.conn.cursor()
         cur.execute(
             "DELETE FROM lucis_shard_registry WHERE index_name = ?",
@@ -471,7 +560,15 @@ class SQLiteStorage(BaseStorage):
         self.conn.commit()
 
     def load_shard_registry(self, index_name: str) -> list:
-        """Return shard keys for *index_name*, sorted. Empty = not sharded."""
+        """Return shard keys for *index_name*, sorted.
+
+        Args:
+            index_name: The versioned physical name of the parent index.
+
+        Returns:
+            Sorted list of shard keys.  An empty list means the index
+            is monolithic (not sharded).
+        """
         cur = self.conn.cursor()
         cur.execute(
             "SELECT shard_key FROM lucis_shard_registry "
@@ -483,10 +580,14 @@ class SQLiteStorage(BaseStorage):
     #  Extras                                                              #
 
     def delete(self, name: str) -> None:
-        """Remove all data for the given index from every ``lucis_*`` table.
+        """Remove all data for *name* from every ``lucis_*`` table.
 
-        If the index is sharded, all shard entries and the shard
+        If the index is sharded, all child shard entries and the shard
         registry are cleaned up automatically.
+
+        Args:
+            name: Physical index name to delete. Aliases pointing to
+                this name are **not** removed automatically.
         """
         shard_keys = self.load_shard_registry(name)
         cur = self.conn.cursor()
@@ -522,21 +623,31 @@ class SQLiteStorage(BaseStorage):
         self.conn.commit()
 
     def list_indices(self):
-        """Return a list of all index names stored in the database."""
+        """Return a sorted list of all index names stored in the database.
+
+        Returns:
+            List of physical index names (excludes aliases).
+        """
         cur = self.conn.cursor()
         cur.execute("SELECT index_name FROM lucis_metadata ORDER BY index_name")
         return [row[0] for row in cur.fetchall()]
 
     def close(self) -> None:
-        """Close the connection **only** if we own it."""
+        """Close the SQLite connection if this instance owns it.
+
+        When constructed with an external *connection*, closing is the
+        caller's responsibility — this method is a no-op in that case.
+        """
         if self._owns_connection:
             self.conn.close()
 
     def __del__(self):
+        """Ensure the connection is released when the object is garbage-collected."""
         try:
             self.close()
         except Exception:
             pass
 
     def __repr__(self) -> str:
+        """Return an unambiguous string identifying this storage instance."""
         return f"SQLiteStorage(db_path='{self.db_path}')"

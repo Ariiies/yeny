@@ -57,10 +57,20 @@ _SHARD_KEY_RE = re.compile(r"^\d{4}_\d{2}$")
 # Utility functions
 
 def date_to_shard_key(value: Any) -> str:
-    """Convert a date/datetime/string to shard key ``YYYY_MM``.
+    """Convert a date/datetime/string to a shard key ``YYYY_MM``.
 
     Accepts ``datetime``, ``date``, ISO-format strings, or ``None``.
     Returns :data:`LUCIS_GLOBAL_SHARD` for ``None`` or unparseable values.
+
+    Args:
+        value: The date value to convert.  Accepted types: ``datetime``,
+            ``date``, ISO-format ``str`` (e.g. ``"2026-02-23"``), or
+            ``None``.
+
+    Returns:
+        A shard key string such as ``"2026_02"``, or
+        :data:`LUCIS_GLOBAL_SHARD` (``"9999_99"``) when *value* is
+        ``None`` or cannot be parsed.
 
     Examples::
 
@@ -84,10 +94,19 @@ def date_to_shard_key(value: Any) -> str:
 
 
 def normalize_to_shard_key(value: Any) -> Optional[str]:
-    """Normalize a ``since``/``until`` value to a shard key.
+    """Normalize a ``since``/``until`` filter value to a shard key.
 
     Accepts shard keys (``"2026_01"``), ISO dates (``"2026-01-15"``),
     year-month strings (``"2026-01"``), ``datetime`` objects, or ``None``.
+
+    Args:
+        value: Filter value to normalise.  Accepted types: existing shard
+            key ``str``, ISO date/datetime ``str``, ``datetime``,
+            ``date``, or ``None``.
+
+    Returns:
+        Normalised shard key (e.g. ``"2026_01"``), or ``None`` when
+        *value* is ``None`` or cannot be parsed.
 
     Examples::
 
@@ -119,10 +138,21 @@ def shard_key_in_range(
     since: Optional[str] = None,
     until: Optional[str] = None,
 ) -> bool:
-    """Check if *key* falls within [*since*, *until*] (inclusive).
+    """Return ``True`` if *key* falls within [*since*, *until*] (inclusive).
 
-    The global shard (``9999_99``) is **always** included regardless
+    The global shard (``"9999_99"``) is **always** included regardless
     of the range — it contains undated documents that may be relevant.
+
+    Args:
+        key: Shard key to test (e.g. ``"2026_02"``).
+        since: Lower-bound shard key (inclusive).  ``None`` means
+            no lower bound.
+        until: Upper-bound shard key (inclusive).  ``None`` means
+            no upper bound.
+
+    Returns:
+        ``True`` if *key* is within the specified range or is the
+        global shard.
     """
     if key == LUCIS_GLOBAL_SHARD:
         return True
@@ -188,6 +218,7 @@ class ShardManager:
 
     @property
     def id_type(self) -> str:
+        """ID type used by the shards (e.g. ``"custom"`` or ``"sequential"``)."""
         for engine in self.shards.values():
             if engine.id_type != "none":
                 return engine.id_type
@@ -296,12 +327,17 @@ class ShardManager:
         new_docs: Dict[str, str],
         dates: Dict[str, Any],
     ) -> None:
-        """Incrementally add documents to appropriate shards.
+        """Incrementally add documents to the appropriate shards.
 
         Each document is routed to its shard by date.  If the shard
         already exists and the engine supports incremental indexing,
-        ``add_documents()`` is called.  Otherwise ``build_index()``
-        is used (for new shards or engines without incremental support).
+        ``add_documents()`` is called on it.  Otherwise the shard is
+        initialised with ``build_index()``.
+
+        Args:
+            new_docs: ``{doc_id: text}`` mapping of new documents.
+            dates: ``{doc_id: date_value}`` used for shard routing
+                (same keys as *new_docs*).
         """
         groups: Dict[str, Dict[str, str]] = defaultdict(dict)
         for doc_id, text in new_docs.items():
@@ -423,10 +459,15 @@ class ShardManager:
     # Info
 
     def shard_stats(self) -> Dict[str, int]:
-        """Return ``{shard_key: doc_count}`` for all loaded shards."""
+        """Return document counts per shard.
+
+        Returns:
+            ``{shard_key: doc_count}`` dict sorted by shard key.
+        """
         return {k: e.total_docs for k, e in sorted(self.shards.items())}
 
     def __repr__(self) -> str:
+        """Return an informative string representation of the manager."""
         keys = ", ".join(sorted(self.shards.keys()))
         return (
             f"ShardManager(shards={len(self.shards)}, "

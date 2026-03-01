@@ -50,6 +50,15 @@ def _deep_getsizeof(obj: Any, seen: Optional[set] = None) -> int:
 
     Handles compact structures (``CompactPostings``, ``CompactDocLengths``)
     by measuring their internal ``array.array`` buffers directly.
+
+    Args:
+        obj: Any Python object to measure.
+        seen: Internal set of already-visited object IDs (used to avoid
+            infinite recursion on circular references).  Pass ``None``
+            on the initial call.
+
+    Returns:
+        Estimated memory footprint in bytes.
     """
     if seen is None:
         seen = set()
@@ -85,7 +94,15 @@ def _deep_getsizeof(obj: Any, seen: Optional[set] = None) -> int:
 
 
 def _format_bytes(n: int) -> str:
-    """Human-readable byte size (KB / MB / GB)."""
+    """Convert a byte count to a human-readable string (KB / MB / GB).
+
+    Args:
+        n: Number of bytes (non-negative integer).
+
+    Returns:
+        A compact string such as ``"3.46 GB"``, ``"512.0 MB"``,
+        ``"14.2 KB"``, or ``"512 B"``.
+    """
     if n < 1024:
         return f"{n} B"
     elif n < 1024 ** 2:
@@ -97,10 +114,14 @@ def _format_bytes(n: int) -> str:
 
 
 def _get_process_rss() -> Optional[int]:
-    """Return the current process RSS in bytes, or ``None`` if unavailable.
+    """Return the current process RSS in bytes.
 
     Uses ``psutil`` if installed; falls back to ``resource`` on Unix.
-    Returns ``None`` on platforms where neither is available.
+
+    Returns:
+        Current resident set size of the process in bytes, or ``None``
+        on platforms where neither ``psutil`` nor ``resource`` is
+        available.
     """
     try:
         import psutil
@@ -121,7 +142,17 @@ def _get_process_rss() -> Optional[int]:
 
 @dataclass
 class ShardHealth:
-    """RAM and document stats for a single shard."""
+    """RAM and document stats for a single shard.
+
+    Attributes:
+        shard_key: Temporal key identifying the shard (``"YYYY_MM"`` or
+            ``"9999_99"`` for the global shard).
+        total_docs: Number of documents indexed in this shard.
+        index_size_bytes: Memory used by the inverted index structure.
+        doc_lengths_size_bytes: Memory used by the document-length map.
+        id_map_size_bytes: Memory used by the internal ID → original ID map.
+        total_size_bytes: Sum of all three size fields above.
+    """
     shard_key: str
     total_docs: int
     index_size_bytes: int
@@ -131,9 +162,17 @@ class ShardHealth:
 
     @property
     def total_size_human(self) -> str:
+        """Human-readable total RAM usage of this shard (e.g. ``"128.4 MB"``)."""
         return _format_bytes(self.total_size_bytes)
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serialisable representation of this shard report.
+
+        Returns:
+            Dict with keys ``shard_key``, ``total_docs``, ``index_size``,
+            ``doc_lengths_size``, ``id_map_size``, ``total_size``,
+            and ``total_size_bytes``.
+        """
         return {
             "shard_key": self.shard_key,
             "total_docs": self.total_docs,
@@ -147,7 +186,31 @@ class ShardHealth:
 
 @dataclass
 class HealthReport:
-    """Full health snapshot of a Lucis instance."""
+    """Full health snapshot of a Lucis instance.
+
+    Attributes:
+        timestamp: ISO-like timestamp when the report was collected
+            (``"YYYY-MM-DD HH:MM:SS"``).
+        index_name: Logical alias name of the Lucis instance.
+        engine_name: Name of the engine (e.g. ``"LiteEngine"``).
+        is_indexed: ``True`` if the index has been built.
+        is_sharded: ``True`` if the index uses temporal sharding.
+        total_docs: Total number of documents across all shards.
+        index_ram_bytes: Estimated RAM used by the in-memory index
+            (inverted index + doc_lengths + id_map).
+        process_rss_bytes: Current RSS of the entire Python process
+            in bytes, or ``None`` if unavailable.
+        shard_count: Number of loaded shards (0 for monolithic indices).
+        shards: Per-shard RAM and doc-count details.
+        worker_running: ``True`` if the ``IndexWorker`` is alive.
+        worker_cycles: Total rebuild cycles completed by the worker.
+        worker_rebuilds: Number of successful rebuilds by the worker.
+        worker_errors: Number of failed rebuilds by the worker.
+        worker_last_rebuild_time: Duration of the last rebuild in
+            seconds, or ``None`` if no rebuild has occurred.
+        search_benchmark_ms: Search latency in milliseconds from the
+            optional benchmark query, or ``None`` if not requested.
+    """
     timestamp: str
     index_name: str
     engine_name: str
@@ -175,13 +238,21 @@ class HealthReport:
 
     @property
     def index_ram_human(self) -> str:
+        """Human-readable index RAM usage (e.g. ``"1001.1 MB"``)."""
         return _format_bytes(self.index_ram_bytes)
 
     @property
     def process_rss_human(self) -> Optional[str]:
+        """Human-readable process RSS (e.g. ``"2.10 GB"``), or ``None``."""
         return _format_bytes(self.process_rss_bytes) if self.process_rss_bytes else None
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serialisable representation of the health report.
+
+        Returns:
+            Nested dict containing sections ``ram``, ``shards``,
+            ``worker``, and optionally ``search_benchmark_ms``.
+        """
         d = {
             "timestamp": self.timestamp,
             "index_name": self.index_name,
@@ -212,6 +283,11 @@ class HealthReport:
         return d
 
     def __str__(self) -> str:
+        """Render the health report as a human-readable table.
+
+        Returns:
+            A multi-line ASCII table string suitable for ``print()``.
+        """
         lines = [
             "=" * 62,
             "  LUCIS HEALTH REPORT",
@@ -419,6 +495,11 @@ class HealthMonitor:
         logger.info("HealthMonitor stopped for '%s'", self._lucis.name)
 
     def is_running(self) -> bool:
+        """Return ``True`` if the monitor thread is currently alive.
+
+        Returns:
+            ``True`` while the background daemon thread is running.
+        """
         return self._thread is not None and self._thread.is_alive()
 
     def collect(self) -> HealthReport:
@@ -494,6 +575,7 @@ class HealthMonitor:
                 time.sleep(min(0.5, max(0, remaining)))
 
     def __repr__(self) -> str:
+        """Return an informative string representation of the monitor."""
         status = "running" if self.is_running() else "stopped"
         return (
             f"HealthMonitor(index='{self._lucis.name}', "
