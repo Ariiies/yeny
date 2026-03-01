@@ -11,6 +11,7 @@ from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
 from .utils.nlp import word_tokenizer, simple_tokenizer
 from .core.worker import IndexWorker
+from .core.health import health_check as _health_check, HealthMonitor, HealthReport
 from .core.shard import (
     ShardManager,
     normalize_to_shard_key,
@@ -1612,6 +1613,76 @@ class Lucis:
             on_rebuild=on_rebuild,
             on_error=on_error,
             on_cycle=on_cycle,
+        )
+
+    # Health monitoring
+
+    def health_check(
+        self,
+        worker: Optional["IndexWorker"] = None,
+        benchmark_query: Optional[str] = None,
+    ) -> "HealthReport":
+        """
+        Generate a full health report: RAM usage, shard sizes, worker
+        status, and optional search benchmark.
+
+        Args:
+            worker: An ``IndexWorker`` to include in the report (optional).
+            benchmark_query: If provided, runs a timed search and includes
+                the latency in the report.
+
+        Returns:
+            A :class:`HealthReport` with all diagnostics.
+
+        Example::
+
+            report = luc.health_check(worker=worker, benchmark_query="test")
+            print(report)          # pretty table
+            print(report.to_dict())  # JSON-ready dict
+        """
+        return _health_check(self, worker=worker, benchmark_query=benchmark_query)
+
+    def health_monitor(
+        self,
+        worker: Optional["IndexWorker"] = None,
+        interval: float = 30,
+        benchmark_query: Optional[str] = None,
+        on_report: Optional[Any] = None,
+        ram_warning_mb: float = 512,
+    ) -> "HealthMonitor":
+        """
+        Create a continuous health monitor that collects periodic snapshots.
+
+        The monitor runs in a daemon thread and stores a history of
+        :class:`HealthReport` objects for trend analysis.
+
+        Args:
+            worker: An ``IndexWorker`` to include in reports.
+            interval: Seconds between snapshots (default 30).
+            benchmark_query: If provided, benchmarks search each cycle.
+            on_report: Optional callback ``fn(HealthReport)`` per cycle.
+            ram_warning_mb: Log a warning if index RAM exceeds this
+                threshold (default 512 MB).
+
+        Returns:
+            A :class:`HealthMonitor` instance (not yet started).
+            Call ``.start()`` to begin monitoring.
+
+        Example::
+
+            monitor = luc.health_monitor(worker=worker, interval=30)
+            monitor.start()
+            # ... app runs ...
+            monitor.stop()
+            monitor.print_summary()
+        """
+        return HealthMonitor(
+            lucis=self,
+            worker=worker,
+            interval=interval,
+            benchmark_query=benchmark_query,
+            on_report=on_report,
+            ram_warning_mb=ram_warning_mb,
         )
 
     # info and debugging

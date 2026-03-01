@@ -5,6 +5,13 @@ from ..utils.index.core import build_index as build_idx_func
 from ..utils.index.stats import get_doc_len
 from ..utils.math.core import sort_results
 from ..utils.nlp import simple_tokenizer, char_ngram_tokenizer
+from ..utils.compact import (
+    CompactPostings,
+    CompactDocLengths,
+    freeze_index,
+    thaw_index,
+    freeze_doc_lengths,
+)
 from ..exceptions import LucisEmptyCorpusError
 
 
@@ -48,6 +55,10 @@ class LiteEngine(BaseEngine):
     def build_index(self, corpus: Union[List[str], Dict[str, str]]) -> None:
         """
         Builds the inverted index and document lengths.
+
+        After building with fast ``defaultdict``s, the structures are
+        *frozen* into compact ``array.array``-backed objects that use
+        ~12× less RAM per posting entry.
         """
         texts, self.id_map = self._normalize_corpus(corpus)
 
@@ -64,11 +75,18 @@ class LiteEngine(BaseEngine):
             result = self.preprocessor(doc)
             tokenized.append(simple_tokenizer(result) if isinstance(result, str) else result)
 
-        # 2. Build inverted index with utils function (Core)
-        self.index = build_idx_func(tokenized)
+        # 2. Build inverted index with utils function (fast defaultdict pass)
+        raw_index = build_idx_func(tokenized)
 
-        # 3. Calculate document lengths for TF normalization
-        self.doc_lengths = get_doc_len(self.index, self.total_docs)
+        # 3. Calculate document lengths (still using raw dicts)
+        raw_doc_lengths = get_doc_len(raw_index, self.total_docs)
+
+        # 4. Freeze to compact structures (RAM optimization)
+        self.index = freeze_index(raw_index)
+        self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
+
+        # Let the raw dicts be garbage-collected immediately
+        del raw_index, raw_doc_lengths
 
     def search(self, query: Union[str, List[str]], top_k: int = 10) -> List[Tuple[DocId, float]]:
         """
@@ -96,6 +114,9 @@ class LiteEngine(BaseEngine):
             return []
 
         # 2. Score each candidate: Σ tf(t,d) / |d|
+        #    Uses CompactPostings.get() — O(log n) binary search per lookup,
+        #    but ~12× less RAM and better cache locality than dict.
+        _EMPTY = CompactPostings.from_dict({})
         scores: Dict[int, float] = {}
         for doc_id in candidate_ids:
             doc_len = self.doc_lengths.get(doc_id, 0)
@@ -104,9 +125,9 @@ class LiteEngine(BaseEngine):
 
             score = 0.0
             for token in query:
-                tf = self.index.get(token, {}).get(doc_id, 0)
+                tf = self.index.get(token, _EMPTY).get(doc_id, 0)
                 score += tf / doc_len
-            
+
             if score > 0:
                 scores[doc_id] = score
 
@@ -119,18 +140,33 @@ class LiteEngine(BaseEngine):
     def persist(self, name: str) -> None:
         """
         Packages the current state and sends it to storage.
+
+        Compact structures are *thawed* back to regular dicts for
+        JSON serialization.  The in-memory engine keeps the compact
+        versions — only the serialization copy is inflated.
         """
         if not self.storage:
             raise ValueError("No storage adapter configured in the engine.")
 
+        # Thaw compact structures → regular dicts for storage
+        serializable_index = (
+            thaw_index(self.index)
+            if self.index and isinstance(next(iter(self.index.values())), CompactPostings)
+            else self.index
+        )
+        serializable_doc_lengths = (
+            self.doc_lengths.to_dict()
+            if isinstance(self.doc_lengths, CompactDocLengths)
+            else self.doc_lengths
+        )
+
         state = {
-            "index": self.index,
+            "index": serializable_index,
             "total_docs": self.total_docs,
-            "doc_lengths": self.doc_lengths,
+            "doc_lengths": serializable_doc_lengths,
             "id_map": self.id_map,
             "id_type": self.id_type,
             "engine_name": self.name,
-            # Explicitly empty — storage adapters handle this gracefully
         }
         self.storage.save(state, name)
 
@@ -138,24 +174,39 @@ class LiteEngine(BaseEngine):
         """
         Loads a saved state and reconstructs the engine.
 
-        Only loads index, doc_lengths, total_docs, id_map, id_type.
+        Raw dicts from storage are immediately frozen into compact
+        structures to minimise steady-state RAM.
         """
         if not self.storage:
             raise ValueError("No storage adapter configured in the engine.")
 
         state = self.storage.load(name)
 
-        self.index = state["index"]
+        raw_index = state["index"]
         self.total_docs = state["total_docs"]
-        self.doc_lengths = state["doc_lengths"]
-        self.id_map = state.get("id_map", {i: i for i in range(self.total_docs)})
+        raw_doc_lengths = state["doc_lengths"]
+        raw_id_map = state.get("id_map", {i: i for i in range(self.total_docs)})
         self.id_type = state.get("id_type", "none")
+
+        # Normalize id_map keys to int (JSON deserializes keys as str)
+        self.id_map = {int(k): v for k, v in raw_id_map.items()}
+
+        # Freeze to compact structures
+        self.index = freeze_index(raw_index)
+        self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
+        del raw_index, raw_doc_lengths
 
     # Incremental indexing
 
     def add_documents(self, new_docs: Union[List[str], Dict[Any, str]]) -> None:
         """
         Incrementally add new documents to the existing index.
+
+        Builds a temporary dict-based delta, merges it into the
+        existing compact postings, and re-freezes.  Because deltas
+        are typically small (<1 % of the corpus), the temporary RAM
+        spike is negligible.
+
         Args:
             new_docs: New documents to add. Supports the same formats
                 as ``build_index``:
@@ -198,15 +249,32 @@ class LiteEngine(BaseEngine):
                 simple_tokenizer(result) if isinstance(result, str) else result
             )
 
-        # Update inverted index and doc_lengths incrementally
+        # Build a small delta index (regular dicts — fast for mutation)
+        delta: Dict[str, Dict[int, int]] = {}
+        new_doc_lengths: Dict[int, int] = {}
+
         for i, tokens in enumerate(tokenized_new):
             doc_id = start_id + i
-            doc_length = len(tokens)
-            self.doc_lengths[doc_id] = doc_length
-
+            new_doc_lengths[doc_id] = len(tokens)
             for token in tokens:
-                if token not in self.index:
-                    self.index[token] = {}
-                self.index[token][doc_id] = self.index[token].get(doc_id, 0) + 1
+                if token not in delta:
+                    delta[token] = {}
+                delta[token][doc_id] = delta[token].get(doc_id, 0) + 1
+
+        # Merge delta into existing compact index
+        for token, new_postings in delta.items():
+            existing = self.index.get(token)
+            if existing is None:
+                # Brand-new token — freeze directly
+                self.index[token] = CompactPostings.from_dict(new_postings)
+            else:
+                # Merge: thaw existing → update → re-freeze
+                merged = existing.to_dict() if isinstance(existing, CompactPostings) else dict(existing)
+                merged.update(new_postings)
+                self.index[token] = CompactPostings.from_dict(merged)
+
+        # Extend compact doc_lengths
+        for doc_id, length in new_doc_lengths.items():
+            self.doc_lengths[doc_id] = length
 
         self.total_docs += len(new_texts)

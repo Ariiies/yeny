@@ -21,6 +21,9 @@ from .storage.sqlite_storage import SQLiteStorage
 # Worker (Phase 4 — Shadow Indexing)
 from .core.worker import IndexWorker
 
+# Health monitoring (Phase 6 — Resource Protection)
+from .core.health import HealthReport, HealthMonitor, health_check
+
 # Shard constants (Phase 5 — Temporal Sharding)
 from .core.shard import LUCIS_GLOBAL_SHARD, LUCIS_DEFAULT_DATE_COLUMNS
 
@@ -55,6 +58,11 @@ __all__ = [
     
     # Worker
     "IndexWorker",
+    
+    # Health
+    "HealthReport",
+    "HealthMonitor",
+    "health_check",
     
     # Shard constants
     "LUCIS_GLOBAL_SHARD",
