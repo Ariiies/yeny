@@ -117,7 +117,7 @@ def _get_process_rss() -> Optional[int]:
     return None
 
 
-# ─── Data classes ────────────────────────────────────────────────────
+# Data classes
 
 @dataclass
 class ShardHealth:
@@ -260,7 +260,7 @@ class HealthReport:
         return "\n".join(lines)
 
 
-# ─── Core health-check function ─────────────────────────────────────
+# Core health-check function
 
 def health_check(
     lucis: Any,
@@ -309,10 +309,10 @@ def health_check(
         dv_size = _deep_getsizeof(engine.doc_vectors) if hasattr(engine, "doc_vectors") else 0
         index_ram = idx_size + dl_size + im_size + dv_size
 
-    # ── Process RSS ──
+    # Process RSS
     process_rss = _get_process_rss()
 
-    # ── Worker stats ──
+    # Worker stats
     w_running = False
     w_cycles = 0
     w_rebuilds = 0
@@ -325,7 +325,7 @@ def health_check(
         w_errors = worker.errors
         w_last = worker.last_rebuild_time
 
-    # ── Search benchmark ──
+    # Search benchmark
     bench_ms = None
     if benchmark_query and lucis._is_indexed:
         start = time.perf_counter()
@@ -352,7 +352,7 @@ def health_check(
     )
 
 
-# ─── Continuous monitor ─────────────────────────────────────────────
+# Continuous monitor
 
 class HealthMonitor:
     """Daemon that periodically collects health reports.
