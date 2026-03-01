@@ -121,6 +121,7 @@ class IndexWorker:
         on_rebuild: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_cycle: Optional[Callable[[int, bool], None]] = None,
+        streaming_fn: Optional[Callable] = None,
     ):
         self._lucis = lucis
         self._data_fn = data_fn
@@ -133,6 +134,10 @@ class IndexWorker:
         self._on_rebuild = on_rebuild
         self._on_error = on_error
         self._on_cycle = on_cycle
+        # streaming_fn: no-arg callable that returns a (doc_id, text, date)
+        # iterator.  When set, full rebuilds use reindex_streaming() instead
+        # of fetching all rows into memory via data_fn().
+        self._streaming_fn = streaming_fn
 
         # Internal state
         self._thread: Optional[threading.Thread] = None
@@ -300,14 +305,19 @@ class IndexWorker:
                 self._lucis.add_documents(delta)
         else:
             # Full rebuild mode (default)
-            result = self._data_fn()
-
-            # Detect sharded mode: data_fn returns (data, dates)
-            if isinstance(result, tuple) and len(result) == 2:
-                data, dates = result
-                self._lucis.reindex(data, dates=dates)
+            # ── Streaming path: server-side cursor, no fetchall ──
+            if self._streaming_fn is not None and hasattr(self._lucis, "reindex_streaming"):
+                self._lucis.reindex_streaming(self._streaming_fn())
             else:
-                self._lucis.reindex(result)
+                # Classic path: data_fn() returns full dict/list in RAM
+                result = self._data_fn()
+
+                # Detect sharded mode: data_fn returns (data, dates)
+                if isinstance(result, tuple) and len(result) == 2:
+                    data, dates = result
+                    self._lucis.reindex(data, dates=dates)
+                else:
+                    self._lucis.reindex(result)
 
         elapsed = time.perf_counter() - start
         self.last_rebuild_time = round(elapsed, 3)
@@ -352,8 +362,9 @@ class IndexWorker:
 
     def __repr__(self) -> str:
         status = "running" if self.is_running() else "stopped"
+        mode = "incremental" if self._incremental else ("streaming" if self._streaming_fn else "full-rebuild")
         return (
             f"IndexWorker(index='{self._lucis.name}', "
-            f"interval={self._interval}s, status='{status}', "
-            f"cycles={self.cycles}, rebuilds={self.rebuilds})"
+            f"mode='{mode}', interval={self._interval}s, "
+            f"status='{status}', cycles={self.cycles}, rebuilds={self.rebuilds})"
         )

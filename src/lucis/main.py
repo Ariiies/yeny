@@ -526,13 +526,21 @@ class Lucis:
         }
 
         if resolved_date_col:
-            # Sharded mode: read data with dates and build per-shard indices
-            data, dates = storage.read_table_with_dates(
-                table_name, text_column, id_column,
-                resolved_date_col, where_clause, schema,
-            )
+            # Sharded mode: stream rows → build_shards_streaming (no fetchall)
             instance._init_shard_manager()
-            instance._shard_manager.build_shards(data, dates)
+            if hasattr(storage, "stream_table_with_dates"):
+                row_iter = storage.stream_table_with_dates(
+                    table_name, text_column, id_column,
+                    resolved_date_col, where_clause, schema,
+                )
+                instance._shard_manager.build_shards_streaming(row_iter)
+            else:
+                # Fallback for non-Alchemy storage
+                data, dates = storage.read_table_with_dates(
+                    table_name, text_column, id_column,
+                    resolved_date_col, where_clause, schema,
+                )
+                instance._shard_manager.build_shards(data, dates)
             instance._is_indexed = True
             instance.save()
         else:
@@ -842,6 +850,52 @@ class Lucis:
             self._shard_manager.build_shards(data, dates)
         else:
             self.engine.build_index(data)
+        self._is_indexed = True
+        self.save()
+
+    def reindex_streaming(
+        self,
+        row_iter,
+        batch_size: int = 5_000,
+    ) -> None:
+        """Rebuild the sharded index from a **streaming** row iterator.
+
+        This is the memory-efficient counterpart to :meth:`reindex`.
+        Instead of materialising the entire corpus in RAM (via
+        ``fetchall``), rows are consumed in *batch_size* chunks and
+        routed directly to their temporal shards.
+
+        Peak RAM during rebuild ≈ steady-state index RAM + one batch
+        (a few MB), instead of steady-state + full raw corpus (~1 GB
+        extra for a 2 M-row email dataset).
+
+        Args:
+            row_iter: Any iterable that yields ``(doc_id_str, text, date_val)``
+                triples.  Typical source:
+                ``storage.stream_table_with_dates(...)``.
+            batch_size: Per-shard buffer size.  Default 5 000 rows.
+
+        Raises:
+            LucisEngineError: If the index is not sharded (no
+                ``_shard_manager``).  Use :meth:`reindex` for
+                non-sharded indices.
+
+        Example::
+
+            row_iter = storage.stream_table_with_dates(
+                "emails", "body", id_column="id", date_column="sent_at"
+            )
+            luc.reindex_streaming(row_iter)
+        """
+        if self._shard_manager is None:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=(
+                    "reindex_streaming() requires a sharded index. "
+                    "Use reindex() for non-sharded indices."
+                ),
+            )
+        self._shard_manager.build_shards_streaming(row_iter, batch_size=batch_size)
         self._is_indexed = True
         self.save()
 
@@ -1209,6 +1263,46 @@ class Lucis:
             detail=f"Cannot auto-generate data_fn: unknown source type '{info.get('type')}'",
         )
 
+    def _auto_streaming_fn(self) -> Optional[Callable]:
+        """Return a no-arg callable that produces a streaming row iterator.
+
+        Available when: source is a ``"table"``, the storage is
+        :class:`~lucis.storage.AlchemyStorage` (has
+        ``stream_table_with_dates``), **and** a ``date_column`` is
+        configured (sharded mode).
+
+        Returns ``None`` when any of these conditions is not met —
+        callers should fall back to :meth:`_auto_data_fn`.
+
+        The returned callable has the signature::
+
+            def streaming_fn() -> Iterator[(doc_id, text, date_val)]
+
+        Each call to ``streaming_fn()`` opens a fresh server-side cursor
+        on the database.
+        """
+        info = self._source_info
+        if info is None or info.get("type") != "table":
+            return None
+        if not info.get("date_column"):
+            return None  # Streaming rebuild only meaningful for sharded mode
+        storage = self.storage
+        if not hasattr(storage, "stream_table_with_dates"):
+            return None  # Non-Alchemy storage — no streaming support
+
+        table_name = info["table_name"]
+        text_col = info["text_column"]
+        id_col = info["id_column"]
+        date_col = info["date_column"]
+        where = info.get("where_clause")
+        schema = info.get("schema")
+
+        def streaming_fn():
+            return storage.stream_table_with_dates(
+                table_name, text_col, id_col, date_col, where, schema,
+            )
+        return streaming_fn
+
     def _auto_delta_fn(
         self,
     ) -> Optional[Callable[[], Union[List[str], Dict[Any, str]]]]:
@@ -1491,6 +1585,7 @@ class Lucis:
         on_rebuild: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_cycle: Optional[Callable[[int, bool], None]] = None,
+        streaming: bool = True,
     ) -> "IndexWorker":
         """
         Create an ``IndexWorker`` bound to this Lucis instance.
@@ -1531,6 +1626,13 @@ class Lucis:
             on_rebuild: Callback ``fn(physical_name)`` on success.
             on_error: Callback ``fn(exception)`` on failure.
             on_cycle: Callback ``fn(cycle_number, skipped)`` every cycle.
+            streaming: Enable streaming full-rebuild mode (default ``True``).
+                When ``True`` and the source is a sharded Alchemy table, the
+                worker calls :meth:`reindex_streaming` instead of loading the
+                entire corpus into RAM via ``data_fn``.  This keeps peak RAM
+                at ≈ steady-state index RAM rather than doubling it during each
+                rebuild cycle.  Set to ``False`` to force the classic
+                ``fetchall`` path.
 
         Returns:
             An ``IndexWorker`` instance (not yet started).
@@ -1600,6 +1702,13 @@ class Lucis:
         if change_detector is None and self._source_info is not None:
             change_detector = self._auto_change_detector()
 
+        # Auto-generate streaming_fn for sharded+alchemy full-rebuild mode.
+        # When available, the worker streams rows from the DB without fetchall,
+        # keeping peak RAM ≈ steady-state index RAM instead of doubling it.
+        streaming_fn: Optional[Callable] = None
+        if streaming and not incremental:
+            streaming_fn = self._auto_streaming_fn()
+
         from .core.worker import IndexWorker
         return IndexWorker(
             lucis=self,
@@ -1613,6 +1722,7 @@ class Lucis:
             on_rebuild=on_rebuild,
             on_error=on_error,
             on_cycle=on_cycle,
+            streaming_fn=streaming_fn,
         )
 
     # Health monitoring

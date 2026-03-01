@@ -873,6 +873,90 @@ class AlchemyStorage(BaseStorage):
 
         return data, dates
 
+    def stream_table_with_dates(
+        self,
+        table_name: str,
+        text_column: Union[str, List[str]],
+        id_column: Optional[str] = None,
+        date_column: Optional[str] = None,
+        where_clause: Optional[str] = None,
+        schema: Optional[str] = None,
+        batch_size: int = 5_000,
+    ):
+        """Stream rows from a table as ``(doc_id_str, text, date_val)`` tuples.
+
+        Uses a **server-side cursor** (``yield_per``) so only *batch_size*
+        rows are fetched from the database at a time.  The peak RAM
+        from data ingestion is bounded by ``batch_size × row_size``
+        instead of holding all rows in memory at once.
+
+        This is the streaming counterpart to :meth:`read_table_with_dates`
+        and is the recommended path for datasets > 100 K rows.
+
+        Args:
+            table_name: Source table name.
+            text_column: Column name or list of column names for text.
+            id_column: Column to use as document ID (optional).
+            date_column: Column for temporal shard routing (optional).
+            where_clause: Optional SQL ``WHERE`` filter.
+            schema: Database schema (optional).
+            batch_size: Number of rows to buffer per server fetch.
+                Default 5 000 — a safe balance between network round-trips
+                and memory pressure.
+
+        Yields:
+            ``(doc_id_str, text, date_val)`` tuples.
+            *doc_id_str* is always a string.
+            *date_val* is ``None`` when *date_column* is not given.
+
+        Example::
+
+            for doc_id, text, date in storage.stream_table_with_dates(
+                "emails", "body", id_column="id", date_column="created_at"
+            ):
+                ...
+        """
+        user_meta = MetaData()
+        user_table = Table(
+            table_name, user_meta, autoload_with=self._engine, schema=schema
+        )
+
+        text_expr = self._build_text_expr(user_table, text_column)
+        cols = []
+        if id_column:
+            cols.append(user_table.c[id_column])
+        cols.append(text_expr)
+        if date_column:
+            cols.append(user_table.c[date_column])
+
+        stmt = select(*cols)
+        if where_clause:
+            stmt = stmt.where(sa_text(where_clause))
+
+        # stream_results=True + yield_per activates the server-side cursor
+        # so SQLAlchemy fetches *batch_size* rows per network round-trip.
+        conn_opts = {"stream_results": True, "yield_per": batch_size}
+        row_counter = 0
+
+        with self._engine.connect().execution_options(**conn_opts) as conn:
+            result = conn.execute(stmt)
+            if id_column and date_column:
+                for row in result:
+                    yield str(row[0]), row[1], row[2]
+                    row_counter += 1
+            elif id_column:
+                for row in result:
+                    yield str(row[0]), row[1], None
+                    row_counter += 1
+            elif date_column:
+                for i, row in enumerate(result):
+                    yield str(i), row[0], row[1]
+                    row_counter += 1
+            else:
+                for i, row in enumerate(result):
+                    yield str(i), row[0], None
+                    row_counter += 1
+
     # Read helpers
 
     def read_table(

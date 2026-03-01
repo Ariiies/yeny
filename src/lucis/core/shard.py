@@ -241,6 +241,56 @@ class ShardManager:
             engine = self.get_or_create_shard(shard_key)
             engine.build_index(docs)
 
+    def build_shards_streaming(
+        self,
+        row_iter,
+        batch_size: int = 5_000,
+    ) -> None:
+        """Route and index documents from a streaming row iterator.
+
+        Unlike :meth:`build_shards`, this method **never** materializes the
+        full dataset in RAM.  Documents are consumed in *batch_size* chunks
+        and routed to their shard.  Each shard buffer is flushed to its engine
+        once it accumulates *batch_size* documents (or when the stream ends).
+
+        This is the recommended path for datasets with > 100 K rows.
+
+        Args:
+            row_iter: Any iterable that yields ``(doc_id_str, text, date_val)``
+                triples.  The simplest source is
+                :meth:`~lucis.storage.AlchemyStorage.stream_table_with_dates`.
+            batch_size: Maximum buffer size **per shard** before flushing.
+                Tune this value to balance throughput vs. peak RAM.
+                Default is 5 000 rows.
+        """
+        self.shards.clear()
+
+        # Per-shard raw buffers: shard_key → {doc_id: text}
+        buffers: Dict[str, Dict[str, str]] = defaultdict(dict)
+        # Track which shards have had their first build_index call
+        initialized: set = set()
+
+        def _flush(shard_key: str) -> None:
+            buf = buffers.pop(shard_key, {})
+            if not buf:
+                return
+            engine = self.get_or_create_shard(shard_key)
+            if shard_key in initialized:
+                engine.add_documents(buf)
+            else:
+                engine.build_index(buf)
+                initialized.add(shard_key)
+
+        for doc_id, text, date_val in row_iter:
+            shard_key = date_to_shard_key(date_val)
+            buffers[shard_key][doc_id] = text
+            if len(buffers[shard_key]) >= batch_size:
+                _flush(shard_key)
+
+        # Flush all remaining buffers
+        for shard_key in list(buffers.keys()):
+            _flush(shard_key)
+
     def add_documents(
         self,
         new_docs: Dict[str, str],

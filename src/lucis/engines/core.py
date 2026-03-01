@@ -6,6 +6,13 @@ from ..utils.index.core import build_index as build_idx_func
 from ..utils.index.stats import get_doc_len, compute_tfidf, compute_idf
 from ..utils.math.core import sparse_cosine_similarity, sort_results
 from ..utils.nlp import simple_tokenizer
+from ..utils.compact import (
+    CompactPostings,
+    CompactDocLengths,
+    freeze_index,
+    thaw_index,
+    freeze_doc_lengths,
+)
 from ..exceptions import LucisEmptyCorpusError
 
 class CoreEngine(BaseEngine):
@@ -55,14 +62,22 @@ class CoreEngine(BaseEngine):
             tokenized.append(simple_tokenizer(result) if isinstance(result, str) else result)
 
         # 2. Build the inverted index (Core)
-        self.index = build_idx_func(tokenized)
+        raw_index = build_idx_func(tokenized)
         
         # 3. Calculate document lengths for TF normalization
-        self.doc_lengths = get_doc_len(self.index, self.total_docs)
-        
-        # 4. Pre-calculate TF-IDF vectors for each document
-        # This makes subsequent searches O(n_documents) instead of recalculating everything
+        raw_doc_lengths = get_doc_len(raw_index, self.total_docs)
+
+        # 4. Pre-calculate TF-IDF vectors (uses raw dicts for speed)
+        #    Must happen BEFORE freezing because compute_tfidf
+        #    iterates the full index.
+        self.index = raw_index
+        self.doc_lengths = raw_doc_lengths
         self._precompute_all_vectors()
+
+        # 5. Freeze to compact structures (RAM optimization)
+        self.index = freeze_index(raw_index)
+        self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
+        del raw_index, raw_doc_lengths
 
     def _precompute_all_vectors(self) -> None:
         """Helper to pre-calculate TF-IDF vectors for the entire corpus."""
@@ -143,35 +158,61 @@ class CoreEngine(BaseEngine):
         return query_vec
     
     def persist(self, name: str) -> None:
-        """Packages the current state and sends it to storage."""
+        """Packages the current state and sends it to storage.
+
+        Compact structures are *thawed* back to regular dicts for
+        serialization.  The in-memory engine keeps the compact
+        versions — only the serialization copy is inflated.
+        """
         if not self.storage:
             raise ValueError("No storage adapter configured in the engine.")
-        
-        # Prepare the 'bundle' of data
+
+        # Thaw compact structures → regular dicts for storage
+        serializable_index = (
+            thaw_index(self.index)
+            if self.index and isinstance(next(iter(self.index.values())), CompactPostings)
+            else self.index
+        )
+        serializable_doc_lengths = (
+            self.doc_lengths.to_dict()
+            if isinstance(self.doc_lengths, CompactDocLengths)
+            else self.doc_lengths
+        )
+
         state = {
-            "index": self.index,
+            "index": serializable_index,
             "total_docs": self.total_docs,
-            "doc_lengths": self.doc_lengths,
+            "doc_lengths": serializable_doc_lengths,
             "doc_vectors": self.doc_vectors,
-            "id_map": self.id_map,  # Essential for returning original IDs after loading
+            "id_map": self.id_map,
             "id_type": self.id_type,
             "engine_name": self.name,
         }
         self.storage.save(state, name)
 
     def load_engine(self, name: str) -> None:
-        """Loads a saved state and reconstructs the engine."""
+        """Loads a saved state and reconstructs the engine.
+
+        Raw dicts from storage are frozen into compact structures
+        to minimise steady-state RAM.
+        """
         if not self.storage:
             raise ValueError("No storage adapter configured in the engine.")
-        
+
         state = self.storage.load(name)
-        
-        # Reconstruct internal attributes
-        # Use .get() for safety or direct assignment
-        self.index = state["index"]
+
+        raw_index = state["index"]
         self.total_docs = state["total_docs"]
-        self.doc_lengths = state["doc_lengths"]
-        self.doc_vectors = state.get("doc_vectors", {})
-        # Backward compatibility: if id_map not saved, assume sequential integers
-        self.id_map = state.get("id_map", {i: i for i in range(self.total_docs)})
+        raw_doc_lengths = state["doc_lengths"]
+        raw_doc_vectors = state.get("doc_vectors", {})
+        raw_id_map = state.get("id_map", {i: i for i in range(self.total_docs)})
         self.id_type = state.get("id_type", "none")
+
+        # Normalize keys to int (JSON deserializes dict keys as str)
+        self.id_map = {int(k): v for k, v in raw_id_map.items()}
+        self.doc_vectors = {int(k): v for k, v in raw_doc_vectors.items()}
+
+        # Freeze to compact structures
+        self.index = freeze_index(raw_index)
+        self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
+        del raw_index, raw_doc_lengths
