@@ -163,11 +163,20 @@ class AlchemyStorage(BaseStorage):
             Column("source_where", Text, nullable=True),
         )
 
+        # utf8mb4_bin collation ensures case-sensitive exact matching on MySQL/MariaDB.
+        # Other dialects (SQLite, PostgreSQL) don't support it, so we omit it there.
+        _dialect = self._engine.dialect.name
+        _word_col_kwargs: Dict[str, Any] = {"nullable": False}
+        if _dialect in ("mysql", "mariadb"):
+            _word_col = Column("word", String(255, collation="utf8mb4_bin"), **_word_col_kwargs)
+        else:
+            _word_col = Column("word", String(255), **_word_col_kwargs)
+
         self._t_inverted_index = Table(
             "lucis_inverted_index",
             self._metadata,
             Column("index_name", String(255), nullable=False),
-            Column("word", String(255, collation="utf8mb4_bin"), nullable=False),
+            _word_col,
             Column("postings", Text(2**24), nullable=False),
         )
         Index(
@@ -276,17 +285,33 @@ class AlchemyStorage(BaseStorage):
                     pass  # table may not exist yet on first run
 
     @staticmethod
-    def _chunked_insert(conn: Any, table: Any, rows: list, chunk_size: int = 200) -> None:
+    def _chunked_insert(conn: Any, table: Any, rows: Any, chunk_size: int = 200) -> None:
         """Insert *rows* into *table* in small batches to avoid ``max_allowed_packet`` errors.
+
+        Accepts both lists and iterators/generators.  When a generator
+        is supplied the rows are consumed lazily — only *chunk_size*
+        rows are materialised in RAM at a time.
 
         Args:
             conn: An active SQLAlchemy connection.
             table: SQLAlchemy ``Table`` object to insert into.
-            rows: List of row dicts to insert.
+            rows: List or iterable of row dicts to insert.
             chunk_size: Maximum rows per ``INSERT`` statement (default 200).
         """
-        for i in range(0, len(rows), chunk_size):
-            conn.execute(table.insert(), rows[i : i + chunk_size])
+        if isinstance(rows, list):
+            # Fast path for pre-built lists (small result sets)
+            for i in range(0, len(rows), chunk_size):
+                conn.execute(table.insert(), rows[i : i + chunk_size])
+        else:
+            # Streaming path for generators — never materialise full list
+            chunk: list = []
+            for row in rows:
+                chunk.append(row)
+                if len(chunk) >= chunk_size:
+                    conn.execute(table.insert(), chunk)
+                    chunk = []
+            if chunk:
+                conn.execute(table.insert(), chunk)
 
     # Cross-field search support
 
@@ -400,65 +425,62 @@ class AlchemyStorage(BaseStorage):
                 )
 
             # 3. Inverted index (one row per word, postings as JSON)
-            inv_rows = [
-                {
-                    "index_name": name,
-                    "word": word,
-                    "postings": _dumps(
-                        {int(doc_id): freq for doc_id, freq in docs.items()}
-                    ),
-                }
-                for word, docs in data["index"].items()
-            ]
-            if inv_rows:
-                # chunk_size=100: postings JSON puede ser muy grande por término
-                self._chunked_insert(conn, self._t_inverted_index, inv_rows, chunk_size=100)
+            #    Generator — avoids materialising all JSON rows at once.
+            def _inv_rows():
+                for word, docs in data["index"].items():
+                    yield {
+                        "index_name": name,
+                        "word": word,
+                        "postings": _dumps(
+                            {int(doc_id): freq for doc_id, freq in docs.items()}
+                        ),
+                    }
+
+            # chunk_size=100: postings JSON puede ser muy grande por término
+            self._chunked_insert(conn, self._t_inverted_index, _inv_rows(), chunk_size=100)
 
             # 4. TF-IDF document vectors (one row per doc, vector as JSON)
             #    Optional: LiteEngine does not produce doc_vectors
             doc_vectors = data.get("doc_vectors", {})
             if doc_vectors:
-                vec_rows = [
-                    {
-                        "index_name": name,
-                        "doc_internal_id": int(doc_id),
-                        "vector": _dumps(vector),
-                    }
-                    for doc_id, vector in doc_vectors.items()
-                ]
-                self._chunked_insert(conn, self._t_doc_vectors, vec_rows, chunk_size=500)
+                def _vec_rows():
+                    for doc_id, vector in doc_vectors.items():
+                        yield {
+                            "index_name": name,
+                            "doc_internal_id": int(doc_id),
+                            "vector": _dumps(vector),
+                        }
+
+                self._chunked_insert(conn, self._t_doc_vectors, _vec_rows(), chunk_size=500)
 
             # 5. ID mapping (internal → original)
-            id_rows = [
-                {
-                    "index_name": name,
-                    "internal_id": int(internal_id),
-                    "original_id": str(original_id),
-                }
-                for internal_id, original_id in data["id_map"].items()
-            ]
-            if id_rows:
-                self._chunked_insert(conn, self._t_id_mapping, id_rows, chunk_size=1000)
+            #    Generator — avoids materialising all mapping rows.
+            def _id_rows():
+                for internal_id, original_id in data["id_map"].items():
+                    yield {
+                        "index_name": name,
+                        "internal_id": int(internal_id),
+                        "original_id": str(original_id),
+                    }
+
+            self._chunked_insert(conn, self._t_id_mapping, _id_rows(), chunk_size=1000)
 
             # 6. Document lengths
-            len_rows = [
-                {
-                    "index_name": name,
-                    "doc_internal_id": int(doc_id),
-                    "length": length,
-                }
-                for doc_id, length in data["doc_lengths"].items()
-            ]
-            if len_rows:
-                self._chunked_insert(conn, self._t_doc_lengths, len_rows, chunk_size=1000)
+            #    Generator — avoids materialising all length rows.
+            def _len_rows():
+                for doc_id, length in data["doc_lengths"].items():
+                    yield {
+                        "index_name": name,
+                        "doc_internal_id": int(doc_id),
+                        "length": length,
+                    }
+
+            self._chunked_insert(conn, self._t_doc_lengths, _len_rows(), chunk_size=1000)
 
     def load(self, name: str) -> Dict[str, Any]:
         """
         Reconstruct an engine state dict from the ``lucis_*`` tables.
-
-        The returned dict has the same shape that ``BaseEngine.load_engine``
-        expects: *index*, *doc_vectors*, *id_map*, *doc_lengths*,
-        *total_docs*, *id_type*.
+        Uses streaming iteration (``yield_per``) on large tables.
 
         Args:
             name: Physical index name (same key used in :meth:`save`).
@@ -470,7 +492,7 @@ class AlchemyStorage(BaseStorage):
             FileNotFoundError: If *name* is not found in ``lucis_metadata``.
         """
         with self._engine.connect() as conn:
-            # 1. Metadata
+            # 1. Metadata (single row — fetchone is fine)
             row = conn.execute(
                 select(
                     self._t_metadata.c.total_docs,
@@ -484,58 +506,58 @@ class AlchemyStorage(BaseStorage):
                 )
             total_docs, id_type = row
 
-            # 2. Inverted index (one row per word, JSON postings)
-            rows = conn.execute(
+            # 2. Inverted index — stream row-by-row, build dict incrementally
+            index: Dict[str, Dict[int, int]] = {}
+            result = conn.execute(
                 select(
                     self._t_inverted_index.c.word,
                     self._t_inverted_index.c.postings,
                 ).where(self._t_inverted_index.c.index_name == name)
-            ).fetchall()
+            ).yield_per(2_000)
 
-            index: Dict[str, Dict[int, int]] = {}
-            for word, postings_json in rows:
+            for word, postings_json in result:
                 index[word] = {
                     int(k): v for k, v in _loads(postings_json).items()
                 }
 
-            # 3. Document vectors (one row per doc, JSON vector)
-            rows = conn.execute(
+            # 3. Document vectors — stream row-by-row
+            doc_vectors: Dict[int, Dict[str, float]] = {}
+            result = conn.execute(
                 select(
                     self._t_doc_vectors.c.doc_internal_id,
                     self._t_doc_vectors.c.vector,
                 ).where(self._t_doc_vectors.c.index_name == name)
-            ).fetchall()
+            ).yield_per(2_000)
 
-            doc_vectors: Dict[int, Dict[str, float]] = {}
-            for doc_id, vector_json in rows:
+            for doc_id, vector_json in result:
                 doc_vectors[doc_id] = _loads(vector_json)
 
-            # 4. ID mapping
-            rows = conn.execute(
+            # 4. ID mapping — stream row-by-row
+            id_map: Dict[int, Any] = {}
+            result = conn.execute(
                 select(
                     self._t_id_mapping.c.internal_id,
                     self._t_id_mapping.c.original_id,
                 ).where(self._t_id_mapping.c.index_name == name)
-            ).fetchall()
+            ).yield_per(5_000)
 
-            id_map: Dict[int, Any] = {}
-            for internal_id, original_id in rows:
+            for internal_id, original_id in result:
                 if id_type == "sequential":
                     id_map[internal_id] = int(original_id)
                 else:
                     id_map[internal_id] = original_id
 
-            # 5. Document lengths
-            rows = conn.execute(
+            # 5. Document lengths — stream row-by-row
+            doc_lengths: Dict[int, int] = {}
+            result = conn.execute(
                 select(
                     self._t_doc_lengths.c.doc_internal_id,
                     self._t_doc_lengths.c.length,
                 ).where(self._t_doc_lengths.c.index_name == name)
-            ).fetchall()
+            ).yield_per(5_000)
 
-            doc_lengths: Dict[int, int] = {
-                doc_id: length for doc_id, length in rows
-            }
+            for doc_id, length in result:
+                doc_lengths[doc_id] = length
 
         return {
             "index": index,
