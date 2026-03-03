@@ -50,7 +50,7 @@ class CompactPostings:
         self._freqs = freqs
         self._len = len(doc_ids)
 
-    # ── Constructors ──
+    # Constructors
 
     @classmethod
     def from_dict(cls, d: Dict[int, int]) -> "CompactPostings":

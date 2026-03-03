@@ -27,6 +27,9 @@ from .core.health import HealthReport, HealthMonitor, health_check
 # Shard constants (Phase 5 — Temporal Sharding)
 from .core.shard import LUCIS_GLOBAL_SHARD, LUCIS_DEFAULT_DATE_COLUMNS
 
+# Parallel preprocessing (Phase 9 — Multiprocessing)
+from .utils.parallel import get_cpu_count, get_optimal_workers
+
 # AlchemyStorage is lazy-loaded (requires sqlalchemy)
 def __getattr__(name):
     if name == "AlchemyStorage":
@@ -72,6 +75,10 @@ __all__ = [
     "get_engine",
     "HAS_NUMPY",
     "HAS_POLARS",
+
+    # Parallel / CPU awareness
+    "get_cpu_count",
+    "get_optimal_workers",
     
     # Metadata
     "__version__",

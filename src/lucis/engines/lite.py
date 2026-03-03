@@ -12,6 +12,7 @@ from ..utils.compact import (
     thaw_index,
     freeze_doc_lengths,
 )
+from ..utils.parallel import parallel_preprocess
 from ..exceptions import LucisEmptyCorpusError
 
 
@@ -70,10 +71,11 @@ class LiteEngine(BaseEngine):
             return
 
         # 1. Preprocess with the configured preprocessor.
-        tokenized = []
-        for doc in texts:
-            result = self.preprocessor(doc)
-            tokenized.append(simple_tokenizer(result) if isinstance(result, str) else result)
+        #    Uses ProcessPoolExecutor when corpus ≥ 500 docs and the
+        #    preprocessor is picklable; falls back to sequential otherwise.
+        tokenized = parallel_preprocess(
+            texts, self.preprocessor, simple_tokenizer,
+        )
 
         # 2. Build inverted index with utils function (fast defaultdict pass)
         raw_index = build_idx_func(tokenized)
@@ -241,13 +243,10 @@ class LiteEngine(BaseEngine):
         if not new_texts:
             return
 
-        # Preprocess each new document
-        tokenized_new = []
-        for doc in new_texts:
-            result = self.preprocessor(doc)
-            tokenized_new.append(
-                simple_tokenizer(result) if isinstance(result, str) else result
-            )
+        # Preprocess new documents (parallel when large enough)
+        tokenized_new = parallel_preprocess(
+            new_texts, self.preprocessor, simple_tokenizer,
+        )
 
         # Build a small delta index (regular dicts — fast for mutation)
         delta: Dict[str, Dict[int, int]] = {}

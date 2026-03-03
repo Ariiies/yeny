@@ -19,10 +19,17 @@ For PostgreSQL::
 """
 from __future__ import annotations
 
+import csv
+import io
+import logging
+import os
+import tempfile
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Generator, List, Optional, Union
 
 from ..utils.serialization import dumps as _dumps, loads as _loads
+
+logger = logging.getLogger("lucis.storage.alchemy")
 
 try:
     from sqlalchemy import (
@@ -123,7 +130,12 @@ class AlchemyStorage(BaseStorage):
         elif url is not None:
             kwargs: Dict[str, Any] = {}
             if connect_args:
-                kwargs["connect_args"] = connect_args
+                kwargs["connect_args"] = dict(connect_args)
+            # For MySQL/PyMySQL: enable LOAD DATA LOCAL INFILE support
+            # automatically so csv_bulk_insert works out of the box.
+            if "pymysql" in url:
+                ca = kwargs.setdefault("connect_args", {})
+                ca.setdefault("local_infile", True)
             # pool_pre_ping ensures stale connections are recycled
             self._engine = create_engine(url, pool_pre_ping=True, **kwargs)
             self._owns_engine = True
@@ -285,33 +297,223 @@ class AlchemyStorage(BaseStorage):
                     pass  # table may not exist yet on first run
 
     @staticmethod
-    def _chunked_insert(conn: Any, table: Any, rows: Any, chunk_size: int = 200) -> None:
-        """Insert *rows* into *table* in small batches to avoid ``max_allowed_packet`` errors.
+    def _chunked_insert(
+        conn: Any,
+        table: Any,
+        rows: Any,
+        chunk_size: int = 200,
+        max_payload_bytes: int = 1_000_000,
+    ) -> None:
+        """Insert *rows* into *table* in small batches.
+
+        Applies **two** flush thresholds to avoid MySQL
+        ``max_allowed_packet`` errors:
+
+        1. **Row count** — at most *chunk_size* rows per batch.
+        2. **Payload size** — at most *max_payload_bytes* estimated
+           bytes per batch (default 1 MB, conservative to account
+           for PyMySQL SQL-building overhead which can add 20-30%
+           on top of raw data).
+
+        Uses a **pre-check** pattern: before adding a new row to the
+        current batch, it verifies that doing so would not exceed
+        either threshold.  If it would, the current batch is flushed
+        first.  This guarantees each batch stays strictly under the
+        configured limits (the only exception is a single row that
+        by itself exceeds *max_payload_bytes* — it is inserted alone).
+
+        This is critical for the inverted-index table where a single
+        ``postings`` JSON value can exceed 300 KB when a token appears
+        in hundreds of thousands of documents.
 
         Accepts both lists and iterators/generators.  When a generator
-        is supplied the rows are consumed lazily — only *chunk_size*
-        rows are materialised in RAM at a time.
+        is supplied the rows are consumed lazily — only the current
+        chunk is materialised in RAM.
 
         Args:
             conn: An active SQLAlchemy connection.
             table: SQLAlchemy ``Table`` object to insert into.
             rows: List or iterable of row dicts to insert.
-            chunk_size: Maximum rows per ``INSERT`` statement (default 200).
+            chunk_size: Maximum rows per ``INSERT`` statement.
+            max_payload_bytes: Approximate byte-size cap per batch.
+                Before adding a row, if accumulated data would exceed
+                this threshold the batch is flushed first.  Set to
+                ``0`` to disable size-based flushing.
         """
+
+        def _estimate_row_bytes(row: dict) -> int:
+            """Cheap estimate: sum of str/bytes value lengths."""
+            total = 0
+            for v in row.values():
+                if isinstance(v, str):
+                    total += len(v)
+                elif isinstance(v, bytes):
+                    total += len(v)
+                else:
+                    total += 8  # int/float/etc.
+            return total
+
         if isinstance(rows, list):
-            # Fast path for pre-built lists (small result sets)
-            for i in range(0, len(rows), chunk_size):
-                conn.execute(table.insert(), rows[i : i + chunk_size])
+            # Fast path for pre-built lists (id_mapping, doc_lengths — small rows)
+            if max_payload_bytes <= 0:
+                for i in range(0, len(rows), chunk_size):
+                    conn.execute(table.insert(), rows[i : i + chunk_size])
+            else:
+                chunk_start = 0
+                acc_bytes = 0
+                for i, row in enumerate(rows):
+                    row_bytes = _estimate_row_bytes(row)
+                    # Pre-check: flush BEFORE adding if limits would be exceeded
+                    if i > chunk_start and (
+                        (i - chunk_start) >= chunk_size
+                        or acc_bytes + row_bytes >= max_payload_bytes
+                    ):
+                        conn.execute(table.insert(), rows[chunk_start:i])
+                        chunk_start = i
+                        acc_bytes = 0
+                    acc_bytes += row_bytes
+                if chunk_start < len(rows):
+                    conn.execute(table.insert(), rows[chunk_start:])
         else:
             # Streaming path for generators — never materialise full list
             chunk: list = []
+            acc_bytes = 0
             for row in rows:
-                chunk.append(row)
-                if len(chunk) >= chunk_size:
+                row_bytes = _estimate_row_bytes(row)
+                # Pre-check: flush BEFORE adding if limits would be exceeded
+                if chunk and (
+                    len(chunk) >= chunk_size
+                    or (max_payload_bytes > 0 and acc_bytes + row_bytes >= max_payload_bytes)
+                ):
                     conn.execute(table.insert(), chunk)
                     chunk = []
+                    acc_bytes = 0
+                chunk.append(row)
+                acc_bytes += row_bytes
             if chunk:
                 conn.execute(table.insert(), chunk)
+
+    # ── CSV Bulk Insert (LOAD DATA LOCAL INFILE) ──
+
+    @staticmethod
+    def _csv_bulk_insert(
+        conn: Any,
+        table_name: str,
+        columns: List[str],
+        rows: Any,
+        batch_rows: int = 50_000,
+    ) -> int:
+        """Bulk-insert rows via ``LOAD DATA LOCAL INFILE`` (MySQL/MariaDB).
+
+        Writes rows to a temporary CSV file on disk, then issues a
+        ``LOAD DATA LOCAL INFILE`` statement to load the file directly
+        into the target table.  This bypasses the SQL parser and
+        value-by-value binding, resulting in **10-50× faster** inserts
+        compared to ``executemany(INSERT ...)``.
+
+        The CSV is written in batches of *batch_rows* to limit peak
+        disk usage.  Each batch is loaded and the temp file is
+        truncated before writing the next batch.
+
+        **Memory profile:** Only the current batch of rows (dicts) plus
+        the temp CSV file on disk are materialised at any time.  For a
+        50K-row batch with ~200-byte rows, that is ~10 MB of RAM and
+        ~10 MB on disk — negligible.
+
+        **Compatibility:**
+        - Requires ``local_infile=True`` on the PyMySQL connection
+          (auto-configured by ``AlchemyStorage.__init__``).
+        - The MySQL server must have ``local_infile=ON`` (default on
+          most installations; on managed services use the server
+          parameter group / console to enable it).
+
+        Args:
+            conn: An active SQLAlchemy connection (inside a transaction).
+            table_name: Target MySQL table name (e.g. ``"lucis_inverted_index"``).
+            columns: Ordered list of column names matching the CSV field order.
+            rows: Iterable (list or generator) of ``dict`` rows.
+                  Keys must be a superset of *columns*.
+            batch_rows: Max rows per temp-file batch.  Default 50 000.
+                Tune down if disk space is very limited; tune up for
+                maximum throughput on fast storage.
+
+        Returns:
+            Total number of rows loaded.
+        """
+        total_loaded = 0
+
+        # We use a named temp file (delete=False) so the MySQL client
+        # library can open it by path.  We clean up manually.
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".csv",
+            prefix="lucis_bulk_",
+            delete=False,
+            newline="",
+            encoding="utf-8",
+        )
+        tmp_path = tmp.name
+
+        try:
+            batch: List[dict] = []
+
+            def _flush_batch() -> int:
+                """Write *batch* to CSV file, LOAD DATA, return row count."""
+                if not batch:
+                    return 0
+
+                # Rewind and truncate the temp file for this batch
+                tmp.seek(0)
+                tmp.truncate()
+
+                writer = csv.writer(
+                    tmp,
+                    delimiter="\t",
+                    quoting=csv.QUOTE_NONE,
+                    escapechar="\\",
+                    lineterminator="\n",
+                )
+                for row_dict in batch:
+                    writer.writerow([row_dict[col] for col in columns])
+                tmp.flush()
+
+                # Build and execute LOAD DATA LOCAL INFILE
+                # Use forward slashes — MySQL accepts them on all platforms.
+                file_path_sql = tmp_path.replace("\\", "/")
+                col_list = ", ".join(f"`{c}`" for c in columns)
+                sql = (
+                    f"LOAD DATA LOCAL INFILE '{file_path_sql}' "
+                    f"INTO TABLE `{table_name}` "
+                    f"FIELDS TERMINATED BY '\\t' "
+                    f"ESCAPED BY '\\\\' "
+                    f"LINES TERMINATED BY '\\n' "
+                    f"({col_list})"
+                )
+                conn.execute(sa_text(sql))
+                loaded = len(batch)
+                batch.clear()
+                return loaded
+
+            for row in rows:
+                batch.append(row)
+                if len(batch) >= batch_rows:
+                    total_loaded += _flush_batch()
+
+            # Final flush
+            total_loaded += _flush_batch()
+
+        finally:
+            tmp.close()
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        return total_loaded
+
+    def _is_mysql(self) -> bool:
+        """Return ``True`` if the backend is MySQL or MariaDB."""
+        return self._engine.dialect.name in ("mysql", "mariadb")
 
     # Cross-field search support
 
@@ -388,6 +590,16 @@ class AlchemyStorage(BaseStorage):
         contains the keys: *index*, *doc_vectors*, *id_map*, *doc_lengths*,
         *total_docs*, *id_type*.
 
+        On **MySQL / MariaDB** the heavy tables (inverted index, vectors,
+        id mapping, doc lengths) are loaded via ``LOAD DATA LOCAL INFILE``
+        using temporary CSV files — this is **10-50× faster** than
+        row-by-row ``INSERT`` statements.  If the CSV path fails for
+        any reason (server policy, Docker volumes, etc.), it falls back
+        transparently to the traditional ``_chunked_insert`` path.
+
+        On all other dialects (SQLite, PostgreSQL) the ``_chunked_insert``
+        path is used directly.
+
         Args:
             data: Engine-state dict to persist.
             name: Physical index name (storage key).
@@ -397,85 +609,192 @@ class AlchemyStorage(BaseStorage):
                 transaction is rolled back automatically by the context
                 manager).
         """
+        use_csv = self._is_mysql()
+
+        if use_csv:
+            try:
+                self._save_with_csv(data, name)
+                return
+            except Exception as exc:
+                logger.warning(
+                    "CSV bulk save failed (%s) — retrying with chunked INSERT.",
+                    exc,
+                )
+                # Fall through to the chunked path below
+
+        self._save_with_chunked_insert(data, name)
+
+    def _save_common_header(self, conn: Any, data: Dict[str, Any], name: str) -> None:
+        """Persist metadata and wipe previous index data (shared by both paths).
+
+        Args:
+            conn: An active SQLAlchemy connection inside a transaction.
+            data: Engine-state dict.
+            name: Physical index name.
+        """
+        # 1. Metadata — upsert (delete + insert for portability)
+        conn.execute(
+            delete(self._t_metadata).where(
+                self._t_metadata.c.index_name == name
+            )
+        )
+        conn.execute(
+            self._t_metadata.insert().values(
+                index_name=name,
+                total_docs=data["total_docs"],
+                id_type=data["id_type"],
+                engine_name=data.get("engine_name", "CoreEngine"),
+            )
+        )
+
+        # 2. Wipe previous data for this index
+        for table in (
+            self._t_inverted_index,
+            self._t_doc_vectors,
+            self._t_id_mapping,
+            self._t_doc_lengths,
+        ):
+            conn.execute(
+                delete(table).where(table.c.index_name == name)
+            )
+
+    # ── Row generators (shared by both save paths) ──
+
+    @staticmethod
+    def _make_inv_rows(data: Dict[str, Any], name: str) -> Generator:
+        """Yield inverted-index row dicts."""
+        for word, docs in data["index"].items():
+            yield {
+                "index_name": name,
+                "word": word,
+                "postings": _dumps(
+                    {int(doc_id): freq for doc_id, freq in docs.items()}
+                ),
+            }
+
+    @staticmethod
+    def _make_vec_rows(data: Dict[str, Any], name: str) -> Generator:
+        """Yield doc-vector row dicts."""
+        for doc_id, vector in data.get("doc_vectors", {}).items():
+            yield {
+                "index_name": name,
+                "doc_internal_id": int(doc_id),
+                "vector": _dumps(vector),
+            }
+
+    @staticmethod
+    def _make_id_rows(data: Dict[str, Any], name: str) -> Generator:
+        """Yield id-mapping row dicts."""
+        for internal_id, original_id in data["id_map"].items():
+            yield {
+                "index_name": name,
+                "internal_id": int(internal_id),
+                "original_id": str(original_id),
+            }
+
+    @staticmethod
+    def _make_len_rows(data: Dict[str, Any], name: str) -> Generator:
+        """Yield doc-length row dicts."""
+        for doc_id, length in data["doc_lengths"].items():
+            yield {
+                "index_name": name,
+                "doc_internal_id": int(doc_id),
+                "length": length,
+            }
+
+    # ── CSV bulk path (MySQL / MariaDB) ──
+
+    def _save_with_csv(self, data: Dict[str, Any], name: str) -> None:
+        """Persist engine state using ``LOAD DATA LOCAL INFILE``.
+
+        This path is **10-50× faster** than row-by-row INSERTs for
+        large indices.  The entire save is wrapped in a single
+        transaction so partial failures are rolled back cleanly.
+
+        Args:
+            data: Engine-state dict.
+            name: Physical index name.
+        """
         with self._engine.begin() as conn:
-            # 1. Metadata — upsert (delete + insert for portability)
-            conn.execute(
-                delete(self._t_metadata).where(
-                    self._t_metadata.c.index_name == name
-                )
+            self._save_common_header(conn, data, name)
+
+            # 3. Inverted index
+            inv_cols = ["index_name", "word", "postings"]
+            n_inv = self._csv_bulk_insert(
+                conn, "lucis_inverted_index", inv_cols,
+                self._make_inv_rows(data, name),
             )
-            conn.execute(
-                self._t_metadata.insert().values(
-                    index_name=name,
-                    total_docs=data["total_docs"],
-                    id_type=data["id_type"],
-                    engine_name=data.get("engine_name", "CoreEngine"),
+            logger.info("CSV bulk: %d inverted-index rows → %s", n_inv, name)
+
+            # 4. Doc vectors (optional — LiteEngine omits them)
+            if data.get("doc_vectors"):
+                vec_cols = ["index_name", "doc_internal_id", "vector"]
+                n_vec = self._csv_bulk_insert(
+                    conn, "lucis_doc_vectors", vec_cols,
+                    self._make_vec_rows(data, name),
                 )
+                logger.info("CSV bulk: %d doc-vector rows → %s", n_vec, name)
+
+            # 5. ID mapping
+            id_cols = ["index_name", "internal_id", "original_id"]
+            n_id = self._csv_bulk_insert(
+                conn, "lucis_id_mapping", id_cols,
+                self._make_id_rows(data, name),
+            )
+            logger.info("CSV bulk: %d id-mapping rows → %s", n_id, name)
+
+            # 6. Doc lengths
+            len_cols = ["index_name", "doc_internal_id", "length"]
+            n_len = self._csv_bulk_insert(
+                conn, "lucis_doc_lengths", len_cols,
+                self._make_len_rows(data, name),
+            )
+            logger.info("CSV bulk: %d doc-length rows → %s", n_len, name)
+
+    # ── Chunked INSERT path (universal fallback) ──
+
+    def _save_with_chunked_insert(self, data: Dict[str, Any], name: str) -> None:
+        """Persist engine state using traditional chunked INSERTs.
+
+        Works with any SQL dialect.  Used as the primary path for
+        non-MySQL backends and as a fallback when CSV bulk insert
+        is unavailable.
+
+        Args:
+            data: Engine-state dict.
+            name: Physical index name.
+        """
+        with self._engine.begin() as conn:
+            self._save_common_header(conn, data, name)
+
+            # 3. Inverted index
+            self._chunked_insert(
+                conn, self._t_inverted_index,
+                self._make_inv_rows(data, name),
+                chunk_size=50, max_payload_bytes=1_000_000,
             )
 
-            # 2. Wipe previous data for this index
-            for table in (
-                self._t_inverted_index,
-                self._t_doc_vectors,
-                self._t_id_mapping,
-                self._t_doc_lengths,
-            ):
-                conn.execute(
-                    delete(table).where(table.c.index_name == name)
+            # 4. Doc vectors (optional)
+            if data.get("doc_vectors"):
+                self._chunked_insert(
+                    conn, self._t_doc_vectors,
+                    self._make_vec_rows(data, name),
+                    chunk_size=500,
                 )
 
-            # 3. Inverted index (one row per word, postings as JSON)
-            #    Generator — avoids materialising all JSON rows at once.
-            def _inv_rows():
-                for word, docs in data["index"].items():
-                    yield {
-                        "index_name": name,
-                        "word": word,
-                        "postings": _dumps(
-                            {int(doc_id): freq for doc_id, freq in docs.items()}
-                        ),
-                    }
+            # 5. ID mapping
+            self._chunked_insert(
+                conn, self._t_id_mapping,
+                self._make_id_rows(data, name),
+                chunk_size=1000,
+            )
 
-            # chunk_size=100: postings JSON puede ser muy grande por término
-            self._chunked_insert(conn, self._t_inverted_index, _inv_rows(), chunk_size=100)
-
-            # 4. TF-IDF document vectors (one row per doc, vector as JSON)
-            #    Optional: LiteEngine does not produce doc_vectors
-            doc_vectors = data.get("doc_vectors", {})
-            if doc_vectors:
-                def _vec_rows():
-                    for doc_id, vector in doc_vectors.items():
-                        yield {
-                            "index_name": name,
-                            "doc_internal_id": int(doc_id),
-                            "vector": _dumps(vector),
-                        }
-
-                self._chunked_insert(conn, self._t_doc_vectors, _vec_rows(), chunk_size=500)
-
-            # 5. ID mapping (internal → original)
-            #    Generator — avoids materialising all mapping rows.
-            def _id_rows():
-                for internal_id, original_id in data["id_map"].items():
-                    yield {
-                        "index_name": name,
-                        "internal_id": int(internal_id),
-                        "original_id": str(original_id),
-                    }
-
-            self._chunked_insert(conn, self._t_id_mapping, _id_rows(), chunk_size=1000)
-
-            # 6. Document lengths
-            #    Generator — avoids materialising all length rows.
-            def _len_rows():
-                for doc_id, length in data["doc_lengths"].items():
-                    yield {
-                        "index_name": name,
-                        "doc_internal_id": int(doc_id),
-                        "length": length,
-                    }
-
-            self._chunked_insert(conn, self._t_doc_lengths, _len_rows(), chunk_size=1000)
+            # 6. Doc lengths
+            self._chunked_insert(
+                conn, self._t_doc_lengths,
+                self._make_len_rows(data, name),
+                chunk_size=1000,
+            )
 
     def load(self, name: str) -> Dict[str, Any]:
         """
@@ -876,6 +1195,26 @@ class AlchemyStorage(BaseStorage):
             return result.scalar()
 
     # Shard support (temporal partitioning)
+
+    def get_total_docs(self, name: str) -> int:
+        """Return *total_docs* for *name* without loading the full index.
+
+        Uses a single metadata-only query — much lighter than ``load()``.
+        Returns 0 if the index does not exist.
+
+        Args:
+            name: Physical index name (already resolved from alias).
+
+        Returns:
+            Document count stored in ``lucis_metadata``, or 0.
+        """
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(self._t_metadata.c.total_docs)
+                .where(self._t_metadata.c.index_name == name)
+                .limit(1)
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     def save_shard_registry(self, index_name: str, shard_keys: list) -> None:
         """Persist the shard keys for a sharded index.

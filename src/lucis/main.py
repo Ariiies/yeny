@@ -96,6 +96,8 @@ class Lucis:
         engine: str = "core",
         preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = None,
         autoload: bool = True,
+        max_loaded_shards: int = 0,
+        memory_limit_mb: Optional[int] = None,
     ):
         """
         Base constructor: sets up identity, storage, and engine.
@@ -125,11 +127,22 @@ class Lucis:
                     # Text-only preprocessing — Lucis tokenizes the returned str automatically
                     Lucis(preprocessor=lambda t: t.lower().strip())
             autoload: If True and an index with this name exists on disk, load it automatically.
+            max_loaded_shards: Maximum number of shards to keep in RAM simultaneously.
+                ``0`` (default) loads all shards eagerly (original behaviour).
+                Set e.g. ``6`` to keep only the 6 most recently accessed shards loaded,
+                evicting older ones on demand.  Requires a sharded index.
+            memory_limit_mb: Maximum RAM budget (in megabytes) for loaded shards.
+                ``None`` (default) = no limit.  When set, the system loads the
+                newest shards first until the budget is ~90 % full, then stops.
+                Historical queries via ``search(since=..., until=...)`` temporarily
+                load extra shards that auto-expire after 30 seconds.
         """
         self.name = name
         self._is_indexed = False
         self._source_info: Optional[Dict[str, Optional[str]]] = None
         self._shard_manager: Optional[ShardManager] = None
+        self._max_loaded_shards: int = max_loaded_shards
+        self._memory_limit_mb: Optional[int] = memory_limit_mb
         # If user provides a preprocessor, use it globally.
         # If None, the engine will use its own default:
         #   CoreEngine → word_tokenizer
@@ -200,6 +213,13 @@ class Lucis:
             return self._shard_manager.total_docs
         return self.engine.total_docs if self._is_indexed else 0
 
+    @property
+    def loaded_memory_mb(self) -> float:
+        """Approximate RAM used by currently-loaded shard engines (MB)."""
+        if self._shard_manager is not None:
+            return self._shard_manager.loaded_memory_mb
+        return 0.0
+
     def _init_shard_manager(self) -> None:
         """Initialise a :class:`~lucis.core.shard.ShardManager` bound to
         the current engine class, storage backend, and preprocessor.
@@ -208,6 +228,8 @@ class Lucis:
             engine_class=type(self.engine),
             storage=self.storage,
             preprocessor=self._user_preprocessor,
+            max_loaded_shards=self._max_loaded_shards,
+            memory_limit_mb=self._memory_limit_mb,
         )
 
     # factory methods
@@ -437,6 +459,8 @@ class Lucis:
         where_clause: Optional[str] = None,
         schema: Optional[str] = None,
         name: str = "default",
+        shard_batch_size: int = 20_000,
+        stream_ordered: bool = False,
         **kwargs,
     ) -> "Lucis":
         """
@@ -472,6 +496,16 @@ class Lucis:
             where_clause: Optional SQL ``WHERE`` filter (without the ``WHERE`` keyword).
             schema: Database schema (e.g. ``"public"`` for PostgreSQL).
             name: Identifier for the persisted index.
+            shard_batch_size: Rows buffered per shard before flushing during streaming.
+            stream_ordered: When ``True``, assumes rows arrive sorted
+                chronologically by the date column.  Requires
+                ``memory_limit_mb`` or ``max_loaded_shards`` to have any
+                effect — when a memory budget is active, completed shards
+                are persisted and evicted during the build, keeping peak
+                RAM proportional to the working set instead of the full
+                dataset.  **Only enable if you are certain the data is
+                ordered; unsorted data with this flag will silently
+                truncate shards.**  Default: ``False``.
             **kwargs: Extra arguments forwarded to ``Lucis.__init__``.
 
         Returns:
@@ -535,12 +569,24 @@ class Lucis:
         if resolved_date_col:
             # Sharded mode: stream rows → build_shards_streaming (no fetchall)
             instance._init_shard_manager()
+
+            # Pre-generate the physical name so the builder can persist
+            # shards incrementally when memory management is active.
+            persist_name = None
+            if instance._shard_manager._is_managed:
+                persist_name = instance.storage._generate_versioned_name(name)
+
             if hasattr(storage, "stream_table_with_dates"):
                 row_iter = storage.stream_table_with_dates(
                     table_name, text_column, id_column,
                     resolved_date_col, where_clause, schema,
                 )
-                instance._shard_manager.build_shards_streaming(row_iter)
+                instance._shard_manager.build_shards_streaming(
+                    row_iter,
+                    batch_size=shard_batch_size,
+                    persist_base_name=persist_name,
+                    stream_ordered=stream_ordered,
+                )
             else:
                 # Fallback for non-Alchemy storage
                 data, dates = storage.read_table_with_dates(
@@ -549,7 +595,40 @@ class Lucis:
                 )
                 instance._shard_manager.build_shards(data, dates)
             instance._is_indexed = True
-            instance.save()
+
+            if persist_name:
+                # Persist remaining shards + save registry using the
+                # same physical name generated earlier.
+                instance._shard_manager.persist_all(persist_name)
+
+                # Create parent metadata entry
+                parent_state = {
+                    "index": {},
+                    "total_docs": instance._shard_manager.total_docs,
+                    "doc_lengths": {},
+                    "id_map": {},
+                    "id_type": instance._shard_manager.id_type,
+                    "engine_name": instance.engine.name,
+                }
+                instance.storage.save(parent_state, persist_name)
+                instance.storage.set_alias(name, persist_name)
+                if instance._source_info is not None:
+                    instance.storage.save_source_info(persist_name, instance._source_info)
+
+                # Final trim: evict anything still over budget
+                instance._shard_manager._lazy_base_name = persist_name
+                evicted = instance._shard_manager.trim_to_budget()
+                if evicted:
+                    import logging
+                    logging.getLogger(__name__).info(
+                        "Post-index trim: evicted %d shards to fit memory budget "
+                        "(%.0f MB in RAM).",
+                        evicted,
+                        instance._shard_manager.loaded_memory_mb,
+                    )
+            else:
+                # No memory management — use normal save()
+                instance.save()
         else:
             # Non-sharded mode: current behavior
             data = storage.read_table(
@@ -783,7 +862,7 @@ class Lucis:
             }
             self.storage.save(parent_state, physical_name)
         else:
-            # ── Single-engine save ──
+            # Single-engine save
             self.engine.persist(physical_name)
 
         # Point the logical alias to the new physical index
@@ -811,12 +890,13 @@ class Lucis:
         shard_keys = self.storage.load_shard_registry(physical_name)
 
         if shard_keys:
-            # ── Sharded load ──
+            # Sharded load 
             self._init_shard_manager()
-            self._shard_manager.load_all(physical_name, shard_keys)
+            lazy = self._max_loaded_shards > 0 or self._memory_limit_mb is not None
+            self._shard_manager.load_all(physical_name, shard_keys, lazy=lazy)
             self._is_indexed = True
         else:
-            # ── Single-engine load ──
+            # Single-engine load 
             self.engine.load_engine(physical_name)
             self._is_indexed = True
 
@@ -824,6 +904,39 @@ class Lucis:
         source = self.storage.load_source_info(physical_name)
         if source is not None:
             self._source_info = source
+
+    def preload_shards(
+        self,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        n_recent: Optional[int] = None,
+    ) -> List[str]:
+        """Explicitly warm shards into memory without blocking searches.
+
+        Only useful when ``max_loaded_shards > 0`` was passed to the
+        constructor (lazy mode).  Call this before running a query against
+        historical data so the shards are ready in RAM.
+
+        Args:
+            since: Load shards at or after this key / ISO date (e.g. ``"2025_01"``).
+            until: Load shards at or before this key / ISO date.
+            n_recent: Load only the *n_recent* most recent qualifying shards.
+                If ``None``, loads all matching shards (subject to the
+                LRU eviction limit).
+
+        Returns:
+            List of shard keys that were newly loaded into memory.
+
+        Example::
+
+            luc = Lucis(name="email_idx", ..., max_loaded_shards=6)
+            # After load(), only 6 most recent shards are in RAM.
+            # To also query 2024 data:
+            luc.preload_shards(since="2024_01", until="2024_12")
+        """
+        if self._shard_manager is None:
+            return []
+        return self._shard_manager.preload_shards(since=since, until=until, n_recent=n_recent)
 
     # Shadow Rebuild 
 
@@ -1215,7 +1328,7 @@ class Lucis:
             id_col = info["id_column"]
             where = info.get("where_clause")
 
-            # ── Sharded: return (data, dates) ──
+            # Sharded: return (data, dates)
             if date_col and hasattr(storage, "read_table_with_dates"):
                 def fetch_with_dates():
                     return storage.read_table_with_dates(
@@ -1343,11 +1456,11 @@ class Lucis:
 
         storage = self.storage
 
-        # ── Optimized path: table + id_column → SQL-level delta ────
+        # Optimized path: table + id_column → SQL-level delta
         if info["type"] == "table" and info.get("id_column"):
             return self._auto_delta_fn_by_id(info, storage)
 
-        # ── Universal path: fetch all → diff against known IDs ─────
+        # Universal path: fetch all → diff against known IDs
         return self._auto_delta_fn_universal()
 
     def _auto_delta_fn_by_id(

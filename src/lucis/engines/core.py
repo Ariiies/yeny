@@ -13,6 +13,7 @@ from ..utils.compact import (
     thaw_index,
     freeze_doc_lengths,
 )
+from ..utils.parallel import parallel_preprocess
 from ..exceptions import LucisEmptyCorpusError
 
 class CoreEngine(BaseEngine):
@@ -55,11 +56,11 @@ class CoreEngine(BaseEngine):
             return
 
         # 1. Preprocess with the configured preprocessor.
-        # If it returns str (text-only preprocessor), apply simple_tokenizer as fallback.
-        tokenized = []
-        for doc in texts:
-            result = self.preprocessor(doc)
-            tokenized.append(simple_tokenizer(result) if isinstance(result, str) else result)
+        #    Uses ProcessPoolExecutor when corpus ≥ 500 docs and the
+        #    preprocessor is picklable; falls back to sequential otherwise.
+        tokenized = parallel_preprocess(
+            texts, self.preprocessor, simple_tokenizer,
+        )
 
         # 2. Build the inverted index (Core)
         raw_index = build_idx_func(tokenized)
