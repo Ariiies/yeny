@@ -32,6 +32,7 @@ Constants:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 import time
@@ -40,6 +41,7 @@ from datetime import datetime, date
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..engines.base import BaseEngine, DocId
+from ..utils.mmap_storage import save_lcs, lcs_exists
 
 log = logging.getLogger(__name__)
 
@@ -197,6 +199,7 @@ class ShardManager:
         max_loaded_shards: int = 0,
         memory_limit_mb: Optional[int] = None,
         temp_ttl_seconds: int = 30,
+        binary_dir: Optional[str] = None,
     ):
         self._engine_class = engine_class
         self._storage = storage
@@ -230,6 +233,9 @@ class ShardManager:
         # Tracks shards already persisted during build_shards_streaming
         # (so persist_all skips them).
         self._persisted_keys: set = set()
+        # --- Binary / mmap path ---
+        # Directory for .lcs files (None = mmap disabled).
+        self._binary_dir: Optional[str] = binary_dir
 
     # ── Memory management helpers ──
 
@@ -243,45 +249,70 @@ class ShardManager:
         """Return an approximate byte count for a loaded engine's data.
 
         Measures the three heavy structures: ``index`` (dict of
-        CompactPostings / dict), ``doc_lengths`` (CompactDocLengths /
-        dict), and ``id_map``.
+        CompactPostings / dict, or LazyIndex), ``doc_lengths``
+        (CompactDocLengths / dict), and ``id_map``.
+
+        For mmap-backed engines the posting arrays and doc-length data
+        live in the OS page-cache, not on the Python heap.  Only the
+        vocab metadata (token strings + offset arrays) and the
+        ``id_map`` are counted.
         """
+        from ..utils.mmap_storage import (
+            MmapPostings, MmapDocLengths, MmapIdMap, LazyIndex,
+        )
+
         total = 0
         _sizeof = sys.getsizeof
 
-        # -- index: Dict[str, CompactPostings | dict] --
+        # -- index: LazyIndex | Dict[str, CompactPostings | MmapPostings | dict]
         idx = getattr(engine, "index", None)
         if idx:
-            total += _sizeof(idx)
-            for tok, postings in idx.items():
-                total += _sizeof(tok)
-                # CompactPostings uses array.array internally
-                ids = getattr(postings, "_doc_ids", None)
-                freqs = getattr(postings, "_freqs", None)
-                if ids is not None:
-                    total += _sizeof(ids) + _sizeof(freqs)
-                elif isinstance(postings, dict):
-                    total += _sizeof(postings) + 56 * len(postings)
-                else:
-                    total += _sizeof(postings)
+            if isinstance(idx, LazyIndex):
+                # LazyIndex stores: _token_idx dict + 2 array.array offsets
+                total += _sizeof(idx._token_idx)
+                for tok in idx._token_idx:
+                    total += _sizeof(tok)
+                total += _sizeof(idx._ids_off)
+                total += _sizeof(idx._ids_n)
+            else:
+                total += _sizeof(idx)
+                for tok, postings in idx.items():
+                    total += _sizeof(tok)
+                    if isinstance(postings, MmapPostings):
+                        total += 64  # approximate object shell
+                    else:
+                        ids = getattr(postings, "_doc_ids", None)
+                        freqs = getattr(postings, "_freqs", None)
+                        if ids is not None:
+                            total += _sizeof(ids) + _sizeof(freqs)
+                        elif isinstance(postings, dict):
+                            total += _sizeof(postings) + 56 * len(postings)
+                        else:
+                            total += _sizeof(postings)
 
-        # -- doc_lengths: CompactDocLengths | dict --
+        # -- doc_lengths: CompactDocLengths | MmapDocLengths | dict --
         dl = getattr(engine, "doc_lengths", None)
         if dl is not None:
-            data = getattr(dl, "_data", None)  # CompactDocLengths
-            if data is not None:
-                total += _sizeof(data)
-            elif isinstance(dl, dict):
-                total += _sizeof(dl) + 56 * len(dl)
+            if isinstance(dl, MmapDocLengths):
+                total += 64  # shell only
             else:
-                total += _sizeof(dl)
+                data = getattr(dl, "_data", None)  # CompactDocLengths
+                if data is not None:
+                    total += _sizeof(data)
+                elif isinstance(dl, dict):
+                    total += _sizeof(dl) + 56 * len(dl)
+                else:
+                    total += _sizeof(dl)
 
         # -- id_map --
         im = getattr(engine, "id_map", None)
         if im:
-            total += _sizeof(im)
-            for k, v in im.items():
-                total += _sizeof(k) + _sizeof(v)
+            if isinstance(im, MmapIdMap):
+                total += 64  # shell only — data is mmap'd
+            else:
+                total += _sizeof(im)
+                for k, v in im.items():
+                    total += _sizeof(k) + _sizeof(v)
 
         return total
 
@@ -301,10 +332,15 @@ class ShardManager:
             mem = self._shard_mem.pop(oldest_key, 0)
             self._loaded_mem -= mem
             self._temp_expiry.pop(oldest_key, None)
-            # Free the engine's in-memory arrays.
-            evicted.index = {}
-            evicted.doc_lengths = None
-            evicted.id_map = {}
+            # Close mmap handle if the engine has one.
+            close_fn = getattr(evicted, "close_mmap", None)
+            if close_fn is not None:
+                close_fn()
+            else:
+                # Free the engine's in-memory arrays.
+                evicted.index = {}
+                evicted.doc_lengths = None
+                evicted.id_map = {}
         return oldest_key
 
     def _evict_until_fits(self, incoming_bytes: int = 0) -> None:
@@ -349,21 +385,97 @@ class ShardManager:
             if evicted is not None:
                 mem = self._shard_mem.pop(key, 0)
                 self._loaded_mem -= mem
-                evicted.index = {}
-                evicted.doc_lengths = None
-                evicted.id_map = {}
+                close_fn = getattr(evicted, "close_mmap", None)
+                if close_fn is not None:
+                    close_fn()
+                else:
+                    evicted.index = {}
+                    evicted.doc_lengths = None
+                    evicted.id_map = {}
+
+    def _lcs_path(self, shard_key: str) -> Optional[str]:
+        """Return the .lcs file path for *shard_key*, or ``None``."""
+        if not self._binary_dir or not self._lazy_base_name:
+            return None
+        shard_name = f"{self._lazy_base_name}__shard__{shard_key}"
+        return os.path.join(self._binary_dir, f"{shard_name}.lcs")
 
     def _lazy_load(self, shard_key: str) -> None:
         """Load *shard_key* from storage if it is not currently in memory.
+
+        When a ``.lcs`` binary file exists for the shard and a
+        ``binary_dir`` is configured, the shard is loaded via
+        memory-mapped I/O — near-zero RAM cost.  Otherwise falls
+        back to the regular storage ``load_engine()`` path.
 
         No-op when lazy loading is disabled or the shard is already loaded.
         """
         if not self._lazy_base_name or shard_key in self.shards:
             return
+        # Prefer mmap path when a .lcs file is available
+        lcs = self._lcs_path(shard_key)
+        if lcs and lcs_exists(lcs):
+            engine = self._create_engine()
+            engine.load_mmap(lcs)
+            self._register_engine(shard_key, engine)
+            return
+        # Fallback: regular storage deserialization
         shard_name = f"{self._lazy_base_name}__shard__{shard_key}"
         engine = self._create_engine()
         engine.load_engine(shard_name)
+        # Auto-generate .lcs for next load and reload via mmap now
+        if lcs and self._binary_dir:
+            self._save_shard_binary(shard_name, engine)
+            if lcs_exists(lcs) and hasattr(engine, "load_mmap"):
+                engine.load_mmap(lcs)  # swap CompactPostings → MmapPostings
         self._register_engine(shard_key, engine)
+
+    def _save_shard_binary(self, shard_name: str, engine: BaseEngine) -> None:
+        """Write a ``.lcs`` binary for *engine* if ``_binary_dir`` is set.
+
+        No-op when ``_binary_dir`` is ``None`` or the engine does not
+        expose a ``save_binary()`` method (e.g. CoreEngine).
+        """
+        if not self._binary_dir:
+            return
+        save_fn = getattr(engine, "save_binary", None)
+        if save_fn is None:
+            return
+        lcs_path = os.path.join(self._binary_dir, f"{shard_name}.lcs")
+        try:
+            save_fn(lcs_path)
+        except Exception as exc:
+            log.warning(
+                "Failed to write .lcs binary for '%s': %s",
+                shard_name, exc,
+            )
+
+    def _auto_generate_lcs(self, base_name: str) -> None:
+        """Write .lcs files for loaded shards that don't have one yet.
+
+        After writing, reloads the engine via mmap to get the RAM
+        savings immediately (CompactPostings → MmapPostings swap).
+        """
+        generated = 0
+        for shard_key, engine in list(self.shards.items()):
+            lcs = self._lcs_path(shard_key)
+            if not lcs or lcs_exists(lcs):
+                continue  # already exists or no binary_dir
+            shard_name = f"{base_name}__shard__{shard_key}"
+            self._save_shard_binary(shard_name, engine)
+            if lcs_exists(lcs) and hasattr(engine, "load_mmap"):
+                # Recalculate memory: swap CompactPostings → MmapPostings
+                old_mem = self._shard_mem.get(shard_key, 0)
+                engine.load_mmap(lcs)
+                new_mem = self._estimate_engine_memory(engine)
+                self._shard_mem[shard_key] = new_mem
+                self._loaded_mem += (new_mem - old_mem)
+                generated += 1
+        if generated:
+            log.info(
+                "Auto-generated %d .lcs files → loaded_mem now %.0f MB",
+                generated, self._loaded_mem / 1_048_576,
+            )
 
     # Properties
 
@@ -545,6 +657,8 @@ class ShardManager:
                 engine.persist(shard_name)
                 self._persisted_keys.add(key)
                 self._doc_counts[key] = engine.total_docs
+                # Also write .lcs binary before destroying the engine
+                self._save_shard_binary(shard_name, engine)
 
                 mem = self._shard_mem.pop(key, None)
                 if mem is None:
@@ -739,9 +853,56 @@ class ShardManager:
             shard_name = f"{base_name}__shard__{shard_key}"
             engine.persist(shard_name)
             shard_keys.append(shard_key)
+            # Also write .lcs binary for mmap-based loading
+            self._save_shard_binary(shard_name, engine)
+
+        # Write .lcs binaries for shards that were persisted during build
+        # but may not have had a binary written yet.
+        for shard_key in already:
+            if shard_key in self.shards:
+                shard_name = f"{base_name}__shard__{shard_key}"
+                self._save_shard_binary(shard_name, self.shards[shard_key])
 
         self._storage.save_shard_registry(base_name, shard_keys)
         return shard_keys
+
+    def write_lcs_files(self, base_name: str) -> int:
+        """Write ``.lcs`` binary files for every currently-loaded shard.
+
+        Unlike :meth:`persist_all`, this method **only** writes the
+        ``.lcs`` files — it does **not** touch the SQL storage backend.
+        Use this to generate the mmap cache from an already-indexed
+        instance without triggering a full re-persist to MySQL/SQLite.
+
+        Args:
+            base_name: The versioned physical name used during indexing
+                (e.g. ``"email_idx"``).  Must match the name that was
+                used when the index was built.
+
+        Returns:
+            Number of ``.lcs`` files written successfully.
+        """
+        if not self._binary_dir:
+            log.warning(
+                "write_lcs_files: binary_dir is None — no files written. "
+                "Pass binary_dir='auto' or an explicit path when creating Lucis."
+            )
+            return 0
+        os.makedirs(self._binary_dir, exist_ok=True)
+        written = 0
+        for shard_key, engine in self.shards.items():
+            shard_name = f"{base_name}__shard__{shard_key}"
+            save_fn = getattr(engine, "save_binary", None)
+            if save_fn is None:
+                continue
+            lcs_path = os.path.join(self._binary_dir, f"{shard_name}.lcs")
+            try:
+                save_fn(lcs_path)
+                written += 1
+                log.info("Written .lcs: %s", lcs_path)
+            except Exception as exc:
+                log.warning("Failed to write .lcs for '%s': %s", shard_name, exc)
+        return written
 
     def load_all(
         self,
@@ -791,7 +952,11 @@ class ShardManager:
 
                 shard_name = f"{base_name}__shard__{shard_key}"
                 engine = self._create_engine()
-                engine.load_engine(shard_name)
+                lcs = self._lcs_path(shard_key)
+                if lcs and lcs_exists(lcs):
+                    engine.load_mmap(lcs)
+                else:
+                    engine.load_engine(shard_name)
                 self._register_engine(shard_key, engine)
 
             loaded_count = len(self.shards)
@@ -806,14 +971,29 @@ class ShardManager:
                     self._loaded_mem / 1_048_576,
                     total_count - loaded_count,
                 )
+
+            # Auto-generate missing .lcs files for loaded shards
+            if self._binary_dir:
+                self._auto_generate_lcs(base_name)
+
             return
 
         # Eager load (original behaviour — all shards, no budget).
-        self._lazy_base_name = None
+        self._lazy_base_name = base_name  # still needed for _lcs_path
         for shard_key in shard_keys:
             shard_name = f"{base_name}__shard__{shard_key}"
             engine = self._create_engine()
-            engine.load_engine(shard_name)
+            lcs = self._lcs_path(shard_key)
+            if lcs and lcs_exists(lcs):
+                engine.load_mmap(lcs)
+            else:
+                engine.load_engine(shard_name)
+                # Auto-generate .lcs for next load and reload via mmap now
+                if self._binary_dir:
+                    self._save_shard_binary(shard_name, engine)
+                    lcs_new = self._lcs_path(shard_key)
+                    if lcs_new and lcs_exists(lcs_new) and hasattr(engine, "load_mmap"):
+                        engine.load_mmap(lcs_new)
             self.shards[shard_key] = engine
             # Track memory even in eager mode (for stats).
             mem = self._estimate_engine_memory(engine)
@@ -933,6 +1113,26 @@ class ShardManager:
             ``{shard_key: doc_count}`` dict sorted by shard key.
         """
         return {k: e.total_docs for k, e in sorted(self.shards.items())}
+
+    def close(self) -> None:
+        """Release all mmap handles held by loaded engines.
+
+        After calling ``close()``, every loaded shard that was backed by
+        a memory-mapped ``.lcs`` file will have its underlying OS file
+        handle and ``mmap`` object released.  The engines remain in the
+        ``shards`` dict but their index / doc-lengths will be empty, so
+        any subsequent search will trigger a lazy-reload if enabled.
+
+        This is especially important on **Windows** where open
+        memory-mapped files cannot be deleted or overwritten.
+        """
+        for key, engine in list(self.shards.items()):
+            close_fn = getattr(engine, "close_mmap", None)
+            if close_fn is not None:
+                try:
+                    close_fn()
+                except Exception:          # noqa: BLE001
+                    pass  # best-effort
 
     def __repr__(self) -> str:
         """Return an informative string representation of the manager."""

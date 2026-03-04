@@ -69,6 +69,21 @@ def _deep_getsizeof(obj: Any, seen: Optional[set] = None) -> int:
 
     size = sys.getsizeof(obj)
 
+    # LazyIndex — only count the token-to-index dict and offset arrays,
+    # NOT the MmapPostings objects (they're created on demand and GC'd).
+    from ..utils.mmap_storage import LazyIndex
+    if isinstance(obj, LazyIndex):
+        size += _deep_getsizeof(obj._token_idx, seen)
+        size += _deep_getsizeof(obj._ids_off, seen)
+        size += _deep_getsizeof(obj._ids_n, seen)
+        return size
+
+    # memoryview — if it's backed by an mmap (MmapPostings/MmapDocLengths),
+    # the buffer lives in the OS page-cache, NOT in the Python heap.
+    # Only count the tiny shell (~56 bytes), not the mapped data.
+    if isinstance(obj, memoryview):
+        return size  # ~184 bytes for the memoryview object itself
+
     # array.array — sys.getsizeof already includes the buffer for arrays,
     # so just return it directly (no need to recurse into elements).
     if isinstance(obj, array.array):

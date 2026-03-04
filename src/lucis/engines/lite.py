@@ -12,6 +12,7 @@ from ..utils.compact import (
     thaw_index,
     freeze_doc_lengths,
 )
+from ..utils.mmap_storage import save_lcs, open_lcs, LcsHandle
 from ..utils.parallel import parallel_preprocess
 from ..exceptions import LucisEmptyCorpusError
 
@@ -48,6 +49,8 @@ class LiteEngine(BaseEngine):
 
     def __init__(self, storage: Optional[Any] = None, preprocessor: Optional[Any] = None):
         super().__init__(storage=storage, preprocessor=preprocessor)
+        # mmap lifecycle handle (non-None when loaded via load_mmap)
+        self._lcs_handle: Optional[LcsHandle] = None
 
     @property
     def name(self) -> str:
@@ -106,11 +109,16 @@ class LiteEngine(BaseEngine):
         if not query or not self.index:
             return []
 
-        # 1. Find candidate documents (only those sharing at least one token)
+        # 1. Find candidate documents (only those sharing at least one token).
+        #    Pre-fetch postings objects for query tokens: avoids re-creating
+        #    MmapPostings in LazyIndex for every (doc_id, token) pair.
+        _postings: Dict[str, Any] = {}
         candidate_ids: set = set()
         for token in query:
             if token in self.index:
-                candidate_ids.update(self.index[token].keys())
+                p = self.index[token]
+                _postings[token] = p
+                candidate_ids.update(p.keys())
 
         if not candidate_ids:
             return []
@@ -127,7 +135,7 @@ class LiteEngine(BaseEngine):
 
             score = 0.0
             for token in query:
-                tf = self.index.get(token, _EMPTY).get(doc_id, 0)
+                tf = _postings.get(token, _EMPTY).get(doc_id, 0)
                 score += tf / doc_len
 
             if score > 0:
@@ -151,22 +159,36 @@ class LiteEngine(BaseEngine):
             raise ValueError("No storage adapter configured in the engine.")
 
         # Thaw compact structures → regular dicts for storage
-        serializable_index = (
-            thaw_index(self.index)
-            if self.index and isinstance(next(iter(self.index.values())), CompactPostings)
-            else self.index
-        )
+        from ..utils.mmap_storage import MmapPostings, LazyIndex
+        if self.index:
+            sample = next(iter(self.index.values()))
+            if isinstance(sample, CompactPostings):
+                serializable_index = thaw_index(self.index)
+            elif isinstance(sample, MmapPostings) or isinstance(self.index, LazyIndex):
+                serializable_index = {
+                    tok: p.to_dict() for tok, p in self.index.items()
+                }
+            else:
+                serializable_index = self.index
+        else:
+            serializable_index = self.index
+        from ..utils.mmap_storage import MmapDocLengths, MmapIdMap
         serializable_doc_lengths = (
             self.doc_lengths.to_dict()
-            if isinstance(self.doc_lengths, CompactDocLengths)
+            if isinstance(self.doc_lengths, (CompactDocLengths, MmapDocLengths))
             else self.doc_lengths
+        )
+        serializable_id_map = (
+            self.id_map.to_dict()
+            if isinstance(self.id_map, MmapIdMap)
+            else self.id_map
         )
 
         state = {
             "index": serializable_index,
             "total_docs": self.total_docs,
             "doc_lengths": serializable_doc_lengths,
-            "id_map": self.id_map,
+            "id_map": serializable_id_map,
             "id_type": self.id_type,
             "engine_name": self.name,
         }
@@ -277,3 +299,62 @@ class LiteEngine(BaseEngine):
             self.doc_lengths[doc_id] = length
 
         self.total_docs += len(new_texts)
+
+    # ── Binary / mmap interface ─────────────────────────────────────
+
+    def save_binary(self, path: str) -> None:
+        """Serialise this engine to a ``.lcs`` (Lucis Compact Shard) file.
+
+        The resulting file is designed for subsequent ``load_mmap()``
+        calls — the OS page-cache replaces the Python heap for all
+        heavy arrays (postings + doc-lengths).
+
+        Args:
+            path: Absolute path for the output file (should end in
+                ``.lcs``).  Parent directories are created automatically.
+        """
+        save_lcs(path, self)
+
+    def load_mmap(self, path: str) -> None:
+        """Load engine state from a ``.lcs`` file using memory-mapped I/O.
+
+        After this call the engine is ready to search.  The inverted
+        index and doc-length arrays live in the OS page-cache, not on
+        the Python heap — RAM usage is near-zero (only the vocabulary
+        keys and ``id_map`` remain in Python memory).
+
+        Call :meth:`close_mmap` (or let the engine be garbage-collected)
+        to release the underlying file handle and mmap.
+
+        Args:
+            path: Path to a ``.lcs`` file previously created by
+                :meth:`save_binary`.
+        """
+        # If there is an existing mmap handle, close it first
+        self.close_mmap()
+
+        handle = open_lcs(path)
+        self._lcs_handle = handle
+
+        # Transfer state into the engine's public attributes
+        self.index = handle.index
+        self.doc_lengths = handle.doc_lengths
+        self.total_docs = handle.total_docs
+        self.id_map = handle.id_map
+        self.id_type = handle.id_type
+
+    def close_mmap(self) -> None:
+        """Release the mmap handle and OS file descriptor.
+
+        After this call the engine's ``index`` and ``doc_lengths`` are
+        set to empty containers — the engine is no longer searchable
+        until a new ``load_mmap()`` or ``load_engine()`` is called.
+
+        Safe to call multiple times or when no mmap is active.
+        """
+        if self._lcs_handle is not None:
+            self._lcs_handle.close()
+            self._lcs_handle = None
+            self.index = {}
+            self.doc_lengths = None
+            self.id_map = {}

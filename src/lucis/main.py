@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -98,6 +99,7 @@ class Lucis:
         autoload: bool = True,
         max_loaded_shards: int = 0,
         memory_limit_mb: Optional[int] = None,
+        binary_dir: Optional[str] = "auto",
     ):
         """
         Base constructor: sets up identity, storage, and engine.
@@ -136,6 +138,13 @@ class Lucis:
                 newest shards first until the budget is ~90 % full, then stops.
                 Historical queries via ``search(since=..., until=...)`` temporarily
                 load extra shards that auto-expire after 30 seconds.
+            binary_dir: Directory for ``.lcs`` (Lucis Compact Shard) binary
+                files.  When set, shards are persisted as mmap-friendly
+                binaries alongside the regular storage, enabling near-zero
+                RAM loading via memory-mapped I/O.
+                ``"auto"`` (default) derives the directory automatically
+                from the storage configuration.  ``None`` disables binary
+                persistence entirely.
         """
         self.name = name
         self._is_indexed = False
@@ -149,6 +158,12 @@ class Lucis:
         #   LiteEngine → char_ngram_tokenizer(3) + lowercase
         self._user_preprocessor = preprocessor
         self.preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = preprocessor
+
+        # Binary / mmap directory resolution
+        if binary_dir == "auto":
+            self._binary_dir: Optional[str] = os.path.join(storage_dir, "lcs")
+        else:
+            self._binary_dir = binary_dir
 
         # Background rebuild state (Phase 3)
         self._rebuild_thread: Optional[threading.Thread] = None
@@ -230,6 +245,7 @@ class Lucis:
             preprocessor=self._user_preprocessor,
             max_loaded_shards=self._max_loaded_shards,
             memory_limit_mb=self._memory_limit_mb,
+            binary_dir=self._binary_dir,
         )
 
     # factory methods
@@ -1925,6 +1941,68 @@ class Lucis:
             on_report=on_report,
             ram_warning_mb=ram_warning_mb,
         )
+
+    # ------------------------------------------------------------------ #
+    #  Lifecycle                                                          #
+    # ------------------------------------------------------------------ #
+
+    def close(self) -> None:
+        """Release all mmap handles held by loaded shard engines.
+
+        Call this before deleting ``.lcs`` files on Windows, or when
+        the ``Lucis`` instance is no longer needed and you want to
+        free OS-level file handles immediately.
+        """
+        if self._shard_manager is not None:
+            self._shard_manager.close()
+        else:
+            close_fn = getattr(self.engine, "close_mmap", None)
+            if close_fn is not None:
+                close_fn()
+
+    def generate_lcs(self) -> int:
+        """Write ``.lcs`` binary cache files for all currently-loaded shards.
+
+        This is the one-time step needed to enable mmap-based loading.
+        Call it once after a normal index load, then on subsequent runs
+        Lucis will automatically use the ``.lcs`` files (near-zero heap RAM).
+
+        The index in MySQL/SQLite is **not** modified — ``.lcs`` files
+        are only a read cache stored in ``binary_dir`` (default:
+        ``{storage_dir}/lcs/``).
+
+        Returns:
+            Number of ``.lcs`` files written.
+
+        Raises:
+            RuntimeError: If the instance is not sharded, not indexed,
+                or ``binary_dir`` is ``None``.
+
+        Example::
+
+            luc = Lucis(name="email_idx", ..., binary_dir="auto")
+            n = luc.generate_lcs()
+            print(f"Generated {n} .lcs files")
+            luc.close()
+            # Next load will use mmap automatically
+        """
+        if self._shard_manager is None:
+            raise RuntimeError(
+                "generate_lcs() is only supported for sharded indexes. "
+                "Non-sharded indexes don't benefit from .lcs files."
+            )
+        if not self._is_indexed:
+            raise RuntimeError(
+                "generate_lcs() requires a loaded index. "
+                "Load or build the index before calling generate_lcs()."
+            )
+        if self._shard_manager._binary_dir is None:
+            raise RuntimeError(
+                "generate_lcs() requires binary_dir to be set. "
+                "Pass binary_dir='auto' when creating Lucis."
+            )
+        base_name = self._shard_manager._lazy_base_name or self.name
+        return self._shard_manager.write_lcs_files(base_name)
 
     # info and debugging
     def __repr__(self) -> str:
