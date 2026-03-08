@@ -248,6 +248,86 @@ class Lucis:
             binary_dir=self._binary_dir,
         )
 
+    def _post_index_cleanup(self, logical_name: str) -> None:
+        """Reload the index from storage to shed build-time RAM overhead.
+
+        During indexing, engines accumulate intermediate structures
+        (raw dicts, tokenized lists, etc.) that are significantly
+        heavier than the compact/mmap representations loaded from
+        storage.  This method destroys the build-time shard manager
+        and reloads from storage — the same path taken by a cold
+        start with an existing index — so steady-state RAM matches
+        the lightweight pre-loaded profile.
+
+        Also clears any ``functools.lru_cache`` on the preprocessor
+        pipeline, which can accumulate millions of entries during
+        bulk indexing.
+        """
+        import gc
+        import logging
+        _log = logging.getLogger(__name__)
+
+        # 1. Preserve source_info before reload (load() restores it
+        #    from storage, but belt-and-suspenders).
+        source_info = self._source_info
+
+        # 2. Tear down build-time shard manager completely.
+        if self._shard_manager:
+            for key in list(self._shard_manager.shards.keys()):
+                engine = self._shard_manager.shards[key]
+                close_fn = getattr(engine, "close_mmap", None)
+                if close_fn:
+                    close_fn()
+                else:
+                    engine.index = {}
+                    engine.doc_lengths = None
+                    engine.id_map = {}
+            self._shard_manager.shards.clear()
+            self._shard_manager._shard_mem.clear()
+            self._shard_manager._lru.clear()
+            self._shard_manager._loaded_mem = 0
+        self._shard_manager = None
+
+        # 3. Clear preprocessor caches (lru_cache on HMAC functions).
+        if self.preprocessor:
+            # Walk the preprocessor's closure/globals for lru_cache'd callables
+            for attr_name in dir(self.preprocessor):
+                obj = getattr(self.preprocessor, attr_name, None)
+                if hasattr(obj, "cache_clear"):
+                    obj.cache_clear()
+            # Also check the module the preprocessor lives in
+            mod = getattr(self.preprocessor, "__module__", None)
+            if mod:
+                import sys
+                mod_obj = sys.modules.get(mod)
+                if mod_obj:
+                    for attr in dir(mod_obj):
+                        fn = getattr(mod_obj, attr, None)
+                        if callable(fn) and hasattr(fn, "cache_clear"):
+                            fn.cache_clear()
+
+        # 4. Force garbage collection before reload to release
+        #    build-time objects and (on CPython) return arenas.
+        gc.collect()
+
+        # 5. Reload from storage — uses the lightweight load path
+        #    (mmap for .lcs, compact freeze for DB-backed).
+        self.load(logical_name)
+
+        # 6. Restore source info
+        if source_info:
+            self._source_info = source_info
+
+        # 7. Final GC pass to clean up any stragglers.
+        gc.collect()
+
+        _log.info(
+            "Post-index cleanup complete: reloaded '%s' from storage "
+            "(%.1f MB in RAM).",
+            logical_name,
+            self._shard_manager.loaded_memory_mb if self._shard_manager else 0,
+        )
+
     # factory methods
     @classmethod
     def from_dict(
@@ -642,6 +722,14 @@ class Lucis:
                         evicted,
                         instance._shard_manager.loaded_memory_mb,
                     )
+
+                # ── Post-index RAM cleanup ──
+                # After building + persisting, the in-memory engines retain
+                # build-time structures (raw dicts, tokenized lists, etc.)
+                # that are much heavier than a clean load from storage.
+                # Reload from the persisted state to match the lightweight
+                # footprint of a cold start with an existing index.
+                instance._post_index_cleanup(name)
             else:
                 # No memory management — use normal save()
                 instance.save()
@@ -988,6 +1076,9 @@ class Lucis:
             self.engine.build_index(data)
         self._is_indexed = True
         self.save()
+        # Reload from storage to shed build-time RAM overhead
+        if self._shard_manager:
+            self._post_index_cleanup(self.name)
 
     def reindex_streaming(
         self,
@@ -1034,6 +1125,8 @@ class Lucis:
         self._shard_manager.build_shards_streaming(row_iter, batch_size=batch_size)
         self._is_indexed = True
         self.save()
+        # Reload from storage to shed build-time RAM overhead
+        self._post_index_cleanup(self.name)
 
     def add_documents(
         self,
