@@ -1170,6 +1170,11 @@ class Lucis:
         self._is_indexed = True
         if persist:
             self.save()
+            # Reload from mmap to shed the materialized in-memory dicts
+            # created by _ensure_mutable(). Same cleanup path used by
+            # from_alchemy_table() and reindex().
+            if self._shard_manager is not None:
+                self._post_index_cleanup(self.name)
 
     def rollback(self) -> None:
         """
@@ -1604,6 +1609,18 @@ class Lucis:
             # Build text expression for multi-column support
             text_expr = storage._sql_concat_columns(text_col)
 
+            def _make_delta_commit(fn):
+                """Attach deferred commit to a delta function."""
+                fn._pending_max = None
+
+                def commit():
+                    if fn._pending_max is not None:
+                        last_max[0] = fn._pending_max
+                        fn._pending_max = None
+
+                fn.commit = commit
+                return fn
+
             if date_col:
                 def delta_alchemy_sharded():
                     from sqlalchemy import text as _sa_t
@@ -1622,9 +1639,9 @@ class Lucis:
                         return {}, {}
                     data = {str(row[0]): row[1] for row in rows}
                     dates = {str(row[0]): row[2] for row in rows}
-                    last_max[0] = max(row[0] for row in rows)
+                    delta_alchemy_sharded._pending_max = max(row[0] for row in rows)
                     return data, dates
-                return delta_alchemy_sharded
+                return _make_delta_commit(delta_alchemy_sharded)
             else:
                 def delta_alchemy():
                     from sqlalchemy import text as _sa_t
@@ -1639,9 +1656,9 @@ class Lucis:
                     if not rows:
                         return {}
                     data = {str(row[0]): row[1] for row in rows}
-                    last_max[0] = max(row[0] for row in rows)
+                    delta_alchemy._pending_max = max(row[0] for row in rows)
                     return data
-                return delta_alchemy
+                return _make_delta_commit(delta_alchemy)
 
         else:
             # SQLiteStorage
@@ -1658,6 +1675,18 @@ class Lucis:
 
             # Build text expression for multi-column support
             text_expr = _build_sql_text_expr(text_col)
+
+            def _make_delta_commit(fn):
+                """Attach deferred commit to a delta function."""
+                fn._pending_max = None
+
+                def commit():
+                    if fn._pending_max is not None:
+                        last_max[0] = fn._pending_max
+                        fn._pending_max = None
+
+                fn.commit = commit
+                return fn
 
             if date_col:
                 def delta_sqlite_sharded():
@@ -1676,9 +1705,9 @@ class Lucis:
                         return {}, {}
                     data = {str(row[0]): row[1] for row in rows}
                     dates = {str(row[0]): row[2] for row in rows}
-                    last_max[0] = max(row[0] for row in rows)
+                    delta_sqlite_sharded._pending_max = max(row[0] for row in rows)
                     return data, dates
-                return delta_sqlite_sharded
+                return _make_delta_commit(delta_sqlite_sharded)
             else:
                 def delta_sqlite():
                     import sqlite3
@@ -1692,9 +1721,9 @@ class Lucis:
                     if not rows:
                         return {}
                     data = {str(row[0]): row[1] for row in rows}
-                    last_max[0] = max(row[0] for row in rows)
+                    delta_sqlite._pending_max = max(row[0] for row in rows)
                     return data
-                return delta_sqlite
+                return _make_delta_commit(delta_sqlite)
 
     def _auto_delta_fn_universal(
         self,
@@ -1760,56 +1789,59 @@ class Lucis:
         else:
             last_count = [self.engine.total_docs if self._is_indexed else 0]
 
-        if info["type"] == "table":
-            table_name = info["table_name"]
-
-            def detect_table():
-                current = storage.count_rows(table_name)
+        def _make_detector(fetch_count):
+            """Wrap a count-fetcher into a detector with deferred commit."""
+            def detector():
+                current = fetch_count()
                 if current != last_count[0]:
-                    last_count[0] = current
+                    detector._pending = current
                     return True
+                detector._pending = None
                 return False
 
-            return detect_table
+            detector._pending = None
+
+            def commit():
+                if detector._pending is not None:
+                    last_count[0] = detector._pending
+                    detector._pending = None
+
+            detector.commit = commit
+            return detector
+
+        if info["type"] == "table":
+            table_name = info["table_name"]
+            return _make_detector(lambda: storage.count_rows(table_name))
 
         elif info["type"] == "query":
             query_str = info["query"]
 
             if hasattr(storage, "_engine"):
-                # AlchemyStorage — use sa_text
                 from sqlalchemy import text as _sa_text
 
-                def detect_query_alchemy():
+                def _fetch_alchemy():
                     with storage._engine.connect() as conn:
-                        current = conn.execute(
+                        return conn.execute(
                             _sa_text(
                                 f"SELECT COUNT(*) FROM ({query_str}) AS _lucis_subq"
                             )
                         ).scalar()
-                    if current != last_count[0]:
-                        last_count[0] = current
-                        return True
-                    return False
 
-                return detect_query_alchemy
+                return _make_detector(_fetch_alchemy)
 
             else:
-                # SQLiteStorage — direct cursor
                 db_path = getattr(storage, "db_path", None)
 
-                def detect_query_sqlite():
+                def _fetch_sqlite():
                     import sqlite3
                     conn = sqlite3.connect(db_path)
                     current = conn.execute(
                         f"SELECT COUNT(*) FROM ({query_str})"
                     ).fetchone()[0]
                     conn.close()
-                    if current != last_count[0]:
-                        last_count[0] = current
-                        return True
-                    return False
+                    return current
 
-                return detect_query_sqlite
+                return _make_detector(_fetch_sqlite)
 
         return None
 

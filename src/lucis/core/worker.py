@@ -340,6 +340,12 @@ class IndexWorker:
         self.last_rebuild_time = round(elapsed, 3)
         self.rebuilds += 1
 
+        # Commit deferred state only after successful rebuild
+        if hasattr(self._change_detector, "commit"):
+            self._change_detector.commit()
+        if self._delta_fn is not None and hasattr(self._delta_fn, "commit"):
+            self._delta_fn.commit()
+
         # Grab the current physical name for the callback
         physical_name = self._lucis.storage.get_alias(self._lucis.name) or "unknown"
 

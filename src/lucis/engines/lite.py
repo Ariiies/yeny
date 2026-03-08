@@ -12,7 +12,10 @@ from ..utils.compact import (
     thaw_index,
     freeze_doc_lengths,
 )
-from ..utils.mmap_storage import save_lcs, open_lcs, LcsHandle
+from ..utils.mmap_storage import (
+    save_lcs, open_lcs, LcsHandle,
+    MmapIdMap, MmapDocLengths, LazyIndex,
+)
 from ..utils.parallel import parallel_preprocess
 from ..exceptions import LucisEmptyCorpusError
 
@@ -220,6 +223,30 @@ class LiteEngine(BaseEngine):
         self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
         del raw_index, raw_doc_lengths
 
+    # ── Mmap → mutable promotion ───────────────────────────────────
+
+    def _ensure_mutable(self) -> None:
+        """Promote mmap-backed read-only structures to mutable containers.
+
+        After ``load_mmap()`` the engine's ``id_map``, ``doc_lengths``
+        and ``index`` are backed by read-only memoryviews.  This method
+        materialises them into regular Python dicts so that
+        ``add_documents()`` can mutate them safely.
+
+        The underlying mmap handle (if any) is closed afterwards — the
+        engine is fully self-contained in the Python heap.
+        """
+        if isinstance(self.id_map, MmapIdMap):
+            self.id_map = self.id_map.to_dict()
+        if isinstance(self.doc_lengths, MmapDocLengths):
+            self.doc_lengths = self.doc_lengths.to_dict()
+        if isinstance(self.index, LazyIndex):
+            self.index = dict(self.index.items())
+        # Release the mmap file descriptor — data is now in Python heap
+        if self._lcs_handle is not None:
+            self._lcs_handle.close()
+            self._lcs_handle = None
+
     # Incremental indexing
 
     def add_documents(self, new_docs: Union[List[str], Dict[Any, str]]) -> None:
@@ -242,6 +269,9 @@ class LiteEngine(BaseEngine):
             Call ``persist()`` or ``Lucis.save()`` afterwards to
             persist the updated index to storage.
         """
+        # Promote mmap read-only structures to mutable dicts if needed
+        self._ensure_mutable()
+
         # Determine the starting internal id for new documents
         start_id = self.total_docs
 
