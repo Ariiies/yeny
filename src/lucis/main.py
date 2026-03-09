@@ -259,6 +259,10 @@ class Lucis:
         start with an existing index — so steady-state RAM matches
         the lightweight pre-loaded profile.
 
+        When dirty-tracking is available (incremental ``add_documents``),
+        only the modified shards are reloaded — the rest keep their
+        existing mmap handles intact.
+
         Also clears any ``functools.lru_cache`` on the preprocessor
         pipeline, which can accumulate millions of entries during
         bulk indexing.
@@ -266,10 +270,71 @@ class Lucis:
         import gc
         import logging
         _log = logging.getLogger(__name__)
+        from .utils.mmap_storage import lcs_exists
 
         # 1. Preserve source_info before reload (load() restores it
         #    from storage, but belt-and-suspenders).
         source_info = self._source_info
+
+        # ── Selective cleanup (dirty-tracking) ──
+        dirty = set(self._shard_manager._dirty_keys) if self._shard_manager else set()
+
+        if dirty and self._shard_manager:
+            sm = self._shard_manager
+
+            # Update base name to the latest physical version so that
+            # _lcs_path resolves to the newly-written .lcs files.
+            new_base = self.storage.get_alias(logical_name)
+            if new_base:
+                sm._lazy_base_name = new_base
+
+            # Tear down only dirty shards and reload from .lcs / storage.
+            for key in dirty:
+                engine = sm.shards.get(key)
+                if engine:
+                    close_fn = getattr(engine, "close_mmap", None)
+                    if close_fn:
+                        close_fn()
+                    else:
+                        engine.index = {}
+                        engine.doc_lengths = None
+                        engine.id_map = {}
+
+                # Reload from the new .lcs (or DB fallback)
+                new_engine = sm._create_engine()
+                lcs = sm._lcs_path(key)
+                if lcs and lcs_exists(lcs):
+                    new_engine.load_mmap(lcs)
+                else:
+                    shard_name = f"{new_base}__shard__{key}"
+                    new_engine.load_engine(shard_name)
+
+                # Update memory tracking
+                old_mem = sm._shard_mem.get(key, 0)
+                new_mem = sm._estimate_engine_memory(new_engine)
+                sm._loaded_mem += (new_mem - old_mem)
+                sm._shard_mem[key] = new_mem
+                sm.shards[key] = new_engine
+
+            sm._dirty_keys.clear()
+
+            # Clear preprocessor caches
+            self._clear_preprocessor_caches()
+
+            gc.collect()
+            _log.info(
+                "Selective post-index cleanup: reloaded %d dirty shard(s) "
+                "for '%s' (%.1f MB in RAM).",
+                len(dirty),
+                logical_name,
+                sm.loaded_memory_mb,
+            )
+
+            if source_info:
+                self._source_info = source_info
+            return
+
+        # ── Full cleanup (initial build or no dirty info) ──
 
         # 2. Tear down build-time shard manager completely.
         if self._shard_manager:
@@ -289,22 +354,7 @@ class Lucis:
         self._shard_manager = None
 
         # 3. Clear preprocessor caches (lru_cache on HMAC functions).
-        if self.preprocessor:
-            # Walk the preprocessor's closure/globals for lru_cache'd callables
-            for attr_name in dir(self.preprocessor):
-                obj = getattr(self.preprocessor, attr_name, None)
-                if hasattr(obj, "cache_clear"):
-                    obj.cache_clear()
-            # Also check the module the preprocessor lives in
-            mod = getattr(self.preprocessor, "__module__", None)
-            if mod:
-                import sys
-                mod_obj = sys.modules.get(mod)
-                if mod_obj:
-                    for attr in dir(mod_obj):
-                        fn = getattr(mod_obj, attr, None)
-                        if callable(fn) and hasattr(fn, "cache_clear"):
-                            fn.cache_clear()
+        self._clear_preprocessor_caches()
 
         # 4. Force garbage collection before reload to release
         #    build-time objects and (on CPython) return arenas.
@@ -327,6 +377,23 @@ class Lucis:
             logical_name,
             self._shard_manager.loaded_memory_mb if self._shard_manager else 0,
         )
+
+    def _clear_preprocessor_caches(self) -> None:
+        """Clear lru_cache entries on the preprocessor and its module."""
+        if self.preprocessor:
+            for attr_name in dir(self.preprocessor):
+                obj = getattr(self.preprocessor, attr_name, None)
+                if hasattr(obj, "cache_clear"):
+                    obj.cache_clear()
+            mod = getattr(self.preprocessor, "__module__", None)
+            if mod:
+                import sys
+                mod_obj = sys.modules.get(mod)
+                if mod_obj:
+                    for attr in dir(mod_obj):
+                        fn = getattr(mod_obj, attr, None)
+                        if callable(fn) and hasattr(fn, "cache_clear"):
+                            fn.cache_clear()
 
     # factory methods
     @classmethod

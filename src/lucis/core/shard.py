@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import sys
 import time
 from collections import defaultdict, OrderedDict
@@ -233,6 +234,9 @@ class ShardManager:
         # Tracks shards already persisted during build_shards_streaming
         # (so persist_all skips them).
         self._persisted_keys: set = set()
+        # Tracks shards modified by add_documents() so that persist_all()
+        # and _post_index_cleanup() only process changed shards.
+        self._dirty_keys: set = set()
         # --- Binary / mmap path ---
         # Directory for .lcs files (None = mmap disabled).
         self._binary_dir: Optional[str] = binary_dir
@@ -753,6 +757,7 @@ class ShardManager:
                 engine.add_documents(docs)
             else:
                 engine.build_index(docs)
+            self._dirty_keys.add(shard_key)
 
     # Search
 
@@ -846,15 +851,34 @@ class ShardManager:
         """
         already = getattr(self, "_persisted_keys", set())
         shard_keys = list(already)   # include shards persisted during build
+        dirty = self._dirty_keys if self._dirty_keys else None
 
         for shard_key, engine in self.shards.items():
             if shard_key in already:
                 continue  # already saved during build
             shard_name = f"{base_name}__shard__{shard_key}"
-            engine.persist(shard_name)
+
+            if dirty is None or shard_key in dirty:
+                # Dirty (or full-build): persist to storage + write .lcs
+                engine.persist(shard_name)
+                self._save_shard_binary(shard_name, engine)
+            else:
+                # Clean shard: copy old .lcs to new versioned name
+                old_lcs = self._lcs_path(shard_key)
+                new_lcs = (
+                    os.path.join(self._binary_dir, f"{shard_name}.lcs")
+                    if self._binary_dir
+                    else None
+                )
+                if old_lcs and new_lcs and lcs_exists(old_lcs):
+                    os.makedirs(os.path.dirname(new_lcs), exist_ok=True)
+                    shutil.copy2(old_lcs, new_lcs)
+                else:
+                    # No old .lcs available — full persist as fallback
+                    engine.persist(shard_name)
+                    self._save_shard_binary(shard_name, engine)
+
             shard_keys.append(shard_key)
-            # Also write .lcs binary for mmap-based loading
-            self._save_shard_binary(shard_name, engine)
 
         # Write .lcs binaries for shards that were persisted during build
         # but may not have had a binary written yet.
