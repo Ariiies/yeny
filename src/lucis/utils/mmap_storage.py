@@ -561,7 +561,10 @@ def save_lcs(path: str, engine: Any) -> None:
         running = 0
         for i in range(n_docs):
             val = id_map_raw.get(i, "")
-            encoded = val.encode("utf-8") if isinstance(val, str) else str(val).encode("utf-8")
+            if val is None:
+                encoded = b""
+            else:
+                encoded = val.encode("utf-8") if isinstance(val, str) else str(val).encode("utf-8")
             offsets_arr.append(running)
             string_parts.append(encoded)
             running += len(encoded)

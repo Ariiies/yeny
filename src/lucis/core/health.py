@@ -376,12 +376,34 @@ def health_check(
     shard_details: List[ShardHealth] = []
     shard_count = 0
 
+    def _safe_shard_items(shards: Dict[str, Any]) -> List[tuple]:
+        """Return a stable snapshot of shard items under concurrent updates."""
+        # Health monitor may run while the worker is adding/removing shards.
+        # Snapshot with a few retries avoids spurious RuntimeError.
+        for _ in range(3):
+            try:
+                return list(shards.items())
+            except RuntimeError:
+                time.sleep(0.002)
+        return []
+
+    def _safe_engine_sizes(engine: Any) -> tuple[int, int, int]:
+        """Measure engine internals defensively during concurrent writes."""
+        for _ in range(2):
+            try:
+                idx_size = _deep_getsizeof(engine.index) if hasattr(engine, "index") else 0
+                dl_size = _deep_getsizeof(engine.doc_lengths) if hasattr(engine, "doc_lengths") else 0
+                im_size = _deep_getsizeof(engine.id_map) if hasattr(engine, "id_map") else 0
+                return idx_size, dl_size, im_size
+            except RuntimeError:
+                time.sleep(0.002)
+        return 0, 0, 0
+
     if lucis._shard_manager is not None and lucis._shard_manager.shards:
-        shard_count = len(lucis._shard_manager.shards)
-        for key, engine in lucis._shard_manager.shards.items():
-            idx_size = _deep_getsizeof(engine.index) if hasattr(engine, "index") else 0
-            dl_size = _deep_getsizeof(engine.doc_lengths) if hasattr(engine, "doc_lengths") else 0
-            im_size = _deep_getsizeof(engine.id_map) if hasattr(engine, "id_map") else 0
+        items = _safe_shard_items(lucis._shard_manager.shards)
+        shard_count = len(items)
+        for key, engine in items:
+            idx_size, dl_size, im_size = _safe_engine_sizes(engine)
             total = idx_size + dl_size + im_size
             index_ram += total
             shard_details.append(ShardHealth(

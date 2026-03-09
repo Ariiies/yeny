@@ -1243,6 +1243,77 @@ class Lucis:
             if self._shard_manager is not None:
                 self._post_index_cleanup(self.name)
 
+    def remove_documents(
+        self,
+        doc_ids: List[Any],
+        persist: bool = True,
+        fallback_rebuild: bool = True,
+    ) -> int:
+        """Remove documents by original IDs.
+
+        Preferred path (LiteEngine): in-place removal from postings.
+        Universal fallback: full rebuild from source metadata.
+
+        Args:
+            doc_ids: Original document IDs to remove.
+            persist: Whether to save after removal.
+            fallback_rebuild: If in-place removal is unavailable,
+                run a full rebuild from source metadata.
+
+        Returns:
+            Number of removed documents (best-effort count).
+        """
+        if not doc_ids:
+            return 0
+
+        removed = 0
+
+        if self._shard_manager is not None and hasattr(self._shard_manager, "remove_documents"):
+            removed = self._shard_manager.remove_documents(doc_ids)
+        elif hasattr(self.engine, "remove_documents"):
+            removed = self.engine.remove_documents(doc_ids)
+        elif fallback_rebuild:
+            self._rebuild_from_source_info()
+            return len(doc_ids)
+        else:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=(
+                    f"'{self.engine.name}' does not support in-place remove_documents(). "
+                    "Enable fallback_rebuild=True or call reindex() manually."
+                ),
+            )
+
+        if removed <= 0:
+            return 0
+
+        self._is_indexed = True
+        if persist:
+            self.save()
+            if self._shard_manager is not None:
+                self._post_index_cleanup(self.name)
+
+        return removed
+
+    def _rebuild_from_source_info(self) -> None:
+        """Run a full rebuild using auto-generated source metadata readers."""
+        data_fn = self._auto_data_fn()
+        if data_fn is None:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=(
+                    "Cannot auto-rebuild: source metadata is missing. "
+                    "Provide data manually via reindex(data, dates=...)."
+                ),
+            )
+
+        result = data_fn()
+        if isinstance(result, tuple) and len(result) == 2:
+            data, dates = result
+            self.reindex(data, dates=dates)
+        else:
+            self.reindex(result)
+
     def rollback(self) -> None:
         """
         Roll back the alias to the previous index version.
@@ -1862,22 +1933,104 @@ class Lucis:
                 current = fetch_count()
                 if current != last_count[0]:
                     detector._pending = current
+                    detector._pending_count = current
                     return True
                 detector._pending = None
+                detector._pending_count = None
                 return False
 
             detector._pending = None
+            detector._last_count = last_count[0]
+            detector._pending_count = None
+            detector._supports_deletion_detection = True
 
             def commit():
                 if detector._pending is not None:
                     last_count[0] = detector._pending
+                    detector._last_count = last_count[0]
                     detector._pending = None
+                    detector._pending_count = None
 
             detector.commit = commit
             return detector
 
         if info["type"] == "table":
             table_name = info["table_name"]
+
+            # Enhanced table detector: if id_column exists, track COUNT + MAX(id)
+            # so mixed "delete + insert" cycles are detected even when count
+            # remains unchanged.
+            if info.get("id_column"):
+                id_col = info["id_column"]
+                where = info.get("where_clause")
+                last_max = [0]
+
+                def _fetch_count_max_table():
+                    if hasattr(storage, "_engine"):
+                        from sqlalchemy import text as _sa_text
+                        sql = f"SELECT COUNT(*), MAX({id_col}) FROM {table_name}"
+                        if where:
+                            sql += f" WHERE ({where})"
+                        with storage._engine.connect() as conn:
+                            row = conn.execute(
+                                _sa_text(sql)
+                            ).fetchone()
+                        cnt = int(row[0] or 0)
+                        mx = int(row[1] or 0)
+                        return cnt, mx
+                    import sqlite3
+                    db_path = getattr(storage, "db_path", None)
+                    sql = f"SELECT COUNT(*), MAX({id_col}) FROM {table_name}"
+                    if where:
+                        sql += f" WHERE ({where})"
+                    conn = sqlite3.connect(db_path)
+                    row = conn.execute(sql).fetchone()
+                    conn.close()
+                    cnt = int(row[0] or 0)
+                    mx = int(row[1] or 0)
+                    return cnt, mx
+
+                c0, m0 = _fetch_count_max_table()
+                last_count[0] = c0
+                last_max[0] = m0
+
+                def detector_table_count_max():
+                    current_count, current_max = _fetch_count_max_table()
+                    changed = (
+                        current_count != last_count[0]
+                        or current_max != last_max[0]
+                    )
+                    if changed:
+                        detector_table_count_max._pending = current_count
+                        detector_table_count_max._pending_count = current_count
+                        detector_table_count_max._pending_max_id = current_max
+                        return True
+                    detector_table_count_max._pending = None
+                    detector_table_count_max._pending_count = None
+                    detector_table_count_max._pending_max_id = None
+                    return False
+
+                detector_table_count_max._pending = None
+                detector_table_count_max._last_count = last_count[0]
+                detector_table_count_max._pending_count = None
+                detector_table_count_max._last_max_id = last_max[0]
+                detector_table_count_max._pending_max_id = None
+                detector_table_count_max._supports_deletion_detection = True
+
+                def commit_table_count_max():
+                    if detector_table_count_max._pending is not None:
+                        last_count[0] = detector_table_count_max._pending
+                        detector_table_count_max._last_count = last_count[0]
+                        detector_table_count_max._pending = None
+                        detector_table_count_max._pending_count = None
+                    if detector_table_count_max._pending_max_id is not None:
+                        last_max[0] = detector_table_count_max._pending_max_id
+                        detector_table_count_max._last_max_id = last_max[0]
+                        detector_table_count_max._pending_max_id = None
+
+                detector_table_count_max.commit = commit_table_count_max
+                return detector_table_count_max
+
             return _make_detector(lambda: storage.count_rows(table_name))
 
         elif info["type"] == "query":

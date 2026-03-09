@@ -42,7 +42,7 @@ from datetime import datetime, date
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..engines.base import BaseEngine, DocId
-from ..utils.mmap_storage import save_lcs, lcs_exists
+from ..utils.mmap_storage import save_lcs, lcs_exists, open_lcs
 
 log = logging.getLogger(__name__)
 
@@ -757,7 +757,42 @@ class ShardManager:
                 engine.add_documents(docs)
             else:
                 engine.build_index(docs)
+            self._doc_counts[shard_key] = engine.total_docs
             self._dirty_keys.add(shard_key)
+
+    def remove_documents(self, doc_ids: List[Any]) -> int:
+        """Remove documents by original IDs across all shards.
+
+        Shards that remove at least one document are marked dirty so
+        ``persist_all()`` and post-cleanup can process only modified shards.
+
+        Args:
+            doc_ids: Original document IDs to remove.
+
+        Returns:
+            Number of removed documents across shards.
+        """
+        if not doc_ids:
+            return 0
+
+        total_removed = 0
+        keys = list(self.shard_keys)
+
+        for shard_key in keys:
+            if shard_key not in self.shards and self._lazy_base_name:
+                self._lazy_load(shard_key)
+            engine = self.shards.get(shard_key)
+            if engine is None:
+                continue
+            remove_fn = getattr(engine, "remove_documents", None)
+            if remove_fn is None:
+                continue
+            removed = int(remove_fn(doc_ids))
+            if removed > 0:
+                total_removed += removed
+                self._dirty_keys.add(shard_key)
+
+        return total_removed
 
     # Search
 
@@ -952,6 +987,7 @@ class ShardManager:
 
         self.shards.clear()
         self._all_keys = list(shard_keys)
+        self._doc_counts.clear()
         self._shard_mem.clear()
         self._loaded_mem = 0
         self._lru.clear()
@@ -963,7 +999,19 @@ class ShardManager:
             if hasattr(self._storage, "get_total_docs"):
                 for key in shard_keys:
                     shard_name = f"{base_name}__shard__{key}"
-                    self._doc_counts[key] = self._storage.get_total_docs(shard_name)
+                    cnt = int(self._storage.get_total_docs(shard_name) or 0)
+                    # Some optimized saves may copy .lcs for unchanged shards
+                    # without rewriting SQL metadata. Fallback to .lcs header.
+                    if cnt <= 0:
+                        lcs = self._lcs_path(key)
+                        if lcs and lcs_exists(lcs):
+                            try:
+                                h = open_lcs(lcs)
+                                cnt = int(getattr(h, "total_docs", 0) or 0)
+                                h.close()
+                            except Exception:
+                                cnt = 0
+                    self._doc_counts[key] = cnt
 
             # Load newest-first until the budget is exhausted.
             recent_keys = sorted(shard_keys, reverse=True)

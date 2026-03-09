@@ -136,7 +136,14 @@ class CoreEngine(BaseEngine):
         internal_results = sort_results(scores, limit=top_k)
         
         # 5. Map internal indices back to original document IDs
-        return [(self.id_map[doc_id], score) for doc_id, score in internal_results]
+        # (skip tombstoned entries if present).
+        mapped: List[Tuple[DocId, float]] = []
+        for doc_id, score in internal_results:
+            ext_id = self.id_map.get(doc_id)
+            if ext_id is None:
+                continue
+            mapped.append((ext_id, score))
+        return mapped
 
     def _build_query_vector(self, query_tokens: List[str]) -> Dict[str, float]:
         """Creates a TF-IDF sparse vector for the query."""

@@ -147,8 +147,15 @@ class LiteEngine(BaseEngine):
         # 3. Sort and limit
         internal_results = sort_results(scores, limit=top_k)
 
-        # 4. Map internal indices back to original document IDs
-        return [(self.id_map[doc_id], score) for doc_id, score in internal_results]
+        # 4. Map internal indices back to original document IDs.
+        # Deleted docs are tombstoned as None and must be skipped.
+        mapped: List[Tuple[DocId, float]] = []
+        for doc_id, score in internal_results:
+            ext_id = self.id_map.get(doc_id)
+            if ext_id is None:
+                continue
+            mapped.append((ext_id, score))
+        return mapped
 
     def persist(self, name: str) -> None:
         """
@@ -329,6 +336,57 @@ class LiteEngine(BaseEngine):
             self.doc_lengths[doc_id] = length
 
         self.total_docs += len(new_texts)
+
+    def remove_documents(self, doc_ids: List[Any]) -> int:
+        """Remove documents by original IDs (tombstone + postings purge).
+
+        This operation is designed for occasional maintenance deletes.
+        It avoids reindexing the full shard while keeping compatibility
+        with mmap persistence.
+
+        Args:
+            doc_ids: Original document IDs to remove.
+
+        Returns:
+            Number of documents removed.
+        """
+        if not doc_ids or not self.index:
+            return 0
+
+        # Promote mmap-backed structures to mutable dicts if needed.
+        self._ensure_mutable()
+
+        target = {str(v) for v in doc_ids}
+        remove_internal = {
+            int(i)
+            for i, ext in self.id_map.items()
+            if ext is not None and str(ext) in target
+        }
+        if not remove_internal:
+            return 0
+
+        # Remove doc IDs from every token postings list.
+        for token in list(self.index.keys()):
+            postings = self.index[token]
+            if isinstance(postings, CompactPostings):
+                p_dict = postings.to_dict()
+            else:
+                p_dict = dict(postings)
+
+            for rid in remove_internal:
+                p_dict.pop(rid, None)
+
+            if p_dict:
+                self.index[token] = CompactPostings.from_dict(p_dict)
+            else:
+                del self.index[token]
+
+        # Tombstone metadata entries (keep internal ID space stable).
+        for rid in remove_internal:
+            self.doc_lengths[rid] = 0
+            self.id_map[rid] = None
+
+        return len(remove_internal)
 
     # ── Binary / mmap interface ─────────────────────────────────────
 

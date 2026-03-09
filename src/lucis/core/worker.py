@@ -303,23 +303,99 @@ class IndexWorker:
         """
         start = time.perf_counter()
 
+        def _indexed_count() -> int:
+            sm = getattr(self._lucis, "_shard_manager", None)
+            if sm is not None:
+                return sm.total_docs
+            return self._lucis.engine.total_docs if getattr(self._lucis, "_is_indexed", False) else 0
+
+        def _fallback_full_rebuild() -> None:
+            # Streaming-aware full rebuild fallback.
+            if self._streaming_fn is not None and hasattr(self._lucis, "reindex_streaming"):
+                self._lucis.reindex_streaming(self._streaming_fn())
+                return
+
+            result_full = self._data_fn()
+            if isinstance(result_full, tuple) and len(result_full) == 2:
+                data_full, dates_full = result_full
+                self._lucis.reindex(data_full, dates=dates_full)
+            else:
+                self._lucis.reindex(result_full)
+
         if self._incremental and self._delta_fn is not None:
             # Incremental mode: fetch only new documents and add them
             result = self._delta_fn()
+
+            detector = self._change_detector
+            prev_count = getattr(detector, "_last_count", None)
+            pending_count = getattr(detector, "_pending_count", None)
 
             # Detect sharded mode: delta_fn returns (data, dates)
             if isinstance(result, tuple) and len(result) == 2:
                 delta, dates = result
                 if not delta:
-                    logger.debug("Incremental update: no new documents — skipping")
-                    return
-                self._lucis.add_documents(delta, dates=dates)
+                    # If source count decreased, incremental append-only cannot reconcile deletions.
+                    if (
+                        prev_count is not None
+                        and pending_count is not None
+                        and pending_count < prev_count
+                    ):
+                        logger.info(
+                            "Detected deletions (count %s -> %s). Falling back to full rebuild.",
+                            prev_count,
+                            pending_count,
+                        )
+                        _fallback_full_rebuild()
+                    else:
+                        logger.debug("Incremental update: no new documents — skipping")
+                        return
+                else:
+                    # Mixed insert/delete detection via count accounting:
+                    # current = prev + inserted - deleted  => deleted = prev + inserted - current
+                    if prev_count is not None and pending_count is not None:
+                        deleted = max(0, int(prev_count) + len(delta) - int(pending_count))
+                        if deleted > 0:
+                            logger.info(
+                                "Detected mixed changes (%d inserts, ~%d deletes). Falling back to full rebuild.",
+                                len(delta),
+                                deleted,
+                            )
+                            _fallback_full_rebuild()
+                        else:
+                            self._lucis.add_documents(delta, dates=dates)
+                    else:
+                        self._lucis.add_documents(delta, dates=dates)
             else:
                 delta = result
                 if not delta:
-                    logger.debug("Incremental update: no new documents — skipping")
-                    return
-                self._lucis.add_documents(delta)
+                    if (
+                        prev_count is not None
+                        and pending_count is not None
+                        and pending_count < prev_count
+                    ):
+                        logger.info(
+                            "Detected deletions (count %s -> %s). Falling back to full rebuild.",
+                            prev_count,
+                            pending_count,
+                        )
+                        _fallback_full_rebuild()
+                    else:
+                        logger.debug("Incremental update: no new documents — skipping")
+                        return
+                else:
+                    if prev_count is not None and pending_count is not None:
+                        deleted = max(0, int(prev_count) + len(delta) - int(pending_count))
+                        if deleted > 0:
+                            logger.info(
+                                "Detected mixed changes (%d inserts, ~%d deletes). Falling back to full rebuild.",
+                                len(delta),
+                                deleted,
+                            )
+                            _fallback_full_rebuild()
+                        else:
+                            self._lucis.add_documents(delta)
+                    else:
+                        self._lucis.add_documents(delta)
         else:
             # Full rebuild mode (default)
             # ── Streaming path: server-side cursor, no fetchall ──
