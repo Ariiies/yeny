@@ -1,36 +1,47 @@
-from collections import defaultdict
+from collections import defaultdict, Counter
+import array
 from ..decorators import corpus_input, doc_input
 from ..nlp import word_tokenizer, simple_tokenizer
 from typing import List, Dict, Set
+from ..compact import CompactPostings
+
 
 # Build index function, pure Python implementation
 @corpus_input(word_tokenizer)
 def build_index(
      tokenized_corpus: List[List[str]],
-     as_pure_dict: bool = False # Convert to normal dicts if True, it happens in the decorator
-     ) -> dict[str, dict[int, int]]:
+     ) -> Dict[str, CompactPostings]:
         """
-        Builds index (inverted ways) in a single pass O(n).
-        
-        Example:
+        Builds a compact inverted index in a single pass O(n).
+
+        Returns ``Dict[str, CompactPostings]`` — memory-efficient posting
+        lists backed by ``array.array``.  For a human-readable view use
+        ``postings.to_dict()`` on any entry::
+
+            idx = build_index(corpus)
+            print(idx["hello"].to_dict())   # {0: 2}
+
+        Example (logical representation)::
+
             corpus = [["hello", "world", "hello"], ["python", "world"]]
-            result = {
-                "hello": {0: 2},      # "hello" appears 2 times in doc 0
-                "world": {0: 1, 1: 1}, # "world" appears 1 time in doc 0 and 1
-                "python": {1: 1}      # "python" appears 1 time in doc 1
-            }
+             result (compact, equivalent to):
+               "hello"  => {0: 2}
+               "world"  => {0: 1, 1: 1}
+               "python" => {1: 1}
         """
-        # Using defaultdict for automatic initialization is the most efficient way in pure Python.
-        # When index recives an word not seen before, it creates a new defaultdict for it, if exists, it uses the existing one and increments the count.
-        # The lambda function acts as a 'factory' to create these nested dictionaries, where 'i' (document index) becomes the key for frequency counting.
-        index: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
-        
-        for i, docs in enumerate(tokenized_corpus):
-            for word in docs:
-                index[word][i] += 1
-        # reminder: accessing to a word with .get(word, {}) will return an empty dict if word not in index
-        # this void dirting the rest of dict creating unnecessary empty keys --  to see a normal dict use = {k : dict(v) for k, v in index.items()}
-        return index
+        doc_buffers: dict[str, array.array] = defaultdict(lambda: array.array("I"))
+        freq_buffers: dict[str, array.array] = defaultdict(lambda: array.array("I"))
+
+        for doc_id, tokens in enumerate(tokenized_corpus):
+            counts = Counter(tokens)
+            for word, freq in counts.items():
+                doc_buffers[word].append(doc_id)
+                freq_buffers[word].append(freq)
+
+        return {
+            word: CompactPostings(doc_buffers[word], freq_buffers[word])
+            for word in doc_buffers
+        }
 
 
 @doc_input(word_tokenizer)

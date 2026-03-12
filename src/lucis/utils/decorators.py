@@ -25,17 +25,7 @@ def corpus_input(tokenizer_func: Callable[[str], List[str]]):
                 corpus = [tokenizer_func(doc) for doc in corpus]
 
             # Call the wrapped function with processed corpus
-            index = func(corpus, *args, **kwargs)
-            
-            # Check if user wants a "readable" dict (useful for debugging/serialization)
-            as_pure_dict = kwargs.get('as_pure_dict', False)
-            
-            if as_pure_dict and func.__name__ == "build_index":
-                # Convert nested defaultdict to normal dicts - only needed for vanilla version
-                # build_index_plus already returns pure dicts, so we skip this step for it
-                return {k: dict(v) for k, v in index.items()}
-            
-            return index
+            return func(corpus, *args, **kwargs)
         return wrapper
     return decorator
 

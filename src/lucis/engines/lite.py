@@ -77,24 +77,19 @@ class LiteEngine(BaseEngine):
             return
 
         # 1. Preprocess with the configured preprocessor.
-        #    Uses ProcessPoolExecutor when corpus ≥ 500 docs and the
-        #    preprocessor is picklable; falls back to sequential otherwise.
         tokenized = parallel_preprocess(
             texts, self.preprocessor, simple_tokenizer,
         )
 
-        # 2. Build inverted index with utils function (fast defaultdict pass)
-        raw_index = build_idx_func(tokenized)
+        # 2. Build compact inverted index directly
+        self.index = build_idx_func(tokenized)
 
-        # 3. Calculate document lengths (still using raw dicts)
-        raw_doc_lengths = get_doc_len(raw_index, self.total_docs)
+        # 3. Calculate document lengths
+        raw_doc_lengths = get_doc_len(self.index, self.total_docs)
 
-        # 4. Freeze to compact structures (RAM optimization)
-        self.index = freeze_index(raw_index)
+        # 4. Freeze doc_lengths to compact structure
         self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
-
-        # Let the raw dicts be garbage-collected immediately
-        del raw_index, raw_doc_lengths
+        del tokenized, raw_doc_lengths
 
     def search(self, query: Union[str, List[str]], top_k: int = 10) -> List[Tuple[DocId, float]]:
         """

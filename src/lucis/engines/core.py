@@ -56,29 +56,25 @@ class CoreEngine(BaseEngine):
             return
 
         # 1. Preprocess with the configured preprocessor.
-        #    Uses ProcessPoolExecutor when corpus ≥ 500 docs and the
-        #    preprocessor is picklable; falls back to sequential otherwise.
         tokenized = parallel_preprocess(
             texts, self.preprocessor, simple_tokenizer,
         )
 
-        # 2. Build the inverted index (Core)
-        raw_index = build_idx_func(tokenized)
-        
-        # 3. Calculate document lengths for TF normalization
-        raw_doc_lengths = get_doc_len(raw_index, self.total_docs)
+        # 2. Build compact inverted index directly
+        self.index = build_idx_func(tokenized)
 
-        # 4. Pre-calculate TF-IDF vectors (uses raw dicts for speed)
-        #    Must happen BEFORE freezing because compute_tfidf
-        #    iterates the full index.
-        self.index = raw_index
+        # 3. Calculate document lengths for TF normalization
+        raw_doc_lengths = get_doc_len(self.index, self.total_docs)
         self.doc_lengths = raw_doc_lengths
+
+        # 4. Pre-calculate TF-IDF vectors
+        #    CompactPostings supports .get(), __contains__, .items()
+        #    so compute_tfidf works directly on compact postings.
         self._precompute_all_vectors()
 
-        # 5. Freeze to compact structures (RAM optimization)
-        self.index = freeze_index(raw_index)
+        # 5. Freeze doc_lengths to compact structure
         self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
-        del raw_index, raw_doc_lengths
+        del raw_doc_lengths
 
     def _precompute_all_vectors(self) -> None:
         """Helper to pre-calculate TF-IDF vectors for the entire corpus."""
