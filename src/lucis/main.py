@@ -8,6 +8,7 @@ from .engines.base import DocId
 from .storage.base import BaseStorage
 from .storage.json_storage import JSONStorage
 from .storage.sqlite_storage import SQLiteStorage
+from .storage.metadata_storage import MetadataStorage
 from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
 from .utils.nlp import word_tokenizer, simple_tokenizer
@@ -22,6 +23,7 @@ from .core.shard import (
 
 # Lazy import flag — AlchemyStorage requires sqlalchemy (optional dep)
 _AlchemyStorage = None
+_AlchemyReader = None
 
 def _get_alchemy_storage_class():
     """Lazy-load ``AlchemyStorage`` to avoid a hard dependency on SQLAlchemy.
@@ -35,6 +37,14 @@ def _get_alchemy_storage_class():
         from .storage.alchemy_storage import AlchemyStorage
         _AlchemyStorage = AlchemyStorage
     return _AlchemyStorage
+
+def _get_alchemy_reader_class():
+    """Lazy-load ``AlchemyReader`` to avoid a hard dependency on SQLAlchemy."""
+    global _AlchemyReader
+    if _AlchemyReader is None:
+        from .storage.alchemy_reader import AlchemyReader
+        _AlchemyReader = AlchemyReader
+    return _AlchemyReader
 
 # Engine registry - maps friendly names to engine classes
 # As new engines are added, register them here
@@ -152,6 +162,8 @@ class Lucis:
         self._shard_manager: Optional[ShardManager] = None
         self._max_loaded_shards: int = max_loaded_shards
         self._memory_limit_mb: Optional[int] = memory_limit_mb
+        # Reader for source data (production DB). Set by from_alchemy_table().
+        self._reader: Optional[Any] = None
         # If user provides a preprocessor, use it globally.
         # If None, the engine will use its own default:
         #   CoreEngine → word_tokenizer
@@ -192,6 +204,17 @@ class Lucis:
         else:
             # Default: lightweight JSON files
             self.storage = JSONStorage(directory=storage_dir)
+
+        # 1b. Auto-discover MetadataStorage
+        # When no explicit storage was provided and binary_dir points to a
+        # directory that already contains lucis_meta.db (written by
+        # from_alchemy_table / from_alchemy_query), transparently switch
+        # to MetadataStorage so the user can reload with just:
+        #     Lucis(name="my_idx", engine="lite", binary_dir="auto")
+        if storage is None and self._binary_dir:
+            _meta_candidate = os.path.join(self._binary_dir, "lucis_meta.db")
+            if os.path.isfile(_meta_candidate):
+                self.storage = MetadataStorage(db_path=_meta_candidate)
 
         # 2. Configure engine
         # The registry pattern lets us add engines without touching Lucis's code
@@ -707,18 +730,32 @@ class Lucis:
             )
             results = luc.search("python tutorial")
         """
-        AlchemyStorage = _get_alchemy_storage_class()
-        storage = AlchemyStorage(url=url)
+        AlchemyReader = _get_alchemy_reader_class()
+        reader = AlchemyReader(url=url)
 
         # Resolve date column
         resolved_date_col = date_column
         if date_column == "auto":
-            resolved_date_col = storage.detect_date_column(table_name, schema)
+            resolved_date_col = reader.detect_date_column(table_name, schema)
+
+        # Resolve binary_dir to place MetadataStorage DB alongside .lcs files
+        binary_dir_val = kwargs.get("binary_dir", "auto")
+        storage_dir_val = kwargs.get("storage_dir", "lucis_data")
+        if binary_dir_val == "auto":
+            meta_dir = os.path.join(storage_dir_val, "lcs")
+        elif binary_dir_val:
+            meta_dir = binary_dir_val
+        else:
+            meta_dir = storage_dir_val
+        os.makedirs(meta_dir, exist_ok=True)
+        meta_db_path = os.path.join(meta_dir, "lucis_meta.db")
+        storage = MetadataStorage(db_path=meta_db_path)
 
         kwargs.setdefault("storage_type", "alchemy")
         kwargs.setdefault("alchemy_url", url)
-        # Pass the already-built storage so we don't create a second engine
+        # Pass the MetadataStorage so we don't create AlchemyStorage
         instance = cls(name=name, autoload=False, storage=storage, **kwargs)
+        instance._reader = reader
         instance._source_info = {
             "type": "table",
             "table_name": table_name,
@@ -739,8 +776,8 @@ class Lucis:
             if instance._shard_manager._is_managed:
                 persist_name = instance.storage._generate_versioned_name(name)
 
-            if hasattr(storage, "stream_table_with_dates"):
-                row_iter = storage.stream_table_with_dates(
+            if hasattr(reader, "stream_table_with_dates"):
+                row_iter = reader.stream_table_with_dates(
                     table_name, text_column, id_column,
                     resolved_date_col, where_clause, schema,
                 )
@@ -751,8 +788,8 @@ class Lucis:
                     stream_ordered=stream_ordered,
                 )
             else:
-                # Fallback for non-Alchemy storage
-                data, dates = storage.read_table_with_dates(
+                # Fallback for non-streaming reader
+                data, dates = reader.read_table_with_dates(
                     table_name, text_column, id_column,
                     resolved_date_col, where_clause, schema,
                 )
@@ -802,7 +839,7 @@ class Lucis:
                 instance.save()
         else:
             # Non-sharded mode: current behavior
-            data = storage.read_table(
+            data = reader.read_table(
                 table_name=table_name,
                 text_column=text_column,
                 id_column=id_column,
@@ -845,14 +882,28 @@ class Lucis:
                 name="published_posts",
             )
         """
-        AlchemyStorage = _get_alchemy_storage_class()
-        storage = AlchemyStorage(url=url)
+        AlchemyReader = _get_alchemy_reader_class()
+        reader = AlchemyReader(url=url)
 
-        data = storage.read_query(query)
+        data = reader.read_query(query)
+
+        # Resolve binary_dir for MetadataStorage
+        storage_dir_val = kwargs.get("storage_dir", "lucis_data")
+        binary_dir_val = kwargs.get("binary_dir", "auto")
+        if binary_dir_val == "auto":
+            meta_dir = os.path.join(storage_dir_val, "lcs")
+        elif binary_dir_val:
+            meta_dir = binary_dir_val
+        else:
+            meta_dir = storage_dir_val
+        os.makedirs(meta_dir, exist_ok=True)
+        meta_db_path = os.path.join(meta_dir, "lucis_meta.db")
+        storage = MetadataStorage(db_path=meta_db_path)
 
         kwargs.setdefault("storage_type", "alchemy")
         kwargs.setdefault("alchemy_url", url)
         instance = cls(name=name, autoload=False, storage=storage, **kwargs)
+        instance._reader = reader
         instance._source_info = {
             "type": "query",
             "table_name": None,
@@ -1036,6 +1087,16 @@ class Lucis:
             # Single-engine save
             self.engine.persist(physical_name)
 
+            # When using MetadataStorage, persist() only saves metadata.
+            # We must also write the .lcs binary so data is recoverable.
+            if isinstance(self.storage, MetadataStorage) and self._binary_dir:
+                save_fn = getattr(self.engine, "save_binary", None)
+                if save_fn is not None:
+                    import os as _os
+                    _os.makedirs(self._binary_dir, exist_ok=True)
+                    lcs_path = _os.path.join(self._binary_dir, f"{physical_name}.lcs")
+                    save_fn(lcs_path)
+
         # Point the logical alias to the new physical index
         self.storage.set_alias(save_name, physical_name)
 
@@ -1067,8 +1128,18 @@ class Lucis:
             self._shard_manager.load_all(physical_name, shard_keys, lazy=lazy)
             self._is_indexed = True
         else:
-            # Single-engine load 
-            self.engine.load_engine(physical_name)
+            # Single-engine load
+            # When using MetadataStorage, prefer .lcs binary (has full data).
+            # MetadataStorage.load() only returns metadata — no index data.
+            lcs_loaded = False
+            if isinstance(self.storage, MetadataStorage) and self._binary_dir:
+                from .utils.mmap_storage import lcs_exists as _lcs_exists
+                lcs_path = os.path.join(self._binary_dir, f"{physical_name}.lcs")
+                if _lcs_exists(lcs_path) and hasattr(self.engine, "load_mmap"):
+                    self.engine.load_mmap(lcs_path)
+                    lcs_loaded = True
+            if not lcs_loaded:
+                self.engine.load_engine(physical_name)
             self._is_indexed = True
 
         # Restore source info (if available) so create_worker() works
@@ -1562,6 +1633,10 @@ class Lucis:
         callable produces ``(data, dates)`` tuples.  For non-sharded
         indices, it returns ``Dict`` or ``List`` as before.
 
+        Uses ``self._reader`` for Alchemy sources (read-only access to
+        the production DB) and falls back to ``self.storage`` for other
+        backends.
+
         Returns:
             A no-argument callable that fetches the full corpus from
             the configured data source.
@@ -1571,6 +1646,7 @@ class Lucis:
                 unknown ``type`` field.
         """
         info = self._source_info
+        reader = self._reader
         storage = self.storage
         date_col = info.get("date_column")
 
@@ -1581,20 +1657,34 @@ class Lucis:
             where = info.get("where_clause")
 
             # Sharded: return (data, dates)
-            if date_col and hasattr(storage, "read_table_with_dates"):
-                def fetch_with_dates():
-                    return storage.read_table_with_dates(
-                        table_name, text_col, id_col, date_col, where,
-                    )
-                return fetch_with_dates
+            if date_col:
+                if reader and hasattr(reader, "read_table_with_dates"):
+                    def fetch_with_dates():
+                        return reader.read_table_with_dates(
+                            table_name, text_col, id_col, date_col, where,
+                        )
+                    return fetch_with_dates
+                elif hasattr(storage, "read_table_with_dates"):
+                    def fetch_with_dates_storage():
+                        return storage.read_table_with_dates(
+                            table_name, text_col, id_col, date_col, where,
+                        )
+                    return fetch_with_dates_storage
 
-            # Non-sharded: Alchemy
-            if hasattr(storage, "read_table"):
+            # Non-sharded: Alchemy reader or storage
+            if reader and hasattr(reader, "read_table"):
                 def fetch():
-                    return storage.read_table(
+                    return reader.read_table(
                         table_name, text_col, id_col, where
                     )
                 return fetch
+
+            if hasattr(storage, "read_table"):
+                def fetch_storage():
+                    return storage.read_table(
+                        table_name, text_col, id_col, where
+                    )
+                return fetch_storage
 
             # Non-sharded: SQLite
             text_expr = _build_sql_text_expr(text_col)
@@ -1618,10 +1708,14 @@ class Lucis:
         elif info["type"] == "query":
             query_str = info["query"]
 
-            if hasattr(storage, "read_query"):
+            if reader and hasattr(reader, "read_query"):
                 def fetch_q():
-                    return storage.read_query(query_str)
+                    return reader.read_query(query_str)
                 return fetch_q
+            elif hasattr(storage, "read_query"):
+                def fetch_q_storage():
+                    return storage.read_query(query_str)
+                return fetch_q_storage
             else:
                 db_path = getattr(storage, "db_path", None)
                 def fetch_q_sqlite():
@@ -1649,9 +1743,8 @@ class Lucis:
     def _auto_streaming_fn(self) -> Optional[Callable]:
         """Return a no-arg callable that produces a streaming row iterator.
 
-        Available when: source is a ``"table"``, the storage is
-        :class:`~lucis.storage.AlchemyStorage` (has
-        ``stream_table_with_dates``), **and** a ``date_column`` is
+        Available when: source is a ``"table"``, a ``_reader`` (or storage)
+        has ``stream_table_with_dates``, **and** a ``date_column`` is
         configured (sharded mode).
 
         Returns ``None`` when any of these conditions is not met —
@@ -1669,9 +1762,11 @@ class Lucis:
             return None
         if not info.get("date_column"):
             return None  # Streaming rebuild only meaningful for sharded mode
-        storage = self.storage
-        if not hasattr(storage, "stream_table_with_dates"):
-            return None  # Non-Alchemy storage — no streaming support
+
+        # Prefer the reader (Alchemy read-only); fall back to storage
+        source = self._reader if self._reader else self.storage
+        if not hasattr(source, "stream_table_with_dates"):
+            return None
 
         table_name = info["table_name"]
         text_col = info["text_column"]
@@ -1681,7 +1776,7 @@ class Lucis:
         schema = info.get("schema")
 
         def streaming_fn():
-            return storage.stream_table_with_dates(
+            return source.stream_table_with_dates(
                 table_name, text_col, id_col, date_col, where, schema,
             )
         return streaming_fn
@@ -1724,6 +1819,8 @@ class Lucis:
 
         When a ``date_column`` is present, the returned callable
         produces ``(data, dates)`` tuples for shard routing.
+
+        Uses ``self._reader`` for Alchemy sources, falls back to storage.
         """
         id_col = info["id_column"]
         table_name = info["table_name"]
@@ -1731,13 +1828,15 @@ class Lucis:
         date_col = info.get("date_column")
         where = info.get("where_clause")
 
+        # Prefer reader for source DB access
+        source = self._reader if self._reader else storage
         last_max = [0]
 
-        if hasattr(storage, "_engine"):
-            # AlchemyStorage
+        if hasattr(source, "_engine"):
+            # AlchemyReader / AlchemyStorage
             from sqlalchemy import text as _sa_text
 
-            with storage._engine.connect() as conn:
+            with source._engine.connect() as conn:
                 result = conn.execute(
                     _sa_text(f"SELECT MAX({id_col}) FROM {table_name}")
                 ).scalar()
@@ -1745,7 +1844,7 @@ class Lucis:
                     last_max[0] = result
 
             # Build text expression for multi-column support
-            text_expr = storage._sql_concat_columns(text_col)
+            text_expr = source._sql_concat_columns(text_col)
 
             def _make_delta_commit(fn):
                 """Attach deferred commit to a delta function."""
@@ -1769,7 +1868,7 @@ class Lucis:
                     if where:
                         sql += f" AND ({where})"
                     sql += f" ORDER BY {id_col}"
-                    with storage._engine.connect() as conn:
+                    with source._engine.connect() as conn:
                         rows = conn.execute(
                             _sa_t(sql), {"last_id": last_max[0]}
                         ).fetchall()
@@ -1787,7 +1886,7 @@ class Lucis:
                     if where:
                         sql += f" AND ({where})"
                     sql += f" ORDER BY {id_col}"
-                    with storage._engine.connect() as conn:
+                    with source._engine.connect() as conn:
                         rows = conn.execute(
                             _sa_t(sql), {"last_id": last_max[0]}
                         ).fetchall()
@@ -1916,12 +2015,15 @@ class Lucis:
         Works for both ``"table"`` sources (uses ``count_rows``) and
         ``"query"`` sources (wraps the original query in
         ``SELECT COUNT(*) FROM (…)``).
+
+        Uses ``self._reader`` for Alchemy sources, falls back to storage.
         """
         info = self._source_info
         if info is None:
             return None
 
-        storage = self.storage
+        # Prefer reader for source DB access
+        source = self._reader if self._reader else self.storage
         if self._shard_manager is not None:
             last_count = [self._shard_manager.total_docs]
         else:
@@ -1966,12 +2068,12 @@ class Lucis:
                 last_max = [0]
 
                 def _fetch_count_max_table():
-                    if hasattr(storage, "_engine"):
+                    if hasattr(source, "_engine"):
                         from sqlalchemy import text as _sa_text
                         sql = f"SELECT COUNT(*), MAX({id_col}) FROM {table_name}"
                         if where:
                             sql += f" WHERE ({where})"
-                        with storage._engine.connect() as conn:
+                        with source._engine.connect() as conn:
                             row = conn.execute(
                                 _sa_text(sql)
                             ).fetchone()
@@ -1979,7 +2081,7 @@ class Lucis:
                         mx = int(row[1] or 0)
                         return cnt, mx
                     import sqlite3
-                    db_path = getattr(storage, "db_path", None)
+                    db_path = getattr(source, "db_path", None)
                     sql = f"SELECT COUNT(*), MAX({id_col}) FROM {table_name}"
                     if where:
                         sql += f" WHERE ({where})"
@@ -2031,16 +2133,16 @@ class Lucis:
                 detector_table_count_max.commit = commit_table_count_max
                 return detector_table_count_max
 
-            return _make_detector(lambda: storage.count_rows(table_name))
+            return _make_detector(lambda: source.count_rows(table_name))
 
         elif info["type"] == "query":
             query_str = info["query"]
 
-            if hasattr(storage, "_engine"):
+            if hasattr(source, "_engine"):
                 from sqlalchemy import text as _sa_text
 
                 def _fetch_alchemy():
-                    with storage._engine.connect() as conn:
+                    with source._engine.connect() as conn:
                         return conn.execute(
                             _sa_text(
                                 f"SELECT COUNT(*) FROM ({query_str}) AS _lucis_subq"
@@ -2050,7 +2152,7 @@ class Lucis:
                 return _make_detector(_fetch_alchemy)
 
             else:
-                db_path = getattr(storage, "db_path", None)
+                db_path = getattr(source, "db_path", None)
 
                 def _fetch_sqlite():
                     import sqlite3
@@ -2078,6 +2180,7 @@ class Lucis:
         on_error: Optional[Callable[[Exception], None]] = None,
         on_cycle: Optional[Callable[[int, bool], None]] = None,
         streaming: bool = True,
+        source_url: Optional[str] = None,
     ) -> "IndexWorker":
         """
         Create an ``IndexWorker`` bound to this Lucis instance.
@@ -2125,6 +2228,10 @@ class Lucis:
                 at ≈ steady-state index RAM rather than doubling it during each
                 rebuild cycle.  Set to ``False`` to force the classic
                 ``fetchall`` path.
+            source_url: SQLAlchemy connection URL for the source database.
+                When provided, calls :meth:`connect_source` internally so the
+                worker can auto-generate ``data_fn`` / ``delta_fn`` from the
+                source.  This avoids a separate ``connect_source()`` call.
 
         Returns:
             An ``IndexWorker`` instance (not yet started).
@@ -2138,6 +2245,12 @@ class Lucis:
                                            name="articles_idx",
                                            engine="lite")
             worker = luc.create_worker(interval=60)
+            worker.start()
+
+        Example — reload with source_url (auto-discovery)::
+
+            luc = Lucis(name="articles_idx", engine="lite", binary_dir="auto")
+            worker = luc.create_worker(interval=60, source_url=URL)
             worker.start()
 
         Example — explicit incremental with custom delta_fn::
@@ -2154,6 +2267,10 @@ class Lucis:
             worker = luc.create_worker(data_fn=my_fetch, interval=30)
             worker.start()
         """
+        # Connect to source DB if URL provided
+        if source_url is not None:
+            self.connect_source(source_url)
+
         # Auto-detect incremental mode
         # LiteEngine → always incremental (uses add_documents)
         # CoreEngine  → always full rebuild (uses reindex)
@@ -2291,8 +2408,33 @@ class Lucis:
     #  Lifecycle                                                          #
     # ------------------------------------------------------------------ #
 
+    def connect_source(self, url: str) -> None:
+        """Attach an :class:`AlchemyReader` so the worker can sync with
+        the production database.
+
+        This is the **only** step needed after a simple autoload reload::
+
+            luc = Lucis(name="my_idx", engine="lite", binary_dir="auto")
+            luc.connect_source(url="mysql+pymysql://user:pass@host/db")
+            worker = luc.create_worker(interval=60)
+
+        The URL is intentionally **not** persisted (security) — so the
+        caller must supply it each time the worker is needed.
+
+        Args:
+            url: SQLAlchemy connection URL for the source database.
+        """
+        AlchemyReader = _get_alchemy_reader_class()
+        if self._reader is not None:
+            close_fn = getattr(self._reader, "close", None)
+            if close_fn is not None:
+                close_fn()
+        self._reader = AlchemyReader(url=url)
+
     def close(self) -> None:
         """Release all mmap handles held by loaded shard engines.
+
+        Also closes the AlchemyReader if one is attached.
 
         Call this before deleting ``.lcs`` files on Windows, or when
         the ``Lucis`` instance is no longer needed and you want to
@@ -2304,6 +2446,11 @@ class Lucis:
             close_fn = getattr(self.engine, "close_mmap", None)
             if close_fn is not None:
                 close_fn()
+        if self._reader is not None:
+            close_fn = getattr(self._reader, "close", None)
+            if close_fn is not None:
+                close_fn()
+            self._reader = None
 
     def generate_lcs(self) -> int:
         """Write ``.lcs`` binary cache files for all currently-loaded shards.

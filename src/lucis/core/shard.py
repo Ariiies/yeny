@@ -909,9 +909,12 @@ class ShardManager:
                     os.makedirs(os.path.dirname(new_lcs), exist_ok=True)
                     shutil.copy2(old_lcs, new_lcs)
                 else:
-                    # No old .lcs available — full persist as fallback
+                    # No old .lcs available — full persist + always write binary
                     engine.persist(shard_name)
                     self._save_shard_binary(shard_name, engine)
+                    # If binary still missing, write from live engine
+                    if new_lcs and not lcs_exists(new_lcs or ''):
+                        self._save_shard_binary(shard_name, engine)
 
             shard_keys.append(shard_key)
 

@@ -17,6 +17,7 @@ from .models.search import SearchResult, SearchResponse
 
 # Storage backends
 from .storage.sqlite_storage import SQLiteStorage
+from .storage.metadata_storage import MetadataStorage
 
 # Worker (Phase 4 — Shadow Indexing)
 from .core.worker import IndexWorker
@@ -30,11 +31,14 @@ from .core.shard import LUCIS_GLOBAL_SHARD, LUCIS_DEFAULT_DATE_COLUMNS
 # Parallel preprocessing (Phase 9 — Multiprocessing)
 from .utils.parallel import get_cpu_count, get_optimal_workers
 
-# AlchemyStorage is lazy-loaded (requires sqlalchemy)
+# AlchemyStorage and AlchemyReader are lazy-loaded (requires sqlalchemy)
 def __getattr__(name):
     if name == "AlchemyStorage":
         from .storage.alchemy_storage import AlchemyStorage
         return AlchemyStorage
+    if name == "AlchemyReader":
+        from .storage.alchemy_reader import AlchemyReader
+        return AlchemyReader
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # for better engine exportations
@@ -50,7 +54,9 @@ __all__ = [
     
     # Storage
     "SQLiteStorage",
+    "MetadataStorage",
     "AlchemyStorage",
+    "AlchemyReader",
     
     # Exceptions
     "LucisError",
