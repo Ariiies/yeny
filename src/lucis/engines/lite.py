@@ -241,7 +241,7 @@ class LiteEngine(BaseEngine):
         self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
         del raw_index, raw_doc_lengths
 
-    # ── Mmap → mutable promotion ───────────────────────────────────
+    # Mmap => mutable promotion
 
     def _ensure_mutable(self) -> None:
         """Promote mmap-backed read-only structures to mutable containers.
@@ -399,7 +399,7 @@ class LiteEngine(BaseEngine):
 
         return len(remove_internal)
 
-    # ── Binary / mmap interface ─────────────────────────────────────
+    # Binary / mmap interface
 
     def save_binary(self, path: str) -> None:
         """Serialise this engine to a ``.lcs`` (Lucis Compact Shard) file.

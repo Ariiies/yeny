@@ -83,7 +83,7 @@ class AlchemyReader:
 
         self.url = url or str(self._engine.url)
 
-    # ── Text expression helpers ─────────────────────────────────────
+    # Text expression helpers 
 
     def _build_text_expr(self, table: Any, text_column: Union[str, List[str]]) -> Any:
         """Build a SQLAlchemy expression for one or more text columns."""
@@ -121,7 +121,7 @@ class AlchemyReader:
             coalesced = [f"COALESCE({col}, '')" for col in text_column]
             return " || ' ' || ".join(coalesced)
 
-    # ── Date column detection ──────────────────────────────────────
+    # Date column detection
 
     def detect_date_column(
         self,
@@ -141,7 +141,7 @@ class AlchemyReader:
                 return candidate
         return None
 
-    # ── Row readers ────────────────────────────────────────────────
+    # Row readers
 
     def read_table(
         self,
@@ -239,38 +239,119 @@ class AlchemyReader:
         schema: Optional[str] = None,
         batch_size: int = 5_000,
     ):
-        """Stream rows as ``(doc_id, text, date_val)`` using a server-side cursor."""
+        """Stream rows as ``(doc_id, text, date_val)`` via keyset pagination.
+
+        Instead of holding a single server-side cursor open for the
+        entire dataset (which times out on large tables), this method
+        fetches short batches using keyset pagination::
+
+            SELECT ... WHERE id > :last_id ORDER BY id LIMIT :batch_size
+
+        Each batch opens and closes its own connection, making the
+        approach immune to MySQL ``wait_timeout`` / ``net_read_timeout``
+        disconnects regardless of how long the caller takes to process
+        each batch.
+
+        When *id_column* is ``None`` a positional counter is used as
+        ``doc_id`` and a simple ``LIMIT/OFFSET`` fallback is used instead,
+        though this path is slower for very large tables.
+        """
         user_meta = MetaData()
         user_table = Table(
             table_name, user_meta, autoload_with=self._engine, schema=schema
         )
         text_expr = self._build_text_expr(user_table, text_column)
-        cols = []
+
         if id_column:
-            cols.append(user_table.c[id_column])
-        cols.append(text_expr)
+            yield from self._stream_keyset(
+                user_table, text_expr, id_column, date_column,
+                where_clause, batch_size,
+            )
+        else:
+            yield from self._stream_offset(
+                user_table, text_expr, date_column,
+                where_clause, batch_size,
+            )
+
+    # Keyset pagination (preferred)
+
+    def _stream_keyset(self, table, text_expr, id_column, date_column,
+                       where_clause, batch_size):
+        """Paginate using ``WHERE id > :last ORDER BY id``."""
+        id_col = table.c[id_column]
+
+        cols = [id_col, text_expr]
         if date_column:
-            cols.append(user_table.c[date_column])
+            cols.append(table.c[date_column])
 
-        stmt = select(*cols)
+        base_stmt = select(*cols)
         if where_clause:
-            stmt = stmt.where(sa_text(where_clause))
+            base_stmt = base_stmt.where(sa_text(where_clause))
+        base_stmt = base_stmt.order_by(id_col)
 
-        conn_opts = {"stream_results": True, "yield_per": batch_size}
-        with self._engine.connect().execution_options(**conn_opts) as conn:
-            result = conn.execute(stmt)
-            if id_column and date_column:
-                for row in result:
+        last_id: Any = None
+
+        while True:
+            stmt = base_stmt.limit(batch_size)
+            if last_id is not None:
+                stmt = stmt.where(id_col > last_id)
+
+            with self._engine.connect() as conn:
+                rows = conn.execute(stmt).fetchall()
+
+            if not rows:
+                break
+
+            if date_column:
+                for row in rows:
                     yield str(row[0]), row[1], row[2]
-            elif id_column:
-                for row in result:
-                    yield str(row[0]), row[1], None
-            elif date_column:
-                for i, row in enumerate(result):
-                    yield str(i), row[0], row[1]
             else:
-                for i, row in enumerate(result):
-                    yield str(i), row[0], None
+                for row in rows:
+                    yield str(row[0]), row[1], None
+
+            last_id = rows[-1][0]
+
+            if len(rows) < batch_size:
+                break
+
+    # Offset fallback (no id_column)
+
+    def _stream_offset(self, table, text_expr, date_column,
+                       where_clause, batch_size):
+        """Paginate using ``LIMIT/OFFSET`` when no id column is available."""
+        cols = [text_expr]
+        if date_column:
+            cols.append(table.c[date_column])
+
+        base_stmt = select(*cols)
+        if where_clause:
+            base_stmt = base_stmt.where(sa_text(where_clause))
+
+        offset = 0
+        global_idx = 0
+
+        while True:
+            stmt = base_stmt.limit(batch_size).offset(offset)
+
+            with self._engine.connect() as conn:
+                rows = conn.execute(stmt).fetchall()
+
+            if not rows:
+                break
+
+            if date_column:
+                for row in rows:
+                    yield str(global_idx), row[0], row[1]
+                    global_idx += 1
+            else:
+                for row in rows:
+                    yield str(global_idx), row[0], None
+                    global_idx += 1
+
+            offset += batch_size
+
+            if len(rows) < batch_size:
+                break
 
     def read_query(
         self,
@@ -289,7 +370,7 @@ class AlchemyReader:
         else:
             return {str(row[0]): row[1] for row in rows}
 
-    # ── Metadata queries (read-only) ──────────────────────────────
+    # Metadata queries (read-only)
 
     def count_rows(self, table_name: str) -> Optional[int]:
         """Return ``SELECT COUNT(*) FROM <table_name>``."""
@@ -299,7 +380,7 @@ class AlchemyReader:
             )
             return result.scalar()
 
-    # ── Lifecycle ──────────────────────────────────────────────────
+    # Lifecycle management
 
     def close(self) -> None:
         """Dispose of the engine's connection pool (only if we own it)."""

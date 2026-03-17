@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import array
 import json
+import logging
 import mmap
 import os
 import struct
@@ -53,16 +54,17 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 
 from .compact import CompactPostings, CompactDocLengths
 
-# ── Constants ───────────────────────────────────────────────────────
+log = logging.getLogger("lucis.mmap_storage")
+
+#VConstants 
 
 MAGIC = b"LCS\x01"
 _ALIGN = 4096  # payload alignment (OS page size)
 _UINT32 = struct.Struct("<I")
 
 
-# ═══════════════════════════════════════════════════════════════════
 #  Zero-copy mmap-backed data structures
-# ═══════════════════════════════════════════════════════════════════
+
 
 class MmapPostings:
     """Posting list backed by a read-only ``memoryview`` into an mmap.
@@ -89,7 +91,7 @@ class MmapPostings:
         self._frq_view = frq_view
         self._len = len(ids_view)
 
-    # ── Dict-compatible read interface ──────────────────────────────
+    # Dict-compatible read interface
 
     def get(self, doc_id: int, default: int = 0) -> int:
         """O(log n) lookup via binary search on the memoryview."""
@@ -142,7 +144,7 @@ class MmapDocLengths:
     def __init__(self, view: memoryview) -> None:
         self._view = view
 
-    # ── Dict-compatible read interface ──────────────────────────────
+    # Dict-compatible read interface 
 
     def get(self, doc_id: int, default: int = 0) -> int:
         if 0 <= doc_id < len(self._view):
@@ -214,7 +216,7 @@ class LazyIndex:
         self._payload = payload    # shared payload memoryview
         self._n_tokens = len(tokens)
 
-    # ── private helper ──────────────────────────────────────────────
+    # private helper
 
     def _make(self, idx: int) -> MmapPostings:
         """Create a fresh ``MmapPostings`` for vocab index *idx*."""
@@ -224,7 +226,7 @@ class LazyIndex:
         frq_view = self._payload[off + n * 4: off + n * 8].cast("i")
         return MmapPostings(ids_view, frq_view)
 
-    # ── dict interface ──────────────────────────────────────────────
+    # dict interface
 
     def __getitem__(self, token: str) -> MmapPostings:
         return self._make(self._token_idx[token])
@@ -341,10 +343,7 @@ class MmapIdMap:
     def __repr__(self) -> str:
         return f"MmapIdMap(size={self._len}, id_type='{self._id_type}')"
 
-
-# ═══════════════════════════════════════════════════════════════════
 #  LCS file handle (context-manager for mmap lifecycle)
-# ═══════════════════════════════════════════════════════════════════
 
 class LcsHandle:
     """Context-manager that owns the mmap and file descriptor.
@@ -366,9 +365,10 @@ class LcsHandle:
         self.id_map: Dict[int, Any] = {}
         self.index: Dict[str, MmapPostings] = {}
         self.doc_lengths: Optional[MmapDocLengths] = None
+        self.doc_norms: Optional[Dict[int, float]] = None
         self._open()
 
-    # ── Lifecycle ───────────────────────────────────────────────────
+    # Lifecycle management
 
     def _open(self) -> None:
         self._file = open(self.path, "rb")
@@ -391,11 +391,11 @@ class LcsHandle:
         payload_offset = header["payload_offset"]
         self._payload_view = memoryview(self._mm)[payload_offset:]
 
-        # ── Deserialise metadata (kept in Python heap — small) ──
+        # Deserialise metadata (kept in Python heap — small)
         self.total_docs = header["total_docs"]
         self.id_type = header.get("id_type", "none")
 
-        # ── id_map: zero-copy if binary format (v2+), dict fallback (v1) ──
+        # id_map: zero-copy if binary format (v2+), dict fallback (v1)
         version = header.get("version", 1)
         idmap_bin = header.get("id_map_bin")
 
@@ -428,7 +428,7 @@ class LcsHandle:
             raw_id_map = header.get("id_map", {})
             self.id_map = {int(k): v for k, v in raw_id_map.items()}
 
-        # ── doc_lengths: zero-copy view ──
+        #  doc_lengths: zero-copy view 
         dl = header["doc_lengths"]
         dl_start = dl["offset"]
         dl_bytes = dl["count"] * 4
@@ -436,12 +436,58 @@ class LcsHandle:
             self._payload_view[dl_start: dl_start + dl_bytes].cast("I")
         )
 
-        # ── inverted index: LazyIndex (zero per-token heap cost) ──
+        #  inverted index: LazyIndex (zero per-token heap cost) 
         vocab_meta = header["vocab"]
         tokens = sorted(vocab_meta.keys())
         ids_off_arr = array.array("I", (vocab_meta[t]["ids_off"] for t in tokens))
         ids_n_arr = array.array("I", (vocab_meta[t]["ids_n"] for t in tokens))
         self.index = LazyIndex(tokens, ids_off_arr, ids_n_arr, self._payload_view)
+
+        # doc_norms (v3+): compact float64 array or legacy doc_vectors 
+        norms_header = header.get("doc_norms")
+        if norms_header:
+            # New format: flat float64 array
+            n_off = norms_header["offset"]
+            n_count = norms_header["count"]
+            n_bytes = n_count * 8
+            if n_off + n_bytes <= len(self._payload_view):
+                norms_view = self._payload_view[n_off: n_off + n_bytes].cast("d")
+                self.doc_norms = {
+                    i: float(v) for i, v in enumerate(norms_view) if v > 0
+                }
+            else:
+                log.warning(
+                    "doc_norms section out of bounds in %s — will be recomputed.",
+                    self.path,
+                )
+                self.doc_norms = None
+        else:
+            # Backward compat: old v3 with doc_vectors JSON blob
+            dv_header = header.get("doc_vectors")
+            if dv_header:
+                dv_off = dv_header["offset"]
+                dv_len = dv_header["length"]
+                if dv_len > 0 and dv_off + dv_len <= len(self._payload_view):
+                    try:
+                        dv_bytes = bytes(self._payload_view[dv_off: dv_off + dv_len])
+                        raw = json.loads(dv_bytes.decode("utf-8"))
+                        from math import sqrt as _sqrt
+                        self.doc_norms = {
+                            int(k): _sqrt(sum(s * s for s in v.values()))
+                            for k, v in raw.items()
+                        }
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        log.warning(
+                            "Corrupt doc_vectors in %s — norms will be recomputed.",
+                            self.path,
+                        )
+                        self.doc_norms = None
+                else:
+                    log.warning(
+                        "doc_vectors section out of bounds in %s — norms will be recomputed.",
+                        self.path,
+                    )
+                    self.doc_norms = None
 
     def close(self) -> None:
         """Release mmap and file handle.
@@ -510,13 +556,16 @@ class LcsHandle:
         except Exception:
             pass
 
-
-# ═══════════════════════════════════════════════════════════════════
 #  Serialisation (write path)
-# ═══════════════════════════════════════════════════════════════════
 
 def save_lcs(path: str, engine: Any) -> None:
-    """Serialise a *LiteEngine* (or any engine with CompactPostings) to ``.lcs``.
+    """Serialise an engine to ``.lcs``.
+
+    Supports both *LiteEngine* and *CoreEngine*.  When the engine
+    exposes a non-empty ``doc_norms`` attribute the L2 norms are
+    packed as a flat float64 array in the payload (version 3).
+    LiteEngine (which has no ``doc_norms``) produces a version-2
+    file as before.
 
     The engine's compact arrays are written with ``array.tofile()`` for
     maximum throughput.  The JSON header is kept small and contains only
@@ -529,10 +578,10 @@ def save_lcs(path: str, engine: Any) -> None:
             :class:`CompactDocLengths` (or objects with the same
             internal layout: ``._doc_ids``, ``._freqs``, ``._data``).
     """
-    # ── 1. Collect sorted token list (deterministic output) ──
+    # 1. Collect sorted token list (deterministic output) 
     tokens = sorted(engine.index.keys())
 
-    # ── 2. Compute payload layout ──
+    # 2. Compute payload layout 
     offset = 0  # running offset within the payload section
 
     # doc_lengths comes first
@@ -608,26 +657,44 @@ def save_lcs(path: str, engine: Any) -> None:
         posting_arrays.append((ids_arr, frq_arr))
         offset += n * 4 * 2  # ids + freqs
 
-    # ── 3. Build header JSON ──
+    # 2b. doc_norms (CoreEngine only) 
+    # L2 norms of TF-IDF vectors: serialised as a flat float64 array.
+    # Only included when the engine has non-empty doc_norms.
+    raw_doc_norms = getattr(engine, "doc_norms", None)
+    has_norms = bool(raw_doc_norms)
+    norms_meta: Dict[str, Any] = {}
+    norms_arr = None
+    if has_norms:
+        norms_arr = array.array("d", [0.0] * engine.total_docs)
+        for doc_id, norm in raw_doc_norms.items():
+            norms_arr[int(doc_id)] = norm
+        norms_meta = {"offset": offset, "count": engine.total_docs}
+        offset += engine.total_docs * 8
+
+    # 3. Build header JSON 
+    file_version = 3 if has_norms else 2
     header_dict = {
-        "version": 2,
+        "version": file_version,
         "total_docs": engine.total_docs,
         "id_type": id_type,
         "id_map_bin": idmap_meta,
         "doc_lengths": {"offset": dl_offset, "count": dl_count},
         "vocab": vocab,
-        # payload_offset will be filled after we know the header size
         "payload_offset": 0,
     }
-    # Pre-serialize to measure header size, then align
+    if has_norms:
+        header_dict["doc_norms"] = norms_meta
+    # Compute payload_offset safely: use a large placeholder first so
+    # the header is at its maximum possible size.  The real payload_offset
+    # will have equal or fewer digits → the final header always fits.
+    header_dict["payload_offset"] = 99_999_999_999  # 11-digit placeholder
     header_bytes = json.dumps(header_dict, ensure_ascii=False).encode("utf-8")
     raw_header_size = 4 + 4 + len(header_bytes)  # magic + header_len + body
-    # Align payload to page boundary
     payload_offset = ((raw_header_size + _ALIGN - 1) // _ALIGN) * _ALIGN
     header_dict["payload_offset"] = payload_offset
     header_bytes = json.dumps(header_dict, ensure_ascii=False).encode("utf-8")
 
-    # ── 4. Write the file ──
+    # 4. Write the file
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "wb") as f:
         # Magic
@@ -654,6 +721,9 @@ def save_lcs(path: str, engine: Any) -> None:
         for ids_arr, frq_arr in posting_arrays:
             ids_arr.tofile(f)
             frq_arr.tofile(f)
+        # Payload: doc_norms (v3+)
+        if norms_arr is not None:
+            norms_arr.tofile(f)
 
 
 def open_lcs(path: str) -> LcsHandle:

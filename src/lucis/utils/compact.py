@@ -41,11 +41,7 @@ class CompactPostings:
 
     __slots__ = ("_doc_ids", "_freqs", "_len")
 
-    def __init__(
-        self,
-        doc_ids: "array.array[int]",
-        freqs: "array.array[int]",
-    ) -> None:
+    def __init__(self,doc_ids: "array.array[int]", freqs: "array.array[int]") -> None:
         self._doc_ids = doc_ids
         self._freqs = freqs
         self._len = len(doc_ids)

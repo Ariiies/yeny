@@ -827,7 +827,7 @@ class Lucis:
                         instance._shard_manager.loaded_memory_mb,
                     )
 
-                # ── Post-index RAM cleanup ──
+                # Post-index RAM cleanup
                 # After building + persisting, the in-memory engines retain
                 # build-time structures (raw dicts, tokenized lists, etc.)
                 # that are much heavier than a clean load from storage.
@@ -1031,7 +1031,7 @@ class Lucis:
                 total_shards=len(self._shard_manager.shards),
             )
         else:
-            # ── Single-engine search (non-sharded) ──
+            # Single-engine search (non-sharded)
             raw_results = self.engine.search(tokens, top_k=top_k)
             elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -1069,7 +1069,7 @@ class Lucis:
         physical_name = self.storage._generate_versioned_name(save_name)
 
         if self._shard_manager:
-            # ── Sharded save ──
+            # Sharded save
             # 1. Persist each shard engine
             self._shard_manager.persist_all(physical_name)
 
@@ -2404,9 +2404,8 @@ class Lucis:
             ram_warning_mb=ram_warning_mb,
         )
 
-    # ------------------------------------------------------------------ #
-    #  Lifecycle                                                          #
-    # ------------------------------------------------------------------ #
+
+    #  Lifecycle Management                                                    
 
     def connect_source(self, url: str) -> None:
         """Attach an :class:`AlchemyReader` so the worker can sync with

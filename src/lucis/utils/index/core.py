@@ -8,9 +8,7 @@ from ..compact import CompactPostings
 
 # Build index function, pure Python implementation
 @corpus_input(word_tokenizer)
-def build_index(
-     tokenized_corpus: List[List[str]],
-     ) -> Dict[str, CompactPostings]:
+def build_index(tokenized_corpus: List[List[str]]) -> Dict[str, CompactPostings]:
         """
         Builds a compact inverted index in a single pass O(n).
 
@@ -29,19 +27,13 @@ def build_index(
                "world"  => {0: 1, 1: 1}
                "python" => {1: 1}
         """
-        doc_buffers: dict[str, array.array] = defaultdict(lambda: array.array("I"))
-        freq_buffers: dict[str, array.array] = defaultdict(lambda: array.array("I"))
+        docs: dict[str, array.array] = defaultdict(lambda: array.array("I"))
+        frequency: dict[str, array.array] = defaultdict(lambda: array.array("I"))
 
         for doc_id, tokens in enumerate(tokenized_corpus):
-            counts = Counter(tokens)
-            for word, freq in counts.items():
-                doc_buffers[word].append(doc_id)
-                freq_buffers[word].append(freq)
+            for word, freq in Counter(tokens).items(): docs[word].append(doc_id), frequency[word].append(freq)
 
-        return {
-            word: CompactPostings(doc_buffers[word], freq_buffers[word])
-            for word in doc_buffers
-        }
+        return {word: CompactPostings(docs[word], frequency[word]) for word in docs}
 
 
 @doc_input(word_tokenizer)
@@ -50,8 +42,7 @@ def get_bow(tokens: List[str]) -> Dict[str, int]:
     generates a Bag of Words for a single document.
     """
     bow = {}
-    for token in tokens:
-        bow[token] = bow.get(token, 0) + 1
+    for token in tokens: bow[token] = bow.get(token, 0) + 1
     return bow
 
 @corpus_input(word_tokenizer)
@@ -68,6 +59,5 @@ def get_vocabulary(corpus: List[List[str]]) -> List[str]:
     Essential for dense vector operations (NumPy).
     """
     vocab: Set[str] = set()
-    for doc in corpus:
-        vocab.update(doc)
+    for doc in corpus: vocab.update(doc)
     return sorted(list(vocab))

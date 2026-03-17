@@ -54,7 +54,7 @@ class MetadataStorage(BaseStorage):
 
         self._initialize_schema()
 
-    # ── Schema ──────────────────────────────────────────────────────
+    # Schema initialization and migration
 
     def _initialize_schema(self) -> None:
         cur = self.conn.cursor()
@@ -93,7 +93,7 @@ class MetadataStorage(BaseStorage):
 
         self.conn.commit()
 
-    # ── BaseStorage interface ───────────────────────────────────────
+    # BaseStorage interface
 
     def save(self, data: Dict[str, Any], name: str) -> None:
         """Persist **only metadata** — index data is ignored.
@@ -150,7 +150,7 @@ class MetadataStorage(BaseStorage):
         )
         return cur.fetchone() is not None
 
-    # ── Alias support ───────────────────────────────────────────────
+    # Alias support
 
     def resolve_alias(self, name: str) -> str:
         target = self.get_alias(name)
@@ -189,7 +189,7 @@ class MetadataStorage(BaseStorage):
         )
         self.conn.commit()
 
-    # ── Versioning ──────────────────────────────────────────────────
+    # Versioning
 
     def _generate_versioned_name(self, base_name: str) -> str:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -205,7 +205,7 @@ class MetadataStorage(BaseStorage):
         )
         return [row[0] for row in cur.fetchall()]
 
-    # ── Source info ─────────────────────────────────────────────────
+    # Source info
 
     def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
         import json as _json
@@ -275,7 +275,7 @@ class MetadataStorage(BaseStorage):
 
         return None
 
-    # ── Shard registry ──────────────────────────────────────────────
+    # Shard registry
 
     def save_shard_registry(self, index_name: str, shard_keys: list) -> None:
         cur = self.conn.cursor()
@@ -300,7 +300,7 @@ class MetadataStorage(BaseStorage):
         )
         return [row[0] for row in cur.fetchall()]
 
-    # ── Doc count (metadata-only query) ─────────────────────────────
+    # Doc count (metadata-only query) 
 
     def get_total_docs(self, name: str) -> int:
         cur = self.conn.cursor()
@@ -311,7 +311,7 @@ class MetadataStorage(BaseStorage):
         row = cur.fetchone()
         return int(row[0]) if row else 0
 
-    # ── Extras ──────────────────────────────────────────────────────
+    # Extras
 
     def delete(self, name: str) -> None:
         shard_keys = self.load_shard_registry(name)
@@ -341,7 +341,7 @@ class MetadataStorage(BaseStorage):
         cur.execute("SELECT index_name FROM lucis_metadata ORDER BY index_name")
         return [row[0] for row in cur.fetchall()]
 
-    # ── Lifecycle ───────────────────────────────────────────────────
+    # Lifecycle managemenT
 
     def close(self) -> None:
         if self._owns_connection:

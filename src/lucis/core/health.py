@@ -28,6 +28,7 @@ from __future__ import annotations
 import array
 import gc
 import logging
+import os
 import sys
 import threading
 import time
@@ -38,7 +39,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("lucis.health")
 
 
-# ─── RAM measurement utilities ───────────────────────────────────────
+# RAM measurement utilities
 
 def _deep_getsizeof(obj: Any, seen: Optional[set] = None) -> int:
     """Recursively measure the memory footprint of an object.
@@ -166,13 +167,16 @@ class ShardHealth:
         index_size_bytes: Memory used by the inverted index structure.
         doc_lengths_size_bytes: Memory used by the document-length map.
         id_map_size_bytes: Memory used by the internal ID → original ID map.
-        total_size_bytes: Sum of all three size fields above.
+        doc_norms_size_bytes: Memory used by the doc_norms map
+            (CoreEngine only; 0 for LiteEngine).
+        total_size_bytes: Sum of all size fields above.
     """
     shard_key: str
     total_docs: int
     index_size_bytes: int
     doc_lengths_size_bytes: int
     id_map_size_bytes: int
+    doc_norms_size_bytes: int
     total_size_bytes: int
 
     @property
@@ -185,8 +189,8 @@ class ShardHealth:
 
         Returns:
             Dict with keys ``shard_key``, ``total_docs``, ``index_size``,
-            ``doc_lengths_size``, ``id_map_size``, ``total_size``,
-            and ``total_size_bytes``.
+            ``doc_lengths_size``, ``id_map_size``, ``doc_norms_size``,
+            ``total_size``, and ``total_size_bytes``.
         """
         return {
             "shard_key": self.shard_key,
@@ -194,6 +198,7 @@ class ShardHealth:
             "index_size": _format_bytes(self.index_size_bytes),
             "doc_lengths_size": _format_bytes(self.doc_lengths_size_bytes),
             "id_map_size": _format_bytes(self.id_map_size_bytes),
+            "doc_norms_size": _format_bytes(self.doc_norms_size_bytes),
             "total_size": self.total_size_human,
             "total_size_bytes": self.total_size_bytes,
         }
@@ -237,8 +242,12 @@ class HealthReport:
     index_ram_bytes: int
     process_rss_bytes: Optional[int]
 
+    # Disk
+    disk_lcs_bytes: int = 0
+    disk_meta_bytes: int = 0
+
     # Shards
-    shard_count: int
+    shard_count: int = 0
     shards: List[ShardHealth] = field(default_factory=list)
 
     # Worker
@@ -261,6 +270,16 @@ class HealthReport:
         """Human-readable process RSS (e.g. ``"2.10 GB"``), or ``None``."""
         return _format_bytes(self.process_rss_bytes) if self.process_rss_bytes else None
 
+    @property
+    def disk_total_bytes(self) -> int:
+        """Total disk usage (.lcs + metadata DB)."""
+        return self.disk_lcs_bytes + self.disk_meta_bytes
+
+    @property
+    def disk_total_human(self) -> str:
+        """Human-readable total disk usage."""
+        return _format_bytes(self.disk_total_bytes)
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON-serialisable representation of the health report.
 
@@ -280,6 +299,14 @@ class HealthReport:
                 "index_ram_bytes": self.index_ram_bytes,
                 "process_rss": self.process_rss_human,
                 "process_rss_bytes": self.process_rss_bytes,
+            },
+            "disk": {
+                "lcs_files": _format_bytes(self.disk_lcs_bytes),
+                "lcs_files_bytes": self.disk_lcs_bytes,
+                "metadata_db": _format_bytes(self.disk_meta_bytes),
+                "metadata_db_bytes": self.disk_meta_bytes,
+                "total": self.disk_total_human,
+                "total_bytes": self.disk_total_bytes,
             },
             "shards": {
                 "count": self.shard_count,
@@ -319,6 +346,12 @@ class HealthReport:
         if self.process_rss_bytes is not None:
             lines.append(f"    Process RSS : {self.process_rss_human}")
         lines.append("-" * 62)
+        if self.disk_lcs_bytes or self.disk_meta_bytes:
+            lines.append("  DISK")
+            lines.append(f"    .lcs files  : {_format_bytes(self.disk_lcs_bytes)}")
+            lines.append(f"    metadata DB : {_format_bytes(self.disk_meta_bytes)}")
+            lines.append(f"    Total disk  : {self.disk_total_human}")
+            lines.append("-" * 62)
 
         if self.is_sharded and self.shards:
             lines.append(f"  SHARDS ({self.shard_count})")
@@ -371,7 +404,7 @@ def health_check(
     """
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # ── Measure index RAM ──
+    # Measure index RAM
     index_ram = 0
     shard_details: List[ShardHealth] = []
     shard_count = 0
@@ -387,24 +420,29 @@ def health_check(
                 time.sleep(0.002)
         return []
 
-    def _safe_engine_sizes(engine: Any) -> tuple[int, int, int]:
-        """Measure engine internals defensively during concurrent writes."""
+    def _safe_engine_sizes(engine: Any) -> tuple[int, int, int, int]:
+        """Measure engine internals defensively during concurrent writes.
+
+        Returns:
+            (index_size, doc_lengths_size, id_map_size, doc_norms_size)
+        """
         for _ in range(2):
             try:
                 idx_size = _deep_getsizeof(engine.index) if hasattr(engine, "index") else 0
                 dl_size = _deep_getsizeof(engine.doc_lengths) if hasattr(engine, "doc_lengths") else 0
                 im_size = _deep_getsizeof(engine.id_map) if hasattr(engine, "id_map") else 0
-                return idx_size, dl_size, im_size
+                dn_size = _deep_getsizeof(engine.doc_norms) if hasattr(engine, "doc_norms") else 0
+                return idx_size, dl_size, im_size, dn_size
             except RuntimeError:
                 time.sleep(0.002)
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
     if lucis._shard_manager is not None and lucis._shard_manager.shards:
         items = _safe_shard_items(lucis._shard_manager.shards)
         shard_count = len(items)
         for key, engine in items:
-            idx_size, dl_size, im_size = _safe_engine_sizes(engine)
-            total = idx_size + dl_size + im_size
+            idx_size, dl_size, im_size, dn_size = _safe_engine_sizes(engine)
+            total = idx_size + dl_size + im_size + dn_size
             index_ram += total
             shard_details.append(ShardHealth(
                 shard_key=key,
@@ -412,6 +450,7 @@ def health_check(
                 index_size_bytes=idx_size,
                 doc_lengths_size_bytes=dl_size,
                 id_map_size_bytes=im_size,
+                doc_norms_size_bytes=dn_size,
                 total_size_bytes=total,
             ))
     elif lucis._is_indexed:
@@ -419,8 +458,26 @@ def health_check(
         idx_size = _deep_getsizeof(engine.index) if hasattr(engine, "index") else 0
         dl_size = _deep_getsizeof(engine.doc_lengths) if hasattr(engine, "doc_lengths") else 0
         im_size = _deep_getsizeof(engine.id_map) if hasattr(engine, "id_map") else 0
-        dv_size = _deep_getsizeof(engine.doc_vectors) if hasattr(engine, "doc_vectors") else 0
-        index_ram = idx_size + dl_size + im_size + dv_size
+        dn_size = _deep_getsizeof(engine.doc_norms) if hasattr(engine, "doc_norms") else 0
+        index_ram = idx_size + dl_size + im_size + dn_size
+
+    # Disk usage
+    disk_lcs = 0
+    disk_meta = 0
+    binary_dir = getattr(lucis, "_binary_dir", None)
+    if binary_dir and os.path.isdir(binary_dir):
+        for fname in os.listdir(binary_dir):
+            fpath = os.path.join(binary_dir, fname)
+            if not os.path.isfile(fpath):
+                continue
+            try:
+                fsize = os.path.getsize(fpath)
+            except OSError:
+                continue
+            if fname.endswith(".lcs"):
+                disk_lcs += fsize
+            elif fname == "lucis_meta.db" or fname.startswith("lucis_meta.db"):
+                disk_meta += fsize
 
     # Process RSS
     process_rss = _get_process_rss()
@@ -454,6 +511,8 @@ def health_check(
         total_docs=lucis.total_docs,
         index_ram_bytes=index_ram,
         process_rss_bytes=process_rss,
+        disk_lcs_bytes=disk_lcs,
+        disk_meta_bytes=disk_meta,
         shard_count=shard_count,
         shards=shard_details,
         worker_running=w_running,

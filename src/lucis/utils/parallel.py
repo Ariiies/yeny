@@ -38,9 +38,7 @@ from typing import Any, Callable, List, Optional, Union
 logger = logging.getLogger("lucis.parallel")
 
 
-# ---------------------------------------------------------------------------
 # CPU topology helpers
-# ---------------------------------------------------------------------------
 
 def get_cpu_count() -> int:
     """Return the number of logical CPUs available.
@@ -82,9 +80,7 @@ def get_optimal_workers(mode: str = "efficiency") -> int:
     return max(1, cores // 2)
 
 
-# ---------------------------------------------------------------------------
 # Thresholds
-# ---------------------------------------------------------------------------
 
 #: Minimum documents to justify thread-pool overhead (very low — threads
 #: are cheap to create and share process memory).
@@ -94,11 +90,8 @@ MIN_THREAD_DOCS: int = 200
 #: expensive; only worth it for large batches on Linux/fork).
 MIN_PROCESS_DOCS: int = 500
 
-
-# ---------------------------------------------------------------------------
 # Module-level worker helpers (needed by ProcessPoolExecutor — must be
 # picklable, i.e. defined at module scope, not as closures).
-# ---------------------------------------------------------------------------
 
 _worker_preprocessor: Optional[Callable] = None
 _worker_tokenizer: Optional[Callable] = None
@@ -136,9 +129,7 @@ def _get_spawn_method() -> str:
         return "spawn" if os.name == "nt" else "fork"
 
 
-# ---------------------------------------------------------------------------
 # Public API
-# ---------------------------------------------------------------------------
 
 def parallel_preprocess(
     texts: List[str],
@@ -187,9 +178,7 @@ def parallel_preprocess(
 
     spawn_method = _get_spawn_method()
 
-    # ------------------------------------------------------------------
-    # Fork path (Linux): ProcessPoolExecutor — true CPU parallelism.
-    # ------------------------------------------------------------------
+    # Fork path (Linux): ProcessPoolExecutor — true CPU parallelism
     if spawn_method == "fork" and multiprocessing.parent_process() is None:
         if not _is_picklable(preprocessor) or not _is_picklable(tokenizer):
             return _sequential_preprocess(texts, preprocessor, tokenizer)
@@ -213,14 +202,11 @@ def parallel_preprocess(
             logger.warning("ProcessPool failed (%s) — falling back.", exc)
             return _sequential_preprocess(texts, preprocessor, tokenizer)
 
-    # ------------------------------------------------------------------
-    # Spawn path (Windows/macOS): sequential with LRU-cached preprocessor.
-    #
+    # Spawn path (Windows/macOS): sequential with LRU-cached preprocessor
     # Rationale: ThreadPoolExecutor adds scheduling/GIL overhead that
     # dominates for moderate batch sizes (5 K – 20 K docs).  The dominant
     # CPU cost (HMAC per n-gram) is already eliminated by the lru_cache on
     # encrypt_token, so sequential is the fastest choice on spawn platforms.
-    # ------------------------------------------------------------------
     return _sequential_preprocess(texts, preprocessor, tokenizer)
 
 

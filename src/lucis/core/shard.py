@@ -28,6 +28,9 @@ Constants:
         without a date or from tables without a date column.
     LUCIS_DEFAULT_DATE_COLUMNS: Column names that Lucis auto-detects
         as temporal key when ``date_column="auto"``.
+
+    in future: consider put a limit mb per shard and divide shards like "2026_01_01",
+     "2026_01_02" if a single month has too many documents to fit in RAM.
 """
 from __future__ import annotations
 
@@ -241,7 +244,7 @@ class ShardManager:
         # Directory for .lcs files (None = mmap disabled).
         self._binary_dir: Optional[str] = binary_dir
 
-    # ── Memory management helpers ──
+    # Memory management helpers
 
     @property
     def _is_managed(self) -> bool:
@@ -318,6 +321,12 @@ class ShardManager:
                 for k, v in im.items():
                     total += _sizeof(k) + _sizeof(v)
 
+        # -- doc_norms (CoreEngine) --
+        norms = getattr(engine, "doc_norms", None)
+        if norms and isinstance(norms, dict):
+            # dict overhead + one int key + one float value per entry
+            total += _sizeof(norms) + len(norms) * (28 + 24)
+
         return total
 
     def _touch(self, shard_key: str) -> None:
@@ -345,6 +354,10 @@ class ShardManager:
                 evicted.index = {}
                 evicted.doc_lengths = None
                 evicted.id_map = {}
+                # CoreEngine stores doc_norms (or legacy doc_vectors)
+                for attr in ("doc_norms", "doc_vectors"):
+                    if hasattr(evicted, attr):
+                        setattr(evicted, attr, {})
         return oldest_key
 
     def _evict_until_fits(self, incoming_bytes: int = 0) -> None:
@@ -396,6 +409,9 @@ class ShardManager:
                     evicted.index = {}
                     evicted.doc_lengths = None
                     evicted.id_map = {}
+                    for attr in ("doc_norms", "doc_vectors"):
+                        if hasattr(evicted, attr):
+                            setattr(evicted, attr, {})
 
     def _lcs_path(self, shard_key: str) -> Optional[str]:
         """Return the .lcs file path for *shard_key*, or ``None``."""
@@ -673,6 +689,9 @@ class ShardManager:
                 engine.index = {}
                 engine.doc_lengths = None
                 engine.id_map = {}
+                for attr in ("doc_norms", "doc_vectors"):
+                    if hasattr(engine, attr):
+                        setattr(engine, attr, {})
                 del self.shards[key]
 
                 log.info(
