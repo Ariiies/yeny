@@ -17,18 +17,28 @@ from .models.search import SearchResult, SearchResponse
 
 # Storage backends
 from .storage.sqlite_storage import SQLiteStorage
+from .storage.metadata_storage import MetadataStorage
 
 # Worker (Phase 4 — Shadow Indexing)
 from .core.worker import IndexWorker
 
+# Health monitoring (Phase 6 — Resource Protection)
+from .core.health import HealthReport, HealthMonitor, health_check
+
 # Shard constants (Phase 5 — Temporal Sharding)
 from .core.shard import LUCIS_GLOBAL_SHARD, LUCIS_DEFAULT_DATE_COLUMNS
 
-# AlchemyStorage is lazy-loaded (requires sqlalchemy)
+# Parallel preprocessing (Phase 9 — Multiprocessing)
+from .utils.parallel import get_cpu_count, get_optimal_workers
+
+# AlchemyStorage and AlchemyReader are lazy-loaded (requires sqlalchemy)
 def __getattr__(name):
     if name == "AlchemyStorage":
         from .storage.alchemy_storage import AlchemyStorage
         return AlchemyStorage
+    if name == "AlchemyReader":
+        from .storage.alchemy_reader import AlchemyReader
+        return AlchemyReader
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # for better engine exportations
@@ -44,7 +54,9 @@ __all__ = [
     
     # Storage
     "SQLiteStorage",
+    "MetadataStorage",
     "AlchemyStorage",
+    "AlchemyReader",
     
     # Exceptions
     "LucisError",
@@ -56,6 +68,11 @@ __all__ = [
     # Worker
     "IndexWorker",
     
+    # Health
+    "HealthReport",
+    "HealthMonitor",
+    "health_check",
+    
     # Shard constants
     "LUCIS_GLOBAL_SHARD",
     "LUCIS_DEFAULT_DATE_COLUMNS",
@@ -64,6 +81,10 @@ __all__ = [
     "get_engine",
     "HAS_NUMPY",
     "HAS_POLARS",
+
+    # Parallel / CPU awareness
+    "get_cpu_count",
+    "get_optimal_workers",
     
     # Metadata
     "__version__",

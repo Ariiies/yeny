@@ -5,6 +5,18 @@ from ..utils.index.core import build_index as build_idx_func
 from ..utils.index.stats import get_doc_len
 from ..utils.math.core import sort_results
 from ..utils.nlp import simple_tokenizer, char_ngram_tokenizer
+from ..utils.compact import (
+    CompactPostings,
+    CompactDocLengths,
+    freeze_index,
+    thaw_index,
+    freeze_doc_lengths,
+)
+from ..utils.mmap_storage import (
+    save_lcs, open_lcs, LcsHandle,
+    MmapIdMap, MmapDocLengths, LazyIndex,
+)
+from ..utils.parallel import parallel_preprocess
 from ..exceptions import LucisEmptyCorpusError
 
 
@@ -40,6 +52,8 @@ class LiteEngine(BaseEngine):
 
     def __init__(self, storage: Optional[Any] = None, preprocessor: Optional[Any] = None):
         super().__init__(storage=storage, preprocessor=preprocessor)
+        # mmap lifecycle handle (non-None when loaded via load_mmap)
+        self._lcs_handle: Optional[LcsHandle] = None
 
     @property
     def name(self) -> str:
@@ -48,6 +62,10 @@ class LiteEngine(BaseEngine):
     def build_index(self, corpus: Union[List[str], Dict[str, str]]) -> None:
         """
         Builds the inverted index and document lengths.
+
+        After building with fast ``defaultdict``s, the structures are
+        *frozen* into compact ``array.array``-backed objects that use
+        ~12× less RAM per posting entry.
         """
         texts, self.id_map = self._normalize_corpus(corpus)
 
@@ -59,16 +77,19 @@ class LiteEngine(BaseEngine):
             return
 
         # 1. Preprocess with the configured preprocessor.
-        tokenized = []
-        for doc in texts:
-            result = self.preprocessor(doc)
-            tokenized.append(simple_tokenizer(result) if isinstance(result, str) else result)
+        tokenized = parallel_preprocess(
+            texts, self.preprocessor, simple_tokenizer,
+        )
 
-        # 2. Build inverted index with utils function (Core)
+        # 2. Build compact inverted index directly
         self.index = build_idx_func(tokenized)
 
-        # 3. Calculate document lengths for TF normalization
-        self.doc_lengths = get_doc_len(self.index, self.total_docs)
+        # 3. Calculate document lengths
+        raw_doc_lengths = get_doc_len(self.index, self.total_docs)
+
+        # 4. Freeze doc_lengths to compact structure
+        self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
+        del tokenized, raw_doc_lengths
 
     def search(self, query: Union[str, List[str]], top_k: int = 10) -> List[Tuple[DocId, float]]:
         """
@@ -86,16 +107,24 @@ class LiteEngine(BaseEngine):
         if not query or not self.index:
             return []
 
-        # 1. Find candidate documents (only those sharing at least one token)
+        # 1. Find candidate documents (only those sharing at least one token).
+        #    Pre-fetch postings objects for query tokens: avoids re-creating
+        #    MmapPostings in LazyIndex for every (doc_id, token) pair.
+        _postings: Dict[str, Any] = {}
         candidate_ids: set = set()
         for token in query:
             if token in self.index:
-                candidate_ids.update(self.index[token].keys())
+                p = self.index[token]
+                _postings[token] = p
+                candidate_ids.update(p.keys())
 
         if not candidate_ids:
             return []
 
         # 2. Score each candidate: Σ tf(t,d) / |d|
+        #    Uses CompactPostings.get() — O(log n) binary search per lookup,
+        #    but ~12× less RAM and better cache locality than dict.
+        _EMPTY = CompactPostings.from_dict({})
         scores: Dict[int, float] = {}
         for doc_id in candidate_ids:
             doc_len = self.doc_lengths.get(doc_id, 0)
@@ -104,33 +133,85 @@ class LiteEngine(BaseEngine):
 
             score = 0.0
             for token in query:
-                tf = self.index.get(token, {}).get(doc_id, 0)
+                tf = _postings.get(token, _EMPTY).get(doc_id, 0)
                 score += tf / doc_len
-            
+
             if score > 0:
                 scores[doc_id] = score
 
         # 3. Sort and limit
         internal_results = sort_results(scores, limit=top_k)
 
-        # 4. Map internal indices back to original document IDs
-        return [(self.id_map[doc_id], score) for doc_id, score in internal_results]
+        # 4. Map internal indices back to original document IDs.
+        # Deleted docs are tombstoned as None and must be skipped.
+        mapped: List[Tuple[DocId, float]] = []
+        for doc_id, score in internal_results:
+            ext_id = self.id_map.get(doc_id)
+            if ext_id is None:
+                continue
+            mapped.append((ext_id, score))
+        return mapped
 
     def persist(self, name: str) -> None:
         """
         Packages the current state and sends it to storage.
+
+        When the storage backend is :class:`MetadataStorage`, only
+        lightweight metadata (total_docs, id_type, engine_name) is
+        written — heavy index data is skipped because it lives in
+        ``.lcs`` files.
+
+        Otherwise, compact structures are *thawed* back to regular
+        dicts for JSON serialization.  The in-memory engine keeps the
+        compact versions — only the serialization copy is inflated.
         """
         if not self.storage:
             raise ValueError("No storage adapter configured in the engine.")
 
+        from ..storage.metadata_storage import MetadataStorage
+        if isinstance(self.storage, MetadataStorage):
+            # Metadata-only persist: skip heavy index serialization
+            state = {
+                "total_docs": self.total_docs,
+                "id_type": self.id_type,
+                "engine_name": self.name,
+            }
+            self.storage.save(state, name)
+            return
+
+        # Thaw compact structures → regular dicts for storage
+        from ..utils.mmap_storage import MmapPostings, LazyIndex
+        if self.index:
+            sample = next(iter(self.index.values()))
+            if isinstance(sample, CompactPostings):
+                serializable_index = thaw_index(self.index)
+            elif isinstance(sample, MmapPostings) or isinstance(self.index, LazyIndex):
+                serializable_index = {
+                    tok: p.to_dict() for tok, p in self.index.items()
+                }
+            else:
+                serializable_index = self.index
+        else:
+            serializable_index = self.index
+        from ..utils.mmap_storage import MmapDocLengths, MmapIdMap
+        serializable_doc_lengths = (
+            self.doc_lengths.to_dict()
+            if isinstance(self.doc_lengths, (CompactDocLengths, MmapDocLengths))
+            else self.doc_lengths
+        )
+        serializable_id_map = (
+            self.id_map.to_dict()
+            if isinstance(self.id_map, MmapIdMap)
+            else self.id_map
+        )
+
         state = {
-            "index": self.index,
+            "index": serializable_index,
             "total_docs": self.total_docs,
-            "doc_lengths": self.doc_lengths,
-            "id_map": self.id_map,
+            "doc_lengths": serializable_doc_lengths,
+            "id_map": serializable_id_map,
             "id_type": self.id_type,
             "engine_name": self.name,
-            # Explicitly empty — storage adapters handle this gracefully
         }
         self.storage.save(state, name)
 
@@ -138,24 +219,63 @@ class LiteEngine(BaseEngine):
         """
         Loads a saved state and reconstructs the engine.
 
-        Only loads index, doc_lengths, total_docs, id_map, id_type.
+        Raw dicts from storage are immediately frozen into compact
+        structures to minimise steady-state RAM.
         """
         if not self.storage:
             raise ValueError("No storage adapter configured in the engine.")
 
         state = self.storage.load(name)
 
-        self.index = state["index"]
+        raw_index = state["index"]
         self.total_docs = state["total_docs"]
-        self.doc_lengths = state["doc_lengths"]
-        self.id_map = state.get("id_map", {i: i for i in range(self.total_docs)})
+        raw_doc_lengths = state["doc_lengths"]
+        raw_id_map = state.get("id_map", {i: i for i in range(self.total_docs)})
         self.id_type = state.get("id_type", "none")
+
+        # Normalize id_map keys to int (JSON deserializes keys as str)
+        self.id_map = {int(k): v for k, v in raw_id_map.items()}
+
+        # Freeze to compact structures
+        self.index = freeze_index(raw_index)
+        self.doc_lengths = freeze_doc_lengths(raw_doc_lengths, self.total_docs)
+        del raw_index, raw_doc_lengths
+
+    # Mmap => mutable promotion
+
+    def _ensure_mutable(self) -> None:
+        """Promote mmap-backed read-only structures to mutable containers.
+
+        After ``load_mmap()`` the engine's ``id_map``, ``doc_lengths``
+        and ``index`` are backed by read-only memoryviews.  This method
+        materialises them into regular Python dicts so that
+        ``add_documents()`` can mutate them safely.
+
+        The underlying mmap handle (if any) is closed afterwards — the
+        engine is fully self-contained in the Python heap.
+        """
+        if isinstance(self.id_map, MmapIdMap):
+            self.id_map = self.id_map.to_dict()
+        if isinstance(self.doc_lengths, MmapDocLengths):
+            self.doc_lengths = self.doc_lengths.to_dict()
+        if isinstance(self.index, LazyIndex):
+            self.index = dict(self.index.items())
+        # Release the mmap file descriptor — data is now in Python heap
+        if self._lcs_handle is not None:
+            self._lcs_handle.close()
+            self._lcs_handle = None
 
     # Incremental indexing
 
     def add_documents(self, new_docs: Union[List[str], Dict[Any, str]]) -> None:
         """
         Incrementally add new documents to the existing index.
+
+        Builds a temporary dict-based delta, merges it into the
+        existing compact postings, and re-freezes.  Because deltas
+        are typically small (<1 % of the corpus), the temporary RAM
+        spike is negligible.
+
         Args:
             new_docs: New documents to add. Supports the same formats
                 as ``build_index``:
@@ -167,6 +287,9 @@ class LiteEngine(BaseEngine):
             Call ``persist()`` or ``Lucis.save()`` afterwards to
             persist the updated index to storage.
         """
+        # Promote mmap read-only structures to mutable dicts if needed
+        self._ensure_mutable()
+
         # Determine the starting internal id for new documents
         start_id = self.total_docs
 
@@ -190,23 +313,147 @@ class LiteEngine(BaseEngine):
         if not new_texts:
             return
 
-        # Preprocess each new document
-        tokenized_new = []
-        for doc in new_texts:
-            result = self.preprocessor(doc)
-            tokenized_new.append(
-                simple_tokenizer(result) if isinstance(result, str) else result
-            )
+        # Preprocess new documents (parallel when large enough)
+        tokenized_new = parallel_preprocess(
+            new_texts, self.preprocessor, simple_tokenizer,
+        )
 
-        # Update inverted index and doc_lengths incrementally
+        # Build a small delta index (regular dicts — fast for mutation)
+        delta: Dict[str, Dict[int, int]] = {}
+        new_doc_lengths: Dict[int, int] = {}
+
         for i, tokens in enumerate(tokenized_new):
             doc_id = start_id + i
-            doc_length = len(tokens)
-            self.doc_lengths[doc_id] = doc_length
-
+            new_doc_lengths[doc_id] = len(tokens)
             for token in tokens:
-                if token not in self.index:
-                    self.index[token] = {}
-                self.index[token][doc_id] = self.index[token].get(doc_id, 0) + 1
+                if token not in delta:
+                    delta[token] = {}
+                delta[token][doc_id] = delta[token].get(doc_id, 0) + 1
+
+        # Merge delta into existing compact index
+        for token, new_postings in delta.items():
+            existing = self.index.get(token)
+            if existing is None:
+                # Brand-new token — freeze directly
+                self.index[token] = CompactPostings.from_dict(new_postings)
+            else:
+                # Merge: thaw existing → update → re-freeze
+                merged = existing.to_dict() if isinstance(existing, CompactPostings) else dict(existing)
+                merged.update(new_postings)
+                self.index[token] = CompactPostings.from_dict(merged)
+
+        # Extend compact doc_lengths
+        for doc_id, length in new_doc_lengths.items():
+            self.doc_lengths[doc_id] = length
 
         self.total_docs += len(new_texts)
+
+    def remove_documents(self, doc_ids: List[Any]) -> int:
+        """Remove documents by original IDs (tombstone + postings purge).
+
+        This operation is designed for occasional maintenance deletes.
+        It avoids reindexing the full shard while keeping compatibility
+        with mmap persistence.
+
+        Args:
+            doc_ids: Original document IDs to remove.
+
+        Returns:
+            Number of documents removed.
+        """
+        if not doc_ids or not self.index:
+            return 0
+
+        # Promote mmap-backed structures to mutable dicts if needed.
+        self._ensure_mutable()
+
+        target = {str(v) for v in doc_ids}
+        remove_internal = {
+            int(i)
+            for i, ext in self.id_map.items()
+            if ext is not None and str(ext) in target
+        }
+        if not remove_internal:
+            return 0
+
+        # Remove doc IDs from every token postings list.
+        for token in list(self.index.keys()):
+            postings = self.index[token]
+            if isinstance(postings, CompactPostings):
+                p_dict = postings.to_dict()
+            else:
+                p_dict = dict(postings)
+
+            for rid in remove_internal:
+                p_dict.pop(rid, None)
+
+            if p_dict:
+                self.index[token] = CompactPostings.from_dict(p_dict)
+            else:
+                del self.index[token]
+
+        # Tombstone metadata entries (keep internal ID space stable).
+        for rid in remove_internal:
+            self.doc_lengths[rid] = 0
+            self.id_map[rid] = None
+
+        return len(remove_internal)
+
+    # Binary / mmap interface
+
+    def save_binary(self, path: str) -> None:
+        """Serialise this engine to a ``.lcs`` (Lucis Compact Shard) file.
+
+        The resulting file is designed for subsequent ``load_mmap()``
+        calls — the OS page-cache replaces the Python heap for all
+        heavy arrays (postings + doc-lengths).
+
+        Args:
+            path: Absolute path for the output file (should end in
+                ``.lcs``).  Parent directories are created automatically.
+        """
+        save_lcs(path, self)
+
+    def load_mmap(self, path: str) -> None:
+        """Load engine state from a ``.lcs`` file using memory-mapped I/O.
+
+        After this call the engine is ready to search.  The inverted
+        index and doc-length arrays live in the OS page-cache, not on
+        the Python heap — RAM usage is near-zero (only the vocabulary
+        keys and ``id_map`` remain in Python memory).
+
+        Call :meth:`close_mmap` (or let the engine be garbage-collected)
+        to release the underlying file handle and mmap.
+
+        Args:
+            path: Path to a ``.lcs`` file previously created by
+                :meth:`save_binary`.
+        """
+        # If there is an existing mmap handle, close it first
+        self.close_mmap()
+
+        handle = open_lcs(path)
+        self._lcs_handle = handle
+
+        # Transfer state into the engine's public attributes
+        self.index = handle.index
+        self.doc_lengths = handle.doc_lengths
+        self.total_docs = handle.total_docs
+        self.id_map = handle.id_map
+        self.id_type = handle.id_type
+
+    def close_mmap(self) -> None:
+        """Release the mmap handle and OS file descriptor.
+
+        After this call the engine's ``index`` and ``doc_lengths`` are
+        set to empty containers — the engine is no longer searchable
+        until a new ``load_mmap()`` or ``load_engine()`` is called.
+
+        Safe to call multiple times or when no mmap is active.
+        """
+        if self._lcs_handle is not None:
+            self._lcs_handle.close()
+            self._lcs_handle = None
+            self.index = {}
+            self.doc_lengths = None
+            self.id_map = {}

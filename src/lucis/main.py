@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -7,10 +8,12 @@ from .engines.base import DocId
 from .storage.base import BaseStorage
 from .storage.json_storage import JSONStorage
 from .storage.sqlite_storage import SQLiteStorage
+from .storage.metadata_storage import MetadataStorage
 from .exceptions import LucisEngineError
 from .models.search import SearchResult, SearchResponse
 from .utils.nlp import word_tokenizer, simple_tokenizer
 from .core.worker import IndexWorker
+from .core.health import health_check as _health_check, HealthMonitor, HealthReport
 from .core.shard import (
     ShardManager,
     normalize_to_shard_key,
@@ -20,14 +23,28 @@ from .core.shard import (
 
 # Lazy import flag — AlchemyStorage requires sqlalchemy (optional dep)
 _AlchemyStorage = None
+_AlchemyReader = None
 
 def _get_alchemy_storage_class():
-    """Lazy-load AlchemyStorage to avoid hard dependency on sqlalchemy."""
+    """Lazy-load ``AlchemyStorage`` to avoid a hard dependency on SQLAlchemy.
+
+    Returns:
+        The :class:`~lucis.storage.AlchemyStorage` class, imported on
+        first call and cached globally afterwards.
+    """
     global _AlchemyStorage
     if _AlchemyStorage is None:
         from .storage.alchemy_storage import AlchemyStorage
         _AlchemyStorage = AlchemyStorage
     return _AlchemyStorage
+
+def _get_alchemy_reader_class():
+    """Lazy-load ``AlchemyReader`` to avoid a hard dependency on SQLAlchemy."""
+    global _AlchemyReader
+    if _AlchemyReader is None:
+        from .storage.alchemy_reader import AlchemyReader
+        _AlchemyReader = AlchemyReader
+    return _AlchemyReader
 
 # Engine registry - maps friendly names to engine classes
 # As new engines are added, register them here
@@ -90,6 +107,9 @@ class Lucis:
         engine: str = "core",
         preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = None,
         autoload: bool = True,
+        max_loaded_shards: int = 0,
+        memory_limit_mb: Optional[int] = None,
+        binary_dir: Optional[str] = "auto",
     ):
         """
         Base constructor: sets up identity, storage, and engine.
@@ -119,17 +139,43 @@ class Lucis:
                     # Text-only preprocessing — Lucis tokenizes the returned str automatically
                     Lucis(preprocessor=lambda t: t.lower().strip())
             autoload: If True and an index with this name exists on disk, load it automatically.
+            max_loaded_shards: Maximum number of shards to keep in RAM simultaneously.
+                ``0`` (default) loads all shards eagerly (original behaviour).
+                Set e.g. ``6`` to keep only the 6 most recently accessed shards loaded,
+                evicting older ones on demand.  Requires a sharded index.
+            memory_limit_mb: Maximum RAM budget (in megabytes) for loaded shards.
+                ``None`` (default) = no limit.  When set, the system loads the
+                newest shards first until the budget is ~90 % full, then stops.
+                Historical queries via ``search(since=..., until=...)`` temporarily
+                load extra shards that auto-expire after 30 seconds.
+            binary_dir: Directory for ``.lcs`` (Lucis Compact Shard) binary
+                files.  When set, shards are persisted as mmap-friendly
+                binaries alongside the regular storage, enabling near-zero
+                RAM loading via memory-mapped I/O.
+                ``"auto"`` (default) derives the directory automatically
+                from the storage configuration.  ``None`` disables binary
+                persistence entirely.
         """
         self.name = name
         self._is_indexed = False
         self._source_info: Optional[Dict[str, Optional[str]]] = None
         self._shard_manager: Optional[ShardManager] = None
+        self._max_loaded_shards: int = max_loaded_shards
+        self._memory_limit_mb: Optional[int] = memory_limit_mb
+        # Reader for source data (production DB). Set by from_alchemy_table().
+        self._reader: Optional[Any] = None
         # If user provides a preprocessor, use it globally.
         # If None, the engine will use its own default:
         #   CoreEngine → word_tokenizer
         #   LiteEngine → char_ngram_tokenizer(3) + lowercase
         self._user_preprocessor = preprocessor
         self.preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = preprocessor
+
+        # Binary / mmap directory resolution
+        if binary_dir == "auto":
+            self._binary_dir: Optional[str] = os.path.join(storage_dir, "lcs")
+        else:
+            self._binary_dir = binary_dir
 
         # Background rebuild state (Phase 3)
         self._rebuild_thread: Optional[threading.Thread] = None
@@ -158,6 +204,17 @@ class Lucis:
         else:
             # Default: lightweight JSON files
             self.storage = JSONStorage(directory=storage_dir)
+
+        # 1b. Auto-discover MetadataStorage
+        # When no explicit storage was provided and binary_dir points to a
+        # directory that already contains lucis_meta.db (written by
+        # from_alchemy_table / from_alchemy_query), transparently switch
+        # to MetadataStorage so the user can reload with just:
+        #     Lucis(name="my_idx", engine="lite", binary_dir="auto")
+        if storage is None and self._binary_dir:
+            _meta_candidate = os.path.join(self._binary_dir, "lucis_meta.db")
+            if os.path.isfile(_meta_candidate):
+                self.storage = MetadataStorage(db_path=_meta_candidate)
 
         # 2. Configure engine
         # The registry pattern lets us add engines without touching Lucis's code
@@ -194,13 +251,172 @@ class Lucis:
             return self._shard_manager.total_docs
         return self.engine.total_docs if self._is_indexed else 0
 
+    @property
+    def loaded_memory_mb(self) -> float:
+        """Approximate RAM used by currently-loaded shard engines (MB)."""
+        if self._shard_manager is not None:
+            return self._shard_manager.loaded_memory_mb
+        return 0.0
+
     def _init_shard_manager(self) -> None:
-        """Initialize a ShardManager with current engine config."""
+        """Initialise a :class:`~lucis.core.shard.ShardManager` bound to
+        the current engine class, storage backend, and preprocessor.
+        """
         self._shard_manager = ShardManager(
             engine_class=type(self.engine),
             storage=self.storage,
             preprocessor=self._user_preprocessor,
+            max_loaded_shards=self._max_loaded_shards,
+            memory_limit_mb=self._memory_limit_mb,
+            binary_dir=self._binary_dir,
         )
+
+    def _post_index_cleanup(self, logical_name: str) -> None:
+        """Reload the index from storage to shed build-time RAM overhead.
+
+        During indexing, engines accumulate intermediate structures
+        (raw dicts, tokenized lists, etc.) that are significantly
+        heavier than the compact/mmap representations loaded from
+        storage.  This method destroys the build-time shard manager
+        and reloads from storage — the same path taken by a cold
+        start with an existing index — so steady-state RAM matches
+        the lightweight pre-loaded profile.
+
+        When dirty-tracking is available (incremental ``add_documents``),
+        only the modified shards are reloaded — the rest keep their
+        existing mmap handles intact.
+
+        Also clears any ``functools.lru_cache`` on the preprocessor
+        pipeline, which can accumulate millions of entries during
+        bulk indexing.
+        """
+        import gc
+        import logging
+        _log = logging.getLogger(__name__)
+        from .utils.mmap_storage import lcs_exists
+
+        # 1. Preserve source_info before reload (load() restores it
+        #    from storage, but belt-and-suspenders).
+        source_info = self._source_info
+
+        # ── Selective cleanup (dirty-tracking) ──
+        dirty = set(self._shard_manager._dirty_keys) if self._shard_manager else set()
+
+        if dirty and self._shard_manager:
+            sm = self._shard_manager
+
+            # Update base name to the latest physical version so that
+            # _lcs_path resolves to the newly-written .lcs files.
+            new_base = self.storage.get_alias(logical_name)
+            if new_base:
+                sm._lazy_base_name = new_base
+
+            # Tear down only dirty shards and reload from .lcs / storage.
+            for key in dirty:
+                engine = sm.shards.get(key)
+                if engine:
+                    close_fn = getattr(engine, "close_mmap", None)
+                    if close_fn:
+                        close_fn()
+                    else:
+                        engine.index = {}
+                        engine.doc_lengths = None
+                        engine.id_map = {}
+
+                # Reload from the new .lcs (or DB fallback)
+                new_engine = sm._create_engine()
+                lcs = sm._lcs_path(key)
+                if lcs and lcs_exists(lcs):
+                    new_engine.load_mmap(lcs)
+                else:
+                    shard_name = f"{new_base}__shard__{key}"
+                    new_engine.load_engine(shard_name)
+
+                # Update memory tracking
+                old_mem = sm._shard_mem.get(key, 0)
+                new_mem = sm._estimate_engine_memory(new_engine)
+                sm._loaded_mem += (new_mem - old_mem)
+                sm._shard_mem[key] = new_mem
+                sm.shards[key] = new_engine
+
+            sm._dirty_keys.clear()
+
+            # Clear preprocessor caches
+            self._clear_preprocessor_caches()
+
+            gc.collect()
+            _log.info(
+                "Selective post-index cleanup: reloaded %d dirty shard(s) "
+                "for '%s' (%.1f MB in RAM).",
+                len(dirty),
+                logical_name,
+                sm.loaded_memory_mb,
+            )
+
+            if source_info:
+                self._source_info = source_info
+            return
+
+        # ── Full cleanup (initial build or no dirty info) ──
+
+        # 2. Tear down build-time shard manager completely.
+        if self._shard_manager:
+            for key in list(self._shard_manager.shards.keys()):
+                engine = self._shard_manager.shards[key]
+                close_fn = getattr(engine, "close_mmap", None)
+                if close_fn:
+                    close_fn()
+                else:
+                    engine.index = {}
+                    engine.doc_lengths = None
+                    engine.id_map = {}
+            self._shard_manager.shards.clear()
+            self._shard_manager._shard_mem.clear()
+            self._shard_manager._lru.clear()
+            self._shard_manager._loaded_mem = 0
+        self._shard_manager = None
+
+        # 3. Clear preprocessor caches (lru_cache on HMAC functions).
+        self._clear_preprocessor_caches()
+
+        # 4. Force garbage collection before reload to release
+        #    build-time objects and (on CPython) return arenas.
+        gc.collect()
+
+        # 5. Reload from storage — uses the lightweight load path
+        #    (mmap for .lcs, compact freeze for DB-backed).
+        self.load(logical_name)
+
+        # 6. Restore source info
+        if source_info:
+            self._source_info = source_info
+
+        # 7. Final GC pass to clean up any stragglers.
+        gc.collect()
+
+        _log.info(
+            "Post-index cleanup complete: reloaded '%s' from storage "
+            "(%.1f MB in RAM).",
+            logical_name,
+            self._shard_manager.loaded_memory_mb if self._shard_manager else 0,
+        )
+
+    def _clear_preprocessor_caches(self) -> None:
+        """Clear lru_cache entries on the preprocessor and its module."""
+        if self.preprocessor:
+            for attr_name in dir(self.preprocessor):
+                obj = getattr(self.preprocessor, attr_name, None)
+                if hasattr(obj, "cache_clear"):
+                    obj.cache_clear()
+            mod = getattr(self.preprocessor, "__module__", None)
+            if mod:
+                import sys
+                mod_obj = sys.modules.get(mod)
+                if mod_obj:
+                    for attr in dir(mod_obj):
+                        fn = getattr(mod_obj, attr, None)
+                        if callable(fn) and hasattr(fn, "cache_clear"):
+                            fn.cache_clear()
 
     # factory methods
     @classmethod
@@ -429,6 +645,8 @@ class Lucis:
         where_clause: Optional[str] = None,
         schema: Optional[str] = None,
         name: str = "default",
+        shard_batch_size: int = 20_000,
+        stream_ordered: bool = False,
         **kwargs,
     ) -> "Lucis":
         """
@@ -464,6 +682,16 @@ class Lucis:
             where_clause: Optional SQL ``WHERE`` filter (without the ``WHERE`` keyword).
             schema: Database schema (e.g. ``"public"`` for PostgreSQL).
             name: Identifier for the persisted index.
+            shard_batch_size: Rows buffered per shard before flushing during streaming.
+            stream_ordered: When ``True``, assumes rows arrive sorted
+                chronologically by the date column.  Requires
+                ``memory_limit_mb`` or ``max_loaded_shards`` to have any
+                effect — when a memory budget is active, completed shards
+                are persisted and evicted during the build, keeping peak
+                RAM proportional to the working set instead of the full
+                dataset.  **Only enable if you are certain the data is
+                ordered; unsorted data with this flag will silently
+                truncate shards.**  Default: ``False``.
             **kwargs: Extra arguments forwarded to ``Lucis.__init__``.
 
         Returns:
@@ -502,18 +730,32 @@ class Lucis:
             )
             results = luc.search("python tutorial")
         """
-        AlchemyStorage = _get_alchemy_storage_class()
-        storage = AlchemyStorage(url=url)
+        AlchemyReader = _get_alchemy_reader_class()
+        reader = AlchemyReader(url=url)
 
         # Resolve date column
         resolved_date_col = date_column
         if date_column == "auto":
-            resolved_date_col = storage.detect_date_column(table_name, schema)
+            resolved_date_col = reader.detect_date_column(table_name, schema)
+
+        # Resolve binary_dir to place MetadataStorage DB alongside .lcs files
+        binary_dir_val = kwargs.get("binary_dir", "auto")
+        storage_dir_val = kwargs.get("storage_dir", "lucis_data")
+        if binary_dir_val == "auto":
+            meta_dir = os.path.join(storage_dir_val, "lcs")
+        elif binary_dir_val:
+            meta_dir = binary_dir_val
+        else:
+            meta_dir = storage_dir_val
+        os.makedirs(meta_dir, exist_ok=True)
+        meta_db_path = os.path.join(meta_dir, "lucis_meta.db")
+        storage = MetadataStorage(db_path=meta_db_path)
 
         kwargs.setdefault("storage_type", "alchemy")
         kwargs.setdefault("alchemy_url", url)
-        # Pass the already-built storage so we don't create a second engine
+        # Pass the MetadataStorage so we don't create AlchemyStorage
         instance = cls(name=name, autoload=False, storage=storage, **kwargs)
+        instance._reader = reader
         instance._source_info = {
             "type": "table",
             "table_name": table_name,
@@ -525,18 +767,79 @@ class Lucis:
         }
 
         if resolved_date_col:
-            # Sharded mode: read data with dates and build per-shard indices
-            data, dates = storage.read_table_with_dates(
-                table_name, text_column, id_column,
-                resolved_date_col, where_clause, schema,
-            )
+            # Sharded mode: stream rows → build_shards_streaming (no fetchall)
             instance._init_shard_manager()
-            instance._shard_manager.build_shards(data, dates)
+
+            # Pre-generate the physical name so the builder can persist
+            # shards incrementally when memory management is active.
+            persist_name = None
+            if instance._shard_manager._is_managed:
+                persist_name = instance.storage._generate_versioned_name(name)
+
+            if hasattr(reader, "stream_table_with_dates"):
+                row_iter = reader.stream_table_with_dates(
+                    table_name, text_column, id_column,
+                    resolved_date_col, where_clause, schema,
+                )
+                instance._shard_manager.build_shards_streaming(
+                    row_iter,
+                    batch_size=shard_batch_size,
+                    persist_base_name=persist_name,
+                    stream_ordered=stream_ordered,
+                )
+            else:
+                # Fallback for non-streaming reader
+                data, dates = reader.read_table_with_dates(
+                    table_name, text_column, id_column,
+                    resolved_date_col, where_clause, schema,
+                )
+                instance._shard_manager.build_shards(data, dates)
             instance._is_indexed = True
-            instance.save()
+
+            if persist_name:
+                # Persist remaining shards + save registry using the
+                # same physical name generated earlier.
+                instance._shard_manager.persist_all(persist_name)
+
+                # Create parent metadata entry
+                parent_state = {
+                    "index": {},
+                    "total_docs": instance._shard_manager.total_docs,
+                    "doc_lengths": {},
+                    "id_map": {},
+                    "id_type": instance._shard_manager.id_type,
+                    "engine_name": instance.engine.name,
+                }
+                instance.storage.save(parent_state, persist_name)
+                instance.storage.set_alias(name, persist_name)
+                if instance._source_info is not None:
+                    instance.storage.save_source_info(persist_name, instance._source_info)
+
+                # Final trim: evict anything still over budget
+                instance._shard_manager._lazy_base_name = persist_name
+                evicted = instance._shard_manager.trim_to_budget()
+                if evicted:
+                    import logging
+                    logging.getLogger(__name__).info(
+                        "Post-index trim: evicted %d shards to fit memory budget "
+                        "(%.0f MB in RAM).",
+                        evicted,
+                        instance._shard_manager.loaded_memory_mb,
+                    )
+
+                # Post-index RAM cleanup
+                # After building + persisting, the in-memory engines retain
+                # build-time structures (raw dicts, tokenized lists, etc.)
+                # that are much heavier than a clean load from storage.
+                # Reload from the persisted state to match the lightweight
+                # footprint of a cold start with an existing index.
+                instance._post_index_cleanup(name)
+            else:
+                # No memory management — use normal save()
+                instance.save()
         else:
             # Non-sharded mode: current behavior
-            data = storage.read_table(
+            data = reader.read_table(
                 table_name=table_name,
                 text_column=text_column,
                 id_column=id_column,
@@ -579,14 +882,28 @@ class Lucis:
                 name="published_posts",
             )
         """
-        AlchemyStorage = _get_alchemy_storage_class()
-        storage = AlchemyStorage(url=url)
+        AlchemyReader = _get_alchemy_reader_class()
+        reader = AlchemyReader(url=url)
 
-        data = storage.read_query(query)
+        data = reader.read_query(query)
+
+        # Resolve binary_dir for MetadataStorage
+        storage_dir_val = kwargs.get("storage_dir", "lucis_data")
+        binary_dir_val = kwargs.get("binary_dir", "auto")
+        if binary_dir_val == "auto":
+            meta_dir = os.path.join(storage_dir_val, "lcs")
+        elif binary_dir_val:
+            meta_dir = binary_dir_val
+        else:
+            meta_dir = storage_dir_val
+        os.makedirs(meta_dir, exist_ok=True)
+        meta_db_path = os.path.join(meta_dir, "lucis_meta.db")
+        storage = MetadataStorage(db_path=meta_db_path)
 
         kwargs.setdefault("storage_type", "alchemy")
         kwargs.setdefault("alchemy_url", url)
         instance = cls(name=name, autoload=False, storage=storage, **kwargs)
+        instance._reader = reader
         instance._source_info = {
             "type": "query",
             "table_name": None,
@@ -714,7 +1031,7 @@ class Lucis:
                 total_shards=len(self._shard_manager.shards),
             )
         else:
-            # ── Single-engine search (non-sharded) ──
+            # Single-engine search (non-sharded)
             raw_results = self.engine.search(tokens, top_k=top_k)
             elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -752,7 +1069,7 @@ class Lucis:
         physical_name = self.storage._generate_versioned_name(save_name)
 
         if self._shard_manager:
-            # ── Sharded save ──
+            # Sharded save
             # 1. Persist each shard engine
             self._shard_manager.persist_all(physical_name)
 
@@ -767,8 +1084,18 @@ class Lucis:
             }
             self.storage.save(parent_state, physical_name)
         else:
-            # ── Single-engine save ──
+            # Single-engine save
             self.engine.persist(physical_name)
+
+            # When using MetadataStorage, persist() only saves metadata.
+            # We must also write the .lcs binary so data is recoverable.
+            if isinstance(self.storage, MetadataStorage) and self._binary_dir:
+                save_fn = getattr(self.engine, "save_binary", None)
+                if save_fn is not None:
+                    import os as _os
+                    _os.makedirs(self._binary_dir, exist_ok=True)
+                    lcs_path = _os.path.join(self._binary_dir, f"{physical_name}.lcs")
+                    save_fn(lcs_path)
 
         # Point the logical alias to the new physical index
         self.storage.set_alias(save_name, physical_name)
@@ -795,19 +1122,63 @@ class Lucis:
         shard_keys = self.storage.load_shard_registry(physical_name)
 
         if shard_keys:
-            # ── Sharded load ──
+            # Sharded load 
             self._init_shard_manager()
-            self._shard_manager.load_all(physical_name, shard_keys)
+            lazy = self._max_loaded_shards > 0 or self._memory_limit_mb is not None
+            self._shard_manager.load_all(physical_name, shard_keys, lazy=lazy)
             self._is_indexed = True
         else:
-            # ── Single-engine load ──
-            self.engine.load_engine(physical_name)
+            # Single-engine load
+            # When using MetadataStorage, prefer .lcs binary (has full data).
+            # MetadataStorage.load() only returns metadata — no index data.
+            lcs_loaded = False
+            if isinstance(self.storage, MetadataStorage) and self._binary_dir:
+                from .utils.mmap_storage import lcs_exists as _lcs_exists
+                lcs_path = os.path.join(self._binary_dir, f"{physical_name}.lcs")
+                if _lcs_exists(lcs_path) and hasattr(self.engine, "load_mmap"):
+                    self.engine.load_mmap(lcs_path)
+                    lcs_loaded = True
+            if not lcs_loaded:
+                self.engine.load_engine(physical_name)
             self._is_indexed = True
 
         # Restore source info (if available) so create_worker() works
         source = self.storage.load_source_info(physical_name)
         if source is not None:
             self._source_info = source
+
+    def preload_shards(
+        self,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        n_recent: Optional[int] = None,
+    ) -> List[str]:
+        """Explicitly warm shards into memory without blocking searches.
+
+        Only useful when ``max_loaded_shards > 0`` was passed to the
+        constructor (lazy mode).  Call this before running a query against
+        historical data so the shards are ready in RAM.
+
+        Args:
+            since: Load shards at or after this key / ISO date (e.g. ``"2025_01"``).
+            until: Load shards at or before this key / ISO date.
+            n_recent: Load only the *n_recent* most recent qualifying shards.
+                If ``None``, loads all matching shards (subject to the
+                LRU eviction limit).
+
+        Returns:
+            List of shard keys that were newly loaded into memory.
+
+        Example::
+
+            luc = Lucis(name="email_idx", ..., max_loaded_shards=6)
+            # After load(), only 6 most recent shards are in RAM.
+            # To also query 2024 data:
+            luc.preload_shards(since="2024_01", until="2024_12")
+        """
+        if self._shard_manager is None:
+            return []
+        return self._shard_manager.preload_shards(since=since, until=until, n_recent=n_recent)
 
     # Shadow Rebuild 
 
@@ -843,6 +1214,57 @@ class Lucis:
             self.engine.build_index(data)
         self._is_indexed = True
         self.save()
+        # Reload from storage to shed build-time RAM overhead
+        if self._shard_manager:
+            self._post_index_cleanup(self.name)
+
+    def reindex_streaming(
+        self,
+        row_iter,
+        batch_size: int = 5_000,
+    ) -> None:
+        """Rebuild the sharded index from a **streaming** row iterator.
+
+        This is the memory-efficient counterpart to :meth:`reindex`.
+        Instead of materialising the entire corpus in RAM (via
+        ``fetchall``), rows are consumed in *batch_size* chunks and
+        routed directly to their temporal shards.
+
+        Peak RAM during rebuild ≈ steady-state index RAM + one batch
+        (a few MB), instead of steady-state + full raw corpus (~1 GB
+        extra for a 2 M-row email dataset).
+
+        Args:
+            row_iter: Any iterable that yields ``(doc_id_str, text, date_val)``
+                triples.  Typical source:
+                ``storage.stream_table_with_dates(...)``.
+            batch_size: Per-shard buffer size.  Default 5 000 rows.
+
+        Raises:
+            LucisEngineError: If the index is not sharded (no
+                ``_shard_manager``).  Use :meth:`reindex` for
+                non-sharded indices.
+
+        Example::
+
+            row_iter = storage.stream_table_with_dates(
+                "emails", "body", id_column="id", date_column="sent_at"
+            )
+            luc.reindex_streaming(row_iter)
+        """
+        if self._shard_manager is None:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=(
+                    "reindex_streaming() requires a sharded index. "
+                    "Use reindex() for non-sharded indices."
+                ),
+            )
+        self._shard_manager.build_shards_streaming(row_iter, batch_size=batch_size)
+        self._is_indexed = True
+        self.save()
+        # Reload from storage to shed build-time RAM overhead
+        self._post_index_cleanup(self.name)
 
     def add_documents(
         self,
@@ -886,6 +1308,82 @@ class Lucis:
         self._is_indexed = True
         if persist:
             self.save()
+            # Reload from mmap to shed the materialized in-memory dicts
+            # created by _ensure_mutable(). Same cleanup path used by
+            # from_alchemy_table() and reindex().
+            if self._shard_manager is not None:
+                self._post_index_cleanup(self.name)
+
+    def remove_documents(
+        self,
+        doc_ids: List[Any],
+        persist: bool = True,
+        fallback_rebuild: bool = True,
+    ) -> int:
+        """Remove documents by original IDs.
+
+        Preferred path (LiteEngine): in-place removal from postings.
+        Universal fallback: full rebuild from source metadata.
+
+        Args:
+            doc_ids: Original document IDs to remove.
+            persist: Whether to save after removal.
+            fallback_rebuild: If in-place removal is unavailable,
+                run a full rebuild from source metadata.
+
+        Returns:
+            Number of removed documents (best-effort count).
+        """
+        if not doc_ids:
+            return 0
+
+        removed = 0
+
+        if self._shard_manager is not None and hasattr(self._shard_manager, "remove_documents"):
+            removed = self._shard_manager.remove_documents(doc_ids)
+        elif hasattr(self.engine, "remove_documents"):
+            removed = self.engine.remove_documents(doc_ids)
+        elif fallback_rebuild:
+            self._rebuild_from_source_info()
+            return len(doc_ids)
+        else:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=(
+                    f"'{self.engine.name}' does not support in-place remove_documents(). "
+                    "Enable fallback_rebuild=True or call reindex() manually."
+                ),
+            )
+
+        if removed <= 0:
+            return 0
+
+        self._is_indexed = True
+        if persist:
+            self.save()
+            if self._shard_manager is not None:
+                self._post_index_cleanup(self.name)
+
+        return removed
+
+    def _rebuild_from_source_info(self) -> None:
+        """Run a full rebuild using auto-generated source metadata readers."""
+        data_fn = self._auto_data_fn()
+        if data_fn is None:
+            raise LucisEngineError(
+                engine_name=self.engine.name,
+                detail=(
+                    "Cannot auto-rebuild: source metadata is missing. "
+                    "Provide data manually via reindex(data, dates=...)."
+                ),
+            )
+
+        result = data_fn()
+        if isinstance(result, tuple) and len(result) == 2:
+            data, dates = result
+            self.reindex(data, dates=dates)
+        else:
+            self.reindex(result)
 
     def rollback(self) -> None:
         """
@@ -1078,8 +1576,11 @@ class Lucis:
         self._rebuild_thread.start()
 
     def is_rebuilding(self) -> bool:
-        """
-        Return ``True`` if a background rebuild is in progress.
+        """Return ``True`` if a background rebuild is currently in progress.
+
+        Returns:
+            ``True`` while the rebuild thread started by
+            :meth:`reindex_async` is alive.
 
         Example::
 
@@ -1126,13 +1627,26 @@ class Lucis:
     # Phase 4: Worker / Automation 
 
     def _auto_data_fn(self) -> Callable:
-        """Auto-generate a data_fn based on stored _source_info.
+        """Auto-generate a ``data_fn`` callable from stored ``_source_info``.
 
         For sharded indices (``date_column`` present), the returned
         callable produces ``(data, dates)`` tuples.  For non-sharded
         indices, it returns ``Dict`` or ``List`` as before.
+
+        Uses ``self._reader`` for Alchemy sources (read-only access to
+        the production DB) and falls back to ``self.storage`` for other
+        backends.
+
+        Returns:
+            A no-argument callable that fetches the full corpus from
+            the configured data source.
+
+        Raises:
+            LucisEngineError: If ``_source_info`` is missing or has an
+                unknown ``type`` field.
         """
         info = self._source_info
+        reader = self._reader
         storage = self.storage
         date_col = info.get("date_column")
 
@@ -1142,21 +1656,35 @@ class Lucis:
             id_col = info["id_column"]
             where = info.get("where_clause")
 
-            # ── Sharded: return (data, dates) ──
-            if date_col and hasattr(storage, "read_table_with_dates"):
-                def fetch_with_dates():
-                    return storage.read_table_with_dates(
-                        table_name, text_col, id_col, date_col, where,
-                    )
-                return fetch_with_dates
+            # Sharded: return (data, dates)
+            if date_col:
+                if reader and hasattr(reader, "read_table_with_dates"):
+                    def fetch_with_dates():
+                        return reader.read_table_with_dates(
+                            table_name, text_col, id_col, date_col, where,
+                        )
+                    return fetch_with_dates
+                elif hasattr(storage, "read_table_with_dates"):
+                    def fetch_with_dates_storage():
+                        return storage.read_table_with_dates(
+                            table_name, text_col, id_col, date_col, where,
+                        )
+                    return fetch_with_dates_storage
 
-            # Non-sharded: Alchemy
-            if hasattr(storage, "read_table"):
+            # Non-sharded: Alchemy reader or storage
+            if reader and hasattr(reader, "read_table"):
                 def fetch():
-                    return storage.read_table(
+                    return reader.read_table(
                         table_name, text_col, id_col, where
                     )
                 return fetch
+
+            if hasattr(storage, "read_table"):
+                def fetch_storage():
+                    return storage.read_table(
+                        table_name, text_col, id_col, where
+                    )
+                return fetch_storage
 
             # Non-sharded: SQLite
             text_expr = _build_sql_text_expr(text_col)
@@ -1180,10 +1708,14 @@ class Lucis:
         elif info["type"] == "query":
             query_str = info["query"]
 
-            if hasattr(storage, "read_query"):
+            if reader and hasattr(reader, "read_query"):
                 def fetch_q():
-                    return storage.read_query(query_str)
+                    return reader.read_query(query_str)
                 return fetch_q
+            elif hasattr(storage, "read_query"):
+                def fetch_q_storage():
+                    return storage.read_query(query_str)
+                return fetch_q_storage
             else:
                 db_path = getattr(storage, "db_path", None)
                 def fetch_q_sqlite():
@@ -1208,6 +1740,47 @@ class Lucis:
             detail=f"Cannot auto-generate data_fn: unknown source type '{info.get('type')}'",
         )
 
+    def _auto_streaming_fn(self) -> Optional[Callable]:
+        """Return a no-arg callable that produces a streaming row iterator.
+
+        Available when: source is a ``"table"``, a ``_reader`` (or storage)
+        has ``stream_table_with_dates``, **and** a ``date_column`` is
+        configured (sharded mode).
+
+        Returns ``None`` when any of these conditions is not met —
+        callers should fall back to :meth:`_auto_data_fn`.
+
+        The returned callable has the signature::
+
+            def streaming_fn() -> Iterator[(doc_id, text, date_val)]
+
+        Each call to ``streaming_fn()`` opens a fresh server-side cursor
+        on the database.
+        """
+        info = self._source_info
+        if info is None or info.get("type") != "table":
+            return None
+        if not info.get("date_column"):
+            return None  # Streaming rebuild only meaningful for sharded mode
+
+        # Prefer the reader (Alchemy read-only); fall back to storage
+        source = self._reader if self._reader else self.storage
+        if not hasattr(source, "stream_table_with_dates"):
+            return None
+
+        table_name = info["table_name"]
+        text_col = info["text_column"]
+        id_col = info["id_column"]
+        date_col = info["date_column"]
+        where = info.get("where_clause")
+        schema = info.get("schema")
+
+        def streaming_fn():
+            return source.stream_table_with_dates(
+                table_name, text_col, id_col, date_col, where, schema,
+            )
+        return streaming_fn
+
     def _auto_delta_fn(
         self,
     ) -> Optional[Callable[[], Union[List[str], Dict[Any, str]]]]:
@@ -1230,11 +1803,11 @@ class Lucis:
 
         storage = self.storage
 
-        # ── Optimized path: table + id_column → SQL-level delta ────
+        # Optimized path: table + id_column → SQL-level delta
         if info["type"] == "table" and info.get("id_column"):
             return self._auto_delta_fn_by_id(info, storage)
 
-        # ── Universal path: fetch all → diff against known IDs ─────
+        # Universal path: fetch all → diff against known IDs
         return self._auto_delta_fn_universal()
 
     def _auto_delta_fn_by_id(
@@ -1246,6 +1819,8 @@ class Lucis:
 
         When a ``date_column`` is present, the returned callable
         produces ``(data, dates)`` tuples for shard routing.
+
+        Uses ``self._reader`` for Alchemy sources, falls back to storage.
         """
         id_col = info["id_column"]
         table_name = info["table_name"]
@@ -1253,13 +1828,15 @@ class Lucis:
         date_col = info.get("date_column")
         where = info.get("where_clause")
 
+        # Prefer reader for source DB access
+        source = self._reader if self._reader else storage
         last_max = [0]
 
-        if hasattr(storage, "_engine"):
-            # AlchemyStorage
+        if hasattr(source, "_engine"):
+            # AlchemyReader / AlchemyStorage
             from sqlalchemy import text as _sa_text
 
-            with storage._engine.connect() as conn:
+            with source._engine.connect() as conn:
                 result = conn.execute(
                     _sa_text(f"SELECT MAX({id_col}) FROM {table_name}")
                 ).scalar()
@@ -1267,7 +1844,19 @@ class Lucis:
                     last_max[0] = result
 
             # Build text expression for multi-column support
-            text_expr = storage._sql_concat_columns(text_col)
+            text_expr = source._sql_concat_columns(text_col)
+
+            def _make_delta_commit(fn):
+                """Attach deferred commit to a delta function."""
+                fn._pending_max = None
+
+                def commit():
+                    if fn._pending_max is not None:
+                        last_max[0] = fn._pending_max
+                        fn._pending_max = None
+
+                fn.commit = commit
+                return fn
 
             if date_col:
                 def delta_alchemy_sharded():
@@ -1279,7 +1868,7 @@ class Lucis:
                     if where:
                         sql += f" AND ({where})"
                     sql += f" ORDER BY {id_col}"
-                    with storage._engine.connect() as conn:
+                    with source._engine.connect() as conn:
                         rows = conn.execute(
                             _sa_t(sql), {"last_id": last_max[0]}
                         ).fetchall()
@@ -1287,9 +1876,9 @@ class Lucis:
                         return {}, {}
                     data = {str(row[0]): row[1] for row in rows}
                     dates = {str(row[0]): row[2] for row in rows}
-                    last_max[0] = max(row[0] for row in rows)
+                    delta_alchemy_sharded._pending_max = max(row[0] for row in rows)
                     return data, dates
-                return delta_alchemy_sharded
+                return _make_delta_commit(delta_alchemy_sharded)
             else:
                 def delta_alchemy():
                     from sqlalchemy import text as _sa_t
@@ -1297,16 +1886,16 @@ class Lucis:
                     if where:
                         sql += f" AND ({where})"
                     sql += f" ORDER BY {id_col}"
-                    with storage._engine.connect() as conn:
+                    with source._engine.connect() as conn:
                         rows = conn.execute(
                             _sa_t(sql), {"last_id": last_max[0]}
                         ).fetchall()
                     if not rows:
                         return {}
                     data = {str(row[0]): row[1] for row in rows}
-                    last_max[0] = max(row[0] for row in rows)
+                    delta_alchemy._pending_max = max(row[0] for row in rows)
                     return data
-                return delta_alchemy
+                return _make_delta_commit(delta_alchemy)
 
         else:
             # SQLiteStorage
@@ -1323,6 +1912,18 @@ class Lucis:
 
             # Build text expression for multi-column support
             text_expr = _build_sql_text_expr(text_col)
+
+            def _make_delta_commit(fn):
+                """Attach deferred commit to a delta function."""
+                fn._pending_max = None
+
+                def commit():
+                    if fn._pending_max is not None:
+                        last_max[0] = fn._pending_max
+                        fn._pending_max = None
+
+                fn.commit = commit
+                return fn
 
             if date_col:
                 def delta_sqlite_sharded():
@@ -1341,9 +1942,9 @@ class Lucis:
                         return {}, {}
                     data = {str(row[0]): row[1] for row in rows}
                     dates = {str(row[0]): row[2] for row in rows}
-                    last_max[0] = max(row[0] for row in rows)
+                    delta_sqlite_sharded._pending_max = max(row[0] for row in rows)
                     return data, dates
-                return delta_sqlite_sharded
+                return _make_delta_commit(delta_sqlite_sharded)
             else:
                 def delta_sqlite():
                     import sqlite3
@@ -1357,9 +1958,9 @@ class Lucis:
                     if not rows:
                         return {}
                     data = {str(row[0]): row[1] for row in rows}
-                    last_max[0] = max(row[0] for row in rows)
+                    delta_sqlite._pending_max = max(row[0] for row in rows)
                     return data
-                return delta_sqlite
+                return _make_delta_commit(delta_sqlite)
 
     def _auto_delta_fn_universal(
         self,
@@ -1414,67 +2015,155 @@ class Lucis:
         Works for both ``"table"`` sources (uses ``count_rows``) and
         ``"query"`` sources (wraps the original query in
         ``SELECT COUNT(*) FROM (…)``).
+
+        Uses ``self._reader`` for Alchemy sources, falls back to storage.
         """
         info = self._source_info
         if info is None:
             return None
 
-        storage = self.storage
+        # Prefer reader for source DB access
+        source = self._reader if self._reader else self.storage
         if self._shard_manager is not None:
             last_count = [self._shard_manager.total_docs]
         else:
             last_count = [self.engine.total_docs if self._is_indexed else 0]
 
+        def _make_detector(fetch_count):
+            """Wrap a count-fetcher into a detector with deferred commit."""
+            def detector():
+                current = fetch_count()
+                if current != last_count[0]:
+                    detector._pending = current
+                    detector._pending_count = current
+                    return True
+                detector._pending = None
+                detector._pending_count = None
+                return False
+
+            detector._pending = None
+            detector._last_count = last_count[0]
+            detector._pending_count = None
+            detector._supports_deletion_detection = True
+
+            def commit():
+                if detector._pending is not None:
+                    last_count[0] = detector._pending
+                    detector._last_count = last_count[0]
+                    detector._pending = None
+                    detector._pending_count = None
+
+            detector.commit = commit
+            return detector
+
         if info["type"] == "table":
             table_name = info["table_name"]
 
-            def detect_table():
-                current = storage.count_rows(table_name)
-                if current != last_count[0]:
-                    last_count[0] = current
-                    return True
-                return False
+            # Enhanced table detector: if id_column exists, track COUNT + MAX(id)
+            # so mixed "delete + insert" cycles are detected even when count
+            # remains unchanged.
+            if info.get("id_column"):
+                id_col = info["id_column"]
+                where = info.get("where_clause")
+                last_max = [0]
 
-            return detect_table
+                def _fetch_count_max_table():
+                    if hasattr(source, "_engine"):
+                        from sqlalchemy import text as _sa_text
+                        sql = f"SELECT COUNT(*), MAX({id_col}) FROM {table_name}"
+                        if where:
+                            sql += f" WHERE ({where})"
+                        with source._engine.connect() as conn:
+                            row = conn.execute(
+                                _sa_text(sql)
+                            ).fetchone()
+                        cnt = int(row[0] or 0)
+                        mx = int(row[1] or 0)
+                        return cnt, mx
+                    import sqlite3
+                    db_path = getattr(source, "db_path", None)
+                    sql = f"SELECT COUNT(*), MAX({id_col}) FROM {table_name}"
+                    if where:
+                        sql += f" WHERE ({where})"
+                    conn = sqlite3.connect(db_path)
+                    row = conn.execute(sql).fetchone()
+                    conn.close()
+                    cnt = int(row[0] or 0)
+                    mx = int(row[1] or 0)
+                    return cnt, mx
+
+                c0, m0 = _fetch_count_max_table()
+                last_count[0] = c0
+                last_max[0] = m0
+
+                def detector_table_count_max():
+                    current_count, current_max = _fetch_count_max_table()
+                    changed = (
+                        current_count != last_count[0]
+                        or current_max != last_max[0]
+                    )
+                    if changed:
+                        detector_table_count_max._pending = current_count
+                        detector_table_count_max._pending_count = current_count
+                        detector_table_count_max._pending_max_id = current_max
+                        return True
+                    detector_table_count_max._pending = None
+                    detector_table_count_max._pending_count = None
+                    detector_table_count_max._pending_max_id = None
+                    return False
+
+                detector_table_count_max._pending = None
+                detector_table_count_max._last_count = last_count[0]
+                detector_table_count_max._pending_count = None
+                detector_table_count_max._last_max_id = last_max[0]
+                detector_table_count_max._pending_max_id = None
+                detector_table_count_max._supports_deletion_detection = True
+
+                def commit_table_count_max():
+                    if detector_table_count_max._pending is not None:
+                        last_count[0] = detector_table_count_max._pending
+                        detector_table_count_max._last_count = last_count[0]
+                        detector_table_count_max._pending = None
+                        detector_table_count_max._pending_count = None
+                    if detector_table_count_max._pending_max_id is not None:
+                        last_max[0] = detector_table_count_max._pending_max_id
+                        detector_table_count_max._last_max_id = last_max[0]
+                        detector_table_count_max._pending_max_id = None
+
+                detector_table_count_max.commit = commit_table_count_max
+                return detector_table_count_max
+
+            return _make_detector(lambda: source.count_rows(table_name))
 
         elif info["type"] == "query":
             query_str = info["query"]
 
-            if hasattr(storage, "_engine"):
-                # AlchemyStorage — use sa_text
+            if hasattr(source, "_engine"):
                 from sqlalchemy import text as _sa_text
 
-                def detect_query_alchemy():
-                    with storage._engine.connect() as conn:
-                        current = conn.execute(
+                def _fetch_alchemy():
+                    with source._engine.connect() as conn:
+                        return conn.execute(
                             _sa_text(
                                 f"SELECT COUNT(*) FROM ({query_str}) AS _lucis_subq"
                             )
                         ).scalar()
-                    if current != last_count[0]:
-                        last_count[0] = current
-                        return True
-                    return False
 
-                return detect_query_alchemy
+                return _make_detector(_fetch_alchemy)
 
             else:
-                # SQLiteStorage — direct cursor
-                db_path = getattr(storage, "db_path", None)
+                db_path = getattr(source, "db_path", None)
 
-                def detect_query_sqlite():
+                def _fetch_sqlite():
                     import sqlite3
                     conn = sqlite3.connect(db_path)
                     current = conn.execute(
                         f"SELECT COUNT(*) FROM ({query_str})"
                     ).fetchone()[0]
                     conn.close()
-                    if current != last_count[0]:
-                        last_count[0] = current
-                        return True
-                    return False
+                    return current
 
-                return detect_query_sqlite
+                return _make_detector(_fetch_sqlite)
 
         return None
 
@@ -1490,6 +2179,8 @@ class Lucis:
         on_rebuild: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_cycle: Optional[Callable[[int, bool], None]] = None,
+        streaming: bool = True,
+        source_url: Optional[str] = None,
     ) -> "IndexWorker":
         """
         Create an ``IndexWorker`` bound to this Lucis instance.
@@ -1530,6 +2221,17 @@ class Lucis:
             on_rebuild: Callback ``fn(physical_name)`` on success.
             on_error: Callback ``fn(exception)`` on failure.
             on_cycle: Callback ``fn(cycle_number, skipped)`` every cycle.
+            streaming: Enable streaming full-rebuild mode (default ``True``).
+                When ``True`` and the source is a sharded Alchemy table, the
+                worker calls :meth:`reindex_streaming` instead of loading the
+                entire corpus into RAM via ``data_fn``.  This keeps peak RAM
+                at ≈ steady-state index RAM rather than doubling it during each
+                rebuild cycle.  Set to ``False`` to force the classic
+                ``fetchall`` path.
+            source_url: SQLAlchemy connection URL for the source database.
+                When provided, calls :meth:`connect_source` internally so the
+                worker can auto-generate ``data_fn`` / ``delta_fn`` from the
+                source.  This avoids a separate ``connect_source()`` call.
 
         Returns:
             An ``IndexWorker`` instance (not yet started).
@@ -1543,6 +2245,12 @@ class Lucis:
                                            name="articles_idx",
                                            engine="lite")
             worker = luc.create_worker(interval=60)
+            worker.start()
+
+        Example — reload with source_url (auto-discovery)::
+
+            luc = Lucis(name="articles_idx", engine="lite", binary_dir="auto")
+            worker = luc.create_worker(interval=60, source_url=URL)
             worker.start()
 
         Example — explicit incremental with custom delta_fn::
@@ -1559,6 +2267,10 @@ class Lucis:
             worker = luc.create_worker(data_fn=my_fetch, interval=30)
             worker.start()
         """
+        # Connect to source DB if URL provided
+        if source_url is not None:
+            self.connect_source(source_url)
+
         # Auto-detect incremental mode
         # LiteEngine → always incremental (uses add_documents)
         # CoreEngine  → always full rebuild (uses reindex)
@@ -1599,6 +2311,13 @@ class Lucis:
         if change_detector is None and self._source_info is not None:
             change_detector = self._auto_change_detector()
 
+        # Auto-generate streaming_fn for sharded+alchemy full-rebuild mode.
+        # When available, the worker streams rows from the DB without fetchall,
+        # keeping peak RAM ≈ steady-state index RAM instead of doubling it.
+        streaming_fn: Optional[Callable] = None
+        if streaming and not incremental:
+            streaming_fn = self._auto_streaming_fn()
+
         from .core.worker import IndexWorker
         return IndexWorker(
             lucis=self,
@@ -1612,10 +2331,173 @@ class Lucis:
             on_rebuild=on_rebuild,
             on_error=on_error,
             on_cycle=on_cycle,
+            streaming_fn=streaming_fn,
         )
+
+    # Health monitoring
+
+    def health_check(
+        self,
+        worker: Optional["IndexWorker"] = None,
+        benchmark_query: Optional[str] = None,
+    ) -> "HealthReport":
+        """
+        Generate a full health report: RAM usage, shard sizes, worker
+        status, and optional search benchmark.
+
+        Args:
+            worker: An ``IndexWorker`` to include in the report (optional).
+            benchmark_query: If provided, runs a timed search and includes
+                the latency in the report.
+
+        Returns:
+            A :class:`HealthReport` with all diagnostics.
+
+        Example::
+
+            report = luc.health_check(worker=worker, benchmark_query="test")
+            print(report)          # pretty table
+            print(report.to_dict())  # JSON-ready dict
+        """
+        return _health_check(self, worker=worker, benchmark_query=benchmark_query)
+
+    def health_monitor(
+        self,
+        worker: Optional["IndexWorker"] = None,
+        interval: float = 30,
+        benchmark_query: Optional[str] = None,
+        on_report: Optional[Any] = None,
+        ram_warning_mb: float = 512,
+    ) -> "HealthMonitor":
+        """
+        Create a continuous health monitor that collects periodic snapshots.
+
+        The monitor runs in a daemon thread and stores a history of
+        :class:`HealthReport` objects for trend analysis.
+
+        Args:
+            worker: An ``IndexWorker`` to include in reports.
+            interval: Seconds between snapshots (default 30).
+            benchmark_query: If provided, benchmarks search each cycle.
+            on_report: Optional callback ``fn(HealthReport)`` per cycle.
+            ram_warning_mb: Log a warning if index RAM exceeds this
+                threshold (default 512 MB).
+
+        Returns:
+            A :class:`HealthMonitor` instance (not yet started).
+            Call ``.start()`` to begin monitoring.
+
+        Example::
+
+            monitor = luc.health_monitor(worker=worker, interval=30)
+            monitor.start()
+            # ... app runs ...
+            monitor.stop()
+            monitor.print_summary()
+        """
+        return HealthMonitor(
+            lucis=self,
+            worker=worker,
+            interval=interval,
+            benchmark_query=benchmark_query,
+            on_report=on_report,
+            ram_warning_mb=ram_warning_mb,
+        )
+
+
+    #  Lifecycle Management                                                    
+
+    def connect_source(self, url: str) -> None:
+        """Attach an :class:`AlchemyReader` so the worker can sync with
+        the production database.
+
+        This is the **only** step needed after a simple autoload reload::
+
+            luc = Lucis(name="my_idx", engine="lite", binary_dir="auto")
+            luc.connect_source(url="mysql+pymysql://user:pass@host/db")
+            worker = luc.create_worker(interval=60)
+
+        The URL is intentionally **not** persisted (security) — so the
+        caller must supply it each time the worker is needed.
+
+        Args:
+            url: SQLAlchemy connection URL for the source database.
+        """
+        AlchemyReader = _get_alchemy_reader_class()
+        if self._reader is not None:
+            close_fn = getattr(self._reader, "close", None)
+            if close_fn is not None:
+                close_fn()
+        self._reader = AlchemyReader(url=url)
+
+    def close(self) -> None:
+        """Release all mmap handles held by loaded shard engines.
+
+        Also closes the AlchemyReader if one is attached.
+
+        Call this before deleting ``.lcs`` files on Windows, or when
+        the ``Lucis`` instance is no longer needed and you want to
+        free OS-level file handles immediately.
+        """
+        if self._shard_manager is not None:
+            self._shard_manager.close()
+        else:
+            close_fn = getattr(self.engine, "close_mmap", None)
+            if close_fn is not None:
+                close_fn()
+        if self._reader is not None:
+            close_fn = getattr(self._reader, "close", None)
+            if close_fn is not None:
+                close_fn()
+            self._reader = None
+
+    def generate_lcs(self) -> int:
+        """Write ``.lcs`` binary cache files for all currently-loaded shards.
+
+        This is the one-time step needed to enable mmap-based loading.
+        Call it once after a normal index load, then on subsequent runs
+        Lucis will automatically use the ``.lcs`` files (near-zero heap RAM).
+
+        The index in MySQL/SQLite is **not** modified — ``.lcs`` files
+        are only a read cache stored in ``binary_dir`` (default:
+        ``{storage_dir}/lcs/``).
+
+        Returns:
+            Number of ``.lcs`` files written.
+
+        Raises:
+            RuntimeError: If the instance is not sharded, not indexed,
+                or ``binary_dir`` is ``None``.
+
+        Example::
+
+            luc = Lucis(name="email_idx", ..., binary_dir="auto")
+            n = luc.generate_lcs()
+            print(f"Generated {n} .lcs files")
+            luc.close()
+            # Next load will use mmap automatically
+        """
+        if self._shard_manager is None:
+            raise RuntimeError(
+                "generate_lcs() is only supported for sharded indexes. "
+                "Non-sharded indexes don't benefit from .lcs files."
+            )
+        if not self._is_indexed:
+            raise RuntimeError(
+                "generate_lcs() requires a loaded index. "
+                "Load or build the index before calling generate_lcs()."
+            )
+        if self._shard_manager._binary_dir is None:
+            raise RuntimeError(
+                "generate_lcs() requires binary_dir to be set. "
+                "Pass binary_dir='auto' when creating Lucis."
+            )
+        base_name = self._shard_manager._lazy_base_name or self.name
+        return self._shard_manager.write_lcs_files(base_name)
 
     # info and debugging
     def __repr__(self) -> str:
+        """Return an informative string representation of the Lucis instance."""
         status = "indexed" if self._is_indexed else "empty"
 
         if self._shard_manager:

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "lucis"
 version = "0.1.0"
 authors = [
-  { name="Aries Meza", email="luisaries@gmail.com" },
+  { name="Luis Aries Meza Castillo", email="luisaries1998@gmail.com" },
 ]
 description = "A minimalist NLP toolkit and search engine generator for Python."
 readme = "README.md"

@@ -121,6 +121,7 @@ class IndexWorker:
         on_rebuild: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_cycle: Optional[Callable[[int, bool], None]] = None,
+        streaming_fn: Optional[Callable] = None,
     ):
         self._lucis = lucis
         self._data_fn = data_fn
@@ -133,6 +134,10 @@ class IndexWorker:
         self._on_rebuild = on_rebuild
         self._on_error = on_error
         self._on_cycle = on_cycle
+        # streaming_fn: no-arg callable that returns a (doc_id, text, date)
+        # iterator.  When set, full rebuilds use reindex_streaming() instead
+        # of fetching all rows into memory via data_fn().
+        self._streaming_fn = streaming_fn
 
         # Internal state
         self._thread: Optional[threading.Thread] = None
@@ -150,9 +155,14 @@ class IndexWorker:
         """
         Start the worker loop in a daemon thread.
 
-        The worker will immediately begin its first cycle. Calling
-        ``start()`` on an already-running worker is a no-op with a
-        warning.
+        The worker will immediately begin its first cycle.  Calling
+        ``start()`` on an already-running worker is a no-op (a warning
+        is logged).
+
+        Raises:
+            RuntimeError: Not raised directly, but if the underlying
+                thread cannot be started the Python runtime will propagate
+                the error.
         """
         if self.is_running():
             logger.warning("IndexWorker is already running — ignoring start()")
@@ -192,7 +202,13 @@ class IndexWorker:
         logger.info("IndexWorker stopped for '%s'", self._lucis.name)
 
     def is_running(self) -> bool:
-        """Return ``True`` if the worker thread is alive."""
+        """Return ``True`` if the worker thread is currently alive.
+
+        Returns:
+            ``True`` while the daemon thread is running, ``False``
+            after :meth:`stop` completes or before :meth:`start` is
+            called.
+        """
         return self._thread is not None and self._thread.is_alive()
 
     def trigger_now(self) -> None:
@@ -209,7 +225,13 @@ class IndexWorker:
 
     @property
     def stats(self) -> Dict[str, Any]:
-        """Return a snapshot of worker statistics."""
+        """Return a snapshot of worker statistics.
+
+        Returns:
+            Dict with keys ``running``, ``interval``, ``cycles``,
+            ``rebuilds``, ``errors``, ``last_rebuild_time``,
+            ``index_name``, ``auto_purge``, and ``keep_versions``.
+        """
         return {
             "running": self.is_running(),
             "interval": self._interval,
@@ -281,37 +303,124 @@ class IndexWorker:
         """
         start = time.perf_counter()
 
+        def _indexed_count() -> int:
+            sm = getattr(self._lucis, "_shard_manager", None)
+            if sm is not None:
+                return sm.total_docs
+            return self._lucis.engine.total_docs if getattr(self._lucis, "_is_indexed", False) else 0
+
+        def _fallback_full_rebuild() -> None:
+            # Streaming-aware full rebuild fallback.
+            if self._streaming_fn is not None and hasattr(self._lucis, "reindex_streaming"):
+                self._lucis.reindex_streaming(self._streaming_fn())
+                return
+
+            result_full = self._data_fn()
+            if isinstance(result_full, tuple) and len(result_full) == 2:
+                data_full, dates_full = result_full
+                self._lucis.reindex(data_full, dates=dates_full)
+            else:
+                self._lucis.reindex(result_full)
+
         if self._incremental and self._delta_fn is not None:
             # Incremental mode: fetch only new documents and add them
             result = self._delta_fn()
+
+            detector = self._change_detector
+            prev_count = getattr(detector, "_last_count", None)
+            pending_count = getattr(detector, "_pending_count", None)
 
             # Detect sharded mode: delta_fn returns (data, dates)
             if isinstance(result, tuple) and len(result) == 2:
                 delta, dates = result
                 if not delta:
-                    logger.debug("Incremental update: no new documents — skipping")
-                    return
-                self._lucis.add_documents(delta, dates=dates)
+                    # If source count decreased, incremental append-only cannot reconcile deletions.
+                    if (
+                        prev_count is not None
+                        and pending_count is not None
+                        and pending_count < prev_count
+                    ):
+                        logger.info(
+                            "Detected deletions (count %s -> %s). Falling back to full rebuild.",
+                            prev_count,
+                            pending_count,
+                        )
+                        _fallback_full_rebuild()
+                    else:
+                        logger.debug("Incremental update: no new documents — skipping")
+                        return
+                else:
+                    # Mixed insert/delete detection via count accounting:
+                    # current = prev + inserted - deleted  => deleted = prev + inserted - current
+                    if prev_count is not None and pending_count is not None:
+                        deleted = max(0, int(prev_count) + len(delta) - int(pending_count))
+                        if deleted > 0:
+                            logger.info(
+                                "Detected mixed changes (%d inserts, ~%d deletes). Falling back to full rebuild.",
+                                len(delta),
+                                deleted,
+                            )
+                            _fallback_full_rebuild()
+                        else:
+                            self._lucis.add_documents(delta, dates=dates)
+                    else:
+                        self._lucis.add_documents(delta, dates=dates)
             else:
                 delta = result
                 if not delta:
-                    logger.debug("Incremental update: no new documents — skipping")
-                    return
-                self._lucis.add_documents(delta)
+                    if (
+                        prev_count is not None
+                        and pending_count is not None
+                        and pending_count < prev_count
+                    ):
+                        logger.info(
+                            "Detected deletions (count %s -> %s). Falling back to full rebuild.",
+                            prev_count,
+                            pending_count,
+                        )
+                        _fallback_full_rebuild()
+                    else:
+                        logger.debug("Incremental update: no new documents — skipping")
+                        return
+                else:
+                    if prev_count is not None and pending_count is not None:
+                        deleted = max(0, int(prev_count) + len(delta) - int(pending_count))
+                        if deleted > 0:
+                            logger.info(
+                                "Detected mixed changes (%d inserts, ~%d deletes). Falling back to full rebuild.",
+                                len(delta),
+                                deleted,
+                            )
+                            _fallback_full_rebuild()
+                        else:
+                            self._lucis.add_documents(delta)
+                    else:
+                        self._lucis.add_documents(delta)
         else:
             # Full rebuild mode (default)
-            result = self._data_fn()
-
-            # Detect sharded mode: data_fn returns (data, dates)
-            if isinstance(result, tuple) and len(result) == 2:
-                data, dates = result
-                self._lucis.reindex(data, dates=dates)
+            # ── Streaming path: server-side cursor, no fetchall ──
+            if self._streaming_fn is not None and hasattr(self._lucis, "reindex_streaming"):
+                self._lucis.reindex_streaming(self._streaming_fn())
             else:
-                self._lucis.reindex(result)
+                # Classic path: data_fn() returns full dict/list in RAM
+                result = self._data_fn()
+
+                # Detect sharded mode: data_fn returns (data, dates)
+                if isinstance(result, tuple) and len(result) == 2:
+                    data, dates = result
+                    self._lucis.reindex(data, dates=dates)
+                else:
+                    self._lucis.reindex(result)
 
         elapsed = time.perf_counter() - start
         self.last_rebuild_time = round(elapsed, 3)
         self.rebuilds += 1
+
+        # Commit deferred state only after successful rebuild
+        if hasattr(self._change_detector, "commit"):
+            self._change_detector.commit()
+        if self._delta_fn is not None and hasattr(self._delta_fn, "commit"):
+            self._delta_fn.commit()
 
         # Grab the current physical name for the callback
         physical_name = self._lucis.storage.get_alias(self._lucis.name) or "unknown"
@@ -341,7 +450,11 @@ class IndexWorker:
                 logger.warning("Auto-purge failed: %s", exc)
 
     def _interruptible_sleep(self, seconds: float) -> None:
-        """Sleep for *seconds*, waking early if ``_stop_event`` is set."""
+        """Sleep for *seconds*, returning early if ``_stop_event`` is set.
+
+        Args:
+            seconds: Total sleep duration in seconds.
+        """
         end_time = time.monotonic() + seconds
         while time.monotonic() < end_time:
             if self._stop_event.is_set():
@@ -351,9 +464,11 @@ class IndexWorker:
             time.sleep(min(0.25, max(0, remaining)))
 
     def __repr__(self) -> str:
+        """Return an informative string representation of the worker."""
         status = "running" if self.is_running() else "stopped"
+        mode = "incremental" if self._incremental else ("streaming" if self._streaming_fn else "full-rebuild")
         return (
             f"IndexWorker(index='{self._lucis.name}', "
-            f"interval={self._interval}s, status='{status}', "
-            f"cycles={self.cycles}, rebuilds={self.rebuilds})"
+            f"mode='{mode}', interval={self._interval}s, "
+            f"status='{status}', cycles={self.cycles}, rebuilds={self.rebuilds})"
         )

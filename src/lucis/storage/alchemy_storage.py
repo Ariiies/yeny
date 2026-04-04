@@ -19,10 +19,17 @@ For PostgreSQL::
 """
 from __future__ import annotations
 
+import csv
+import io
+import logging
+import os
+import tempfile
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Generator, List, Optional, Union
 
 from ..utils.serialization import dumps as _dumps, loads as _loads
+
+logger = logging.getLogger("lucis.storage.alchemy")
 
 try:
     from sqlalchemy import (
@@ -123,7 +130,12 @@ class AlchemyStorage(BaseStorage):
         elif url is not None:
             kwargs: Dict[str, Any] = {}
             if connect_args:
-                kwargs["connect_args"] = connect_args
+                kwargs["connect_args"] = dict(connect_args)
+            # For MySQL/PyMySQL: enable LOAD DATA LOCAL INFILE support
+            # automatically so csv_bulk_insert works out of the box.
+            if "pymysql" in url:
+                ca = kwargs.setdefault("connect_args", {})
+                ca.setdefault("local_infile", True)
             # pool_pre_ping ensures stale connections are recycled
             self._engine = create_engine(url, pool_pre_ping=True, **kwargs)
             self._owns_engine = True
@@ -163,11 +175,20 @@ class AlchemyStorage(BaseStorage):
             Column("source_where", Text, nullable=True),
         )
 
+        # utf8mb4_bin collation ensures case-sensitive exact matching on MySQL/MariaDB.
+        # Other dialects (SQLite, PostgreSQL) don't support it, so we omit it there.
+        _dialect = self._engine.dialect.name
+        _word_col_kwargs: Dict[str, Any] = {"nullable": False}
+        if _dialect in ("mysql", "mariadb"):
+            _word_col = Column("word", String(255, collation="utf8mb4_bin"), **_word_col_kwargs)
+        else:
+            _word_col = Column("word", String(255), **_word_col_kwargs)
+
         self._t_inverted_index = Table(
             "lucis_inverted_index",
             self._metadata,
             Column("index_name", String(255), nullable=False),
-            Column("word", String(255, collation="utf8mb4_bin"), nullable=False),
+            _word_col,
             Column("postings", Text(2**24), nullable=False),
         )
         Index(
@@ -276,10 +297,223 @@ class AlchemyStorage(BaseStorage):
                     pass  # table may not exist yet on first run
 
     @staticmethod
-    def _chunked_insert(conn: Any, table: Any, rows: list, chunk_size: int = 200) -> None:
-        """Insert *rows* into *table* in small batches to avoid max_allowed_packet errors."""
-        for i in range(0, len(rows), chunk_size):
-            conn.execute(table.insert(), rows[i : i + chunk_size])
+    def _chunked_insert(
+        conn: Any,
+        table: Any,
+        rows: Any,
+        chunk_size: int = 200,
+        max_payload_bytes: int = 1_000_000,
+    ) -> None:
+        """Insert *rows* into *table* in small batches.
+
+        Applies **two** flush thresholds to avoid MySQL
+        ``max_allowed_packet`` errors:
+
+        1. **Row count** — at most *chunk_size* rows per batch.
+        2. **Payload size** — at most *max_payload_bytes* estimated
+           bytes per batch (default 1 MB, conservative to account
+           for PyMySQL SQL-building overhead which can add 20-30%
+           on top of raw data).
+
+        Uses a **pre-check** pattern: before adding a new row to the
+        current batch, it verifies that doing so would not exceed
+        either threshold.  If it would, the current batch is flushed
+        first.  This guarantees each batch stays strictly under the
+        configured limits (the only exception is a single row that
+        by itself exceeds *max_payload_bytes* — it is inserted alone).
+
+        This is critical for the inverted-index table where a single
+        ``postings`` JSON value can exceed 300 KB when a token appears
+        in hundreds of thousands of documents.
+
+        Accepts both lists and iterators/generators.  When a generator
+        is supplied the rows are consumed lazily — only the current
+        chunk is materialised in RAM.
+
+        Args:
+            conn: An active SQLAlchemy connection.
+            table: SQLAlchemy ``Table`` object to insert into.
+            rows: List or iterable of row dicts to insert.
+            chunk_size: Maximum rows per ``INSERT`` statement.
+            max_payload_bytes: Approximate byte-size cap per batch.
+                Before adding a row, if accumulated data would exceed
+                this threshold the batch is flushed first.  Set to
+                ``0`` to disable size-based flushing.
+        """
+
+        def _estimate_row_bytes(row: dict) -> int:
+            """Cheap estimate: sum of str/bytes value lengths."""
+            total = 0
+            for v in row.values():
+                if isinstance(v, str):
+                    total += len(v)
+                elif isinstance(v, bytes):
+                    total += len(v)
+                else:
+                    total += 8  # int/float/etc.
+            return total
+
+        if isinstance(rows, list):
+            # Fast path for pre-built lists (id_mapping, doc_lengths — small rows)
+            if max_payload_bytes <= 0:
+                for i in range(0, len(rows), chunk_size):
+                    conn.execute(table.insert(), rows[i : i + chunk_size])
+            else:
+                chunk_start = 0
+                acc_bytes = 0
+                for i, row in enumerate(rows):
+                    row_bytes = _estimate_row_bytes(row)
+                    # Pre-check: flush BEFORE adding if limits would be exceeded
+                    if i > chunk_start and (
+                        (i - chunk_start) >= chunk_size
+                        or acc_bytes + row_bytes >= max_payload_bytes
+                    ):
+                        conn.execute(table.insert(), rows[chunk_start:i])
+                        chunk_start = i
+                        acc_bytes = 0
+                    acc_bytes += row_bytes
+                if chunk_start < len(rows):
+                    conn.execute(table.insert(), rows[chunk_start:])
+        else:
+            # Streaming path for generators — never materialise full list
+            chunk: list = []
+            acc_bytes = 0
+            for row in rows:
+                row_bytes = _estimate_row_bytes(row)
+                # Pre-check: flush BEFORE adding if limits would be exceeded
+                if chunk and (
+                    len(chunk) >= chunk_size
+                    or (max_payload_bytes > 0 and acc_bytes + row_bytes >= max_payload_bytes)
+                ):
+                    conn.execute(table.insert(), chunk)
+                    chunk = []
+                    acc_bytes = 0
+                chunk.append(row)
+                acc_bytes += row_bytes
+            if chunk:
+                conn.execute(table.insert(), chunk)
+
+    # ── CSV Bulk Insert (LOAD DATA LOCAL INFILE) ──
+
+    @staticmethod
+    def _csv_bulk_insert(
+        conn: Any,
+        table_name: str,
+        columns: List[str],
+        rows: Any,
+        batch_rows: int = 50_000,
+    ) -> int:
+        """Bulk-insert rows via ``LOAD DATA LOCAL INFILE`` (MySQL/MariaDB).
+
+        Writes rows to a temporary CSV file on disk, then issues a
+        ``LOAD DATA LOCAL INFILE`` statement to load the file directly
+        into the target table.  This bypasses the SQL parser and
+        value-by-value binding, resulting in **10-50× faster** inserts
+        compared to ``executemany(INSERT ...)``.
+
+        The CSV is written in batches of *batch_rows* to limit peak
+        disk usage.  Each batch is loaded and the temp file is
+        truncated before writing the next batch.
+
+        **Memory profile:** Only the current batch of rows (dicts) plus
+        the temp CSV file on disk are materialised at any time.  For a
+        50K-row batch with ~200-byte rows, that is ~10 MB of RAM and
+        ~10 MB on disk — negligible.
+
+        **Compatibility:**
+        - Requires ``local_infile=True`` on the PyMySQL connection
+          (auto-configured by ``AlchemyStorage.__init__``).
+        - The MySQL server must have ``local_infile=ON`` (default on
+          most installations; on managed services use the server
+          parameter group / console to enable it).
+
+        Args:
+            conn: An active SQLAlchemy connection (inside a transaction).
+            table_name: Target MySQL table name (e.g. ``"lucis_inverted_index"``).
+            columns: Ordered list of column names matching the CSV field order.
+            rows: Iterable (list or generator) of ``dict`` rows.
+                  Keys must be a superset of *columns*.
+            batch_rows: Max rows per temp-file batch.  Default 50 000.
+                Tune down if disk space is very limited; tune up for
+                maximum throughput on fast storage.
+
+        Returns:
+            Total number of rows loaded.
+        """
+        total_loaded = 0
+
+        # We use a named temp file (delete=False) so the MySQL client
+        # library can open it by path.  We clean up manually.
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".csv",
+            prefix="lucis_bulk_",
+            delete=False,
+            newline="",
+            encoding="utf-8",
+        )
+        tmp_path = tmp.name
+
+        try:
+            batch: List[dict] = []
+
+            def _flush_batch() -> int:
+                """Write *batch* to CSV file, LOAD DATA, return row count."""
+                if not batch:
+                    return 0
+
+                # Rewind and truncate the temp file for this batch
+                tmp.seek(0)
+                tmp.truncate()
+
+                writer = csv.writer(
+                    tmp,
+                    delimiter="\t",
+                    quoting=csv.QUOTE_NONE,
+                    escapechar="\\",
+                    lineterminator="\n",
+                )
+                for row_dict in batch:
+                    writer.writerow([row_dict[col] for col in columns])
+                tmp.flush()
+
+                # Build and execute LOAD DATA LOCAL INFILE
+                # Use forward slashes — MySQL accepts them on all platforms.
+                file_path_sql = tmp_path.replace("\\", "/")
+                col_list = ", ".join(f"`{c}`" for c in columns)
+                sql = (
+                    f"LOAD DATA LOCAL INFILE '{file_path_sql}' "
+                    f"INTO TABLE `{table_name}` "
+                    f"FIELDS TERMINATED BY '\\t' "
+                    f"ESCAPED BY '\\\\' "
+                    f"LINES TERMINATED BY '\\n' "
+                    f"({col_list})"
+                )
+                conn.execute(sa_text(sql))
+                loaded = len(batch)
+                batch.clear()
+                return loaded
+
+            for row in rows:
+                batch.append(row)
+                if len(batch) >= batch_rows:
+                    total_loaded += _flush_batch()
+
+            # Final flush
+            total_loaded += _flush_batch()
+
+        finally:
+            tmp.close()
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        return total_loaded
+
+    def _is_mysql(self) -> bool:
+        """Return ``True`` if the backend is MySQL or MariaDB."""
+        return self._engine.dialect.name in ("mysql", "mariadb")
 
     # Cross-field search support
 
@@ -352,100 +586,232 @@ class AlchemyStorage(BaseStorage):
         """
         Persist the engine state into the ``lucis_*`` tables.
 
-        ``data`` is the bundle produced by ``CoreEngine.persist()`` and
+        ``data`` is the bundle produced by ``BaseEngine.persist()`` and
         contains the keys: *index*, *doc_vectors*, *id_map*, *doc_lengths*,
         *total_docs*, *id_type*.
+
+        On **MySQL / MariaDB** the heavy tables (inverted index, vectors,
+        id mapping, doc lengths) are loaded via ``LOAD DATA LOCAL INFILE``
+        using temporary CSV files — this is **10-50× faster** than
+        row-by-row ``INSERT`` statements.  If the CSV path fails for
+        any reason (server policy, Docker volumes, etc.), it falls back
+        transparently to the traditional ``_chunked_insert`` path.
+
+        On all other dialects (SQLite, PostgreSQL) the ``_chunked_insert``
+        path is used directly.
+
+        Args:
+            data: Engine-state dict to persist.
+            name: Physical index name (storage key).
+
+        Raises:
+            sqlalchemy.exc.SQLAlchemyError: If the write fails (the
+                transaction is rolled back automatically by the context
+                manager).
+        """
+        use_csv = self._is_mysql()
+
+        if use_csv:
+            try:
+                self._save_with_csv(data, name)
+                return
+            except Exception as exc:
+                logger.warning(
+                    "CSV bulk save failed (%s) — retrying with chunked INSERT.",
+                    exc,
+                )
+                # Fall through to the chunked path below
+
+        self._save_with_chunked_insert(data, name)
+
+    def _save_common_header(self, conn: Any, data: Dict[str, Any], name: str) -> None:
+        """Persist metadata and wipe previous index data (shared by both paths).
+
+        Args:
+            conn: An active SQLAlchemy connection inside a transaction.
+            data: Engine-state dict.
+            name: Physical index name.
+        """
+        # 1. Metadata — upsert (delete + insert for portability)
+        conn.execute(
+            delete(self._t_metadata).where(
+                self._t_metadata.c.index_name == name
+            )
+        )
+        conn.execute(
+            self._t_metadata.insert().values(
+                index_name=name,
+                total_docs=data["total_docs"],
+                id_type=data["id_type"],
+                engine_name=data.get("engine_name", "CoreEngine"),
+            )
+        )
+
+        # 2. Wipe previous data for this index
+        for table in (
+            self._t_inverted_index,
+            self._t_doc_vectors,
+            self._t_id_mapping,
+            self._t_doc_lengths,
+        ):
+            conn.execute(
+                delete(table).where(table.c.index_name == name)
+            )
+
+    # ── Row generators (shared by both save paths) ──
+
+    @staticmethod
+    def _make_inv_rows(data: Dict[str, Any], name: str) -> Generator:
+        """Yield inverted-index row dicts."""
+        for word, docs in data["index"].items():
+            yield {
+                "index_name": name,
+                "word": word,
+                "postings": _dumps(
+                    {int(doc_id): freq for doc_id, freq in docs.items()}
+                ),
+            }
+
+    @staticmethod
+    def _make_vec_rows(data: Dict[str, Any], name: str) -> Generator:
+        """Yield doc-vector row dicts."""
+        for doc_id, vector in data.get("doc_vectors", {}).items():
+            yield {
+                "index_name": name,
+                "doc_internal_id": int(doc_id),
+                "vector": _dumps(vector),
+            }
+
+    @staticmethod
+    def _make_id_rows(data: Dict[str, Any], name: str) -> Generator:
+        """Yield id-mapping row dicts."""
+        for internal_id, original_id in data["id_map"].items():
+            yield {
+                "index_name": name,
+                "internal_id": int(internal_id),
+                "original_id": str(original_id),
+            }
+
+    @staticmethod
+    def _make_len_rows(data: Dict[str, Any], name: str) -> Generator:
+        """Yield doc-length row dicts."""
+        for doc_id, length in data["doc_lengths"].items():
+            yield {
+                "index_name": name,
+                "doc_internal_id": int(doc_id),
+                "length": length,
+            }
+
+    # ── CSV bulk path (MySQL / MariaDB) ──
+
+    def _save_with_csv(self, data: Dict[str, Any], name: str) -> None:
+        """Persist engine state using ``LOAD DATA LOCAL INFILE``.
+
+        This path is **10-50× faster** than row-by-row INSERTs for
+        large indices.  The entire save is wrapped in a single
+        transaction so partial failures are rolled back cleanly.
+
+        Args:
+            data: Engine-state dict.
+            name: Physical index name.
         """
         with self._engine.begin() as conn:
-            # 1. Metadata — upsert (delete + insert for portability)
-            conn.execute(
-                delete(self._t_metadata).where(
-                    self._t_metadata.c.index_name == name
-                )
+            self._save_common_header(conn, data, name)
+
+            # 3. Inverted index
+            inv_cols = ["index_name", "word", "postings"]
+            n_inv = self._csv_bulk_insert(
+                conn, "lucis_inverted_index", inv_cols,
+                self._make_inv_rows(data, name),
             )
-            conn.execute(
-                self._t_metadata.insert().values(
-                    index_name=name,
-                    total_docs=data["total_docs"],
-                    id_type=data["id_type"],
-                    engine_name=data.get("engine_name", "CoreEngine"),
+            logger.info("CSV bulk: %d inverted-index rows → %s", n_inv, name)
+
+            # 4. Doc vectors (optional — LiteEngine omits them)
+            if data.get("doc_vectors"):
+                vec_cols = ["index_name", "doc_internal_id", "vector"]
+                n_vec = self._csv_bulk_insert(
+                    conn, "lucis_doc_vectors", vec_cols,
+                    self._make_vec_rows(data, name),
                 )
+                logger.info("CSV bulk: %d doc-vector rows → %s", n_vec, name)
+
+            # 5. ID mapping
+            id_cols = ["index_name", "internal_id", "original_id"]
+            n_id = self._csv_bulk_insert(
+                conn, "lucis_id_mapping", id_cols,
+                self._make_id_rows(data, name),
+            )
+            logger.info("CSV bulk: %d id-mapping rows → %s", n_id, name)
+
+            # 6. Doc lengths
+            len_cols = ["index_name", "doc_internal_id", "length"]
+            n_len = self._csv_bulk_insert(
+                conn, "lucis_doc_lengths", len_cols,
+                self._make_len_rows(data, name),
+            )
+            logger.info("CSV bulk: %d doc-length rows → %s", n_len, name)
+
+    # ── Chunked INSERT path (universal fallback) ──
+
+    def _save_with_chunked_insert(self, data: Dict[str, Any], name: str) -> None:
+        """Persist engine state using traditional chunked INSERTs.
+
+        Works with any SQL dialect.  Used as the primary path for
+        non-MySQL backends and as a fallback when CSV bulk insert
+        is unavailable.
+
+        Args:
+            data: Engine-state dict.
+            name: Physical index name.
+        """
+        with self._engine.begin() as conn:
+            self._save_common_header(conn, data, name)
+
+            # 3. Inverted index
+            self._chunked_insert(
+                conn, self._t_inverted_index,
+                self._make_inv_rows(data, name),
+                chunk_size=50, max_payload_bytes=1_000_000,
             )
 
-            # 2. Wipe previous data for this index
-            for table in (
-                self._t_inverted_index,
-                self._t_doc_vectors,
-                self._t_id_mapping,
-                self._t_doc_lengths,
-            ):
-                conn.execute(
-                    delete(table).where(table.c.index_name == name)
+            # 4. Doc vectors (optional)
+            if data.get("doc_vectors"):
+                self._chunked_insert(
+                    conn, self._t_doc_vectors,
+                    self._make_vec_rows(data, name),
+                    chunk_size=500,
                 )
 
-            # 3. Inverted index (one row per word, postings as JSON)
-            inv_rows = [
-                {
-                    "index_name": name,
-                    "word": word,
-                    "postings": _dumps(
-                        {int(doc_id): freq for doc_id, freq in docs.items()}
-                    ),
-                }
-                for word, docs in data["index"].items()
-            ]
-            if inv_rows:
-                # chunk_size=100: postings JSON puede ser muy grande por término
-                self._chunked_insert(conn, self._t_inverted_index, inv_rows, chunk_size=100)
+            # 5. ID mapping
+            self._chunked_insert(
+                conn, self._t_id_mapping,
+                self._make_id_rows(data, name),
+                chunk_size=1000,
+            )
 
-            # 4. TF-IDF document vectors (one row per doc, vector as JSON)
-            #    Optional: LiteEngine does not produce doc_vectors
-            doc_vectors = data.get("doc_vectors", {})
-            if doc_vectors:
-                vec_rows = [
-                    {
-                        "index_name": name,
-                        "doc_internal_id": int(doc_id),
-                        "vector": _dumps(vector),
-                    }
-                    for doc_id, vector in doc_vectors.items()
-                ]
-                self._chunked_insert(conn, self._t_doc_vectors, vec_rows, chunk_size=500)
-
-            # 5. ID mapping (internal → original)
-            id_rows = [
-                {
-                    "index_name": name,
-                    "internal_id": int(internal_id),
-                    "original_id": str(original_id),
-                }
-                for internal_id, original_id in data["id_map"].items()
-            ]
-            if id_rows:
-                self._chunked_insert(conn, self._t_id_mapping, id_rows, chunk_size=1000)
-
-            # 6. Document lengths
-            len_rows = [
-                {
-                    "index_name": name,
-                    "doc_internal_id": int(doc_id),
-                    "length": length,
-                }
-                for doc_id, length in data["doc_lengths"].items()
-            ]
-            if len_rows:
-                self._chunked_insert(conn, self._t_doc_lengths, len_rows, chunk_size=1000)
+            # 6. Doc lengths
+            self._chunked_insert(
+                conn, self._t_doc_lengths,
+                self._make_len_rows(data, name),
+                chunk_size=1000,
+            )
 
     def load(self, name: str) -> Dict[str, Any]:
         """
         Reconstruct an engine state dict from the ``lucis_*`` tables.
+        Uses streaming iteration (``yield_per``) on large tables.
 
-        The returned dict has the same shape that ``CoreEngine.load_engine``
-        expects: *index*, *doc_vectors*, *id_map*, *doc_lengths*,
-        *total_docs*, *id_type*.
+        Args:
+            name: Physical index name (same key used in :meth:`save`).
+
+        Returns:
+            Engine-state dict ready to pass to ``BaseEngine.load_engine``.
+
+        Raises:
+            FileNotFoundError: If *name* is not found in ``lucis_metadata``.
         """
         with self._engine.connect() as conn:
-            # 1. Metadata
+            # 1. Metadata (single row — fetchone is fine)
             row = conn.execute(
                 select(
                     self._t_metadata.c.total_docs,
@@ -459,58 +825,58 @@ class AlchemyStorage(BaseStorage):
                 )
             total_docs, id_type = row
 
-            # 2. Inverted index (one row per word, JSON postings)
-            rows = conn.execute(
+            # 2. Inverted index — stream row-by-row, build dict incrementally
+            index: Dict[str, Dict[int, int]] = {}
+            result = conn.execute(
                 select(
                     self._t_inverted_index.c.word,
                     self._t_inverted_index.c.postings,
                 ).where(self._t_inverted_index.c.index_name == name)
-            ).fetchall()
+            ).yield_per(2_000)
 
-            index: Dict[str, Dict[int, int]] = {}
-            for word, postings_json in rows:
+            for word, postings_json in result:
                 index[word] = {
                     int(k): v for k, v in _loads(postings_json).items()
                 }
 
-            # 3. Document vectors (one row per doc, JSON vector)
-            rows = conn.execute(
+            # 3. Document vectors — stream row-by-row
+            doc_vectors: Dict[int, Dict[str, float]] = {}
+            result = conn.execute(
                 select(
                     self._t_doc_vectors.c.doc_internal_id,
                     self._t_doc_vectors.c.vector,
                 ).where(self._t_doc_vectors.c.index_name == name)
-            ).fetchall()
+            ).yield_per(2_000)
 
-            doc_vectors: Dict[int, Dict[str, float]] = {}
-            for doc_id, vector_json in rows:
+            for doc_id, vector_json in result:
                 doc_vectors[doc_id] = _loads(vector_json)
 
-            # 4. ID mapping
-            rows = conn.execute(
+            # 4. ID mapping — stream row-by-row
+            id_map: Dict[int, Any] = {}
+            result = conn.execute(
                 select(
                     self._t_id_mapping.c.internal_id,
                     self._t_id_mapping.c.original_id,
                 ).where(self._t_id_mapping.c.index_name == name)
-            ).fetchall()
+            ).yield_per(5_000)
 
-            id_map: Dict[int, Any] = {}
-            for internal_id, original_id in rows:
+            for internal_id, original_id in result:
                 if id_type == "sequential":
                     id_map[internal_id] = int(original_id)
                 else:
                     id_map[internal_id] = original_id
 
-            # 5. Document lengths
-            rows = conn.execute(
+            # 5. Document lengths — stream row-by-row
+            doc_lengths: Dict[int, int] = {}
+            result = conn.execute(
                 select(
                     self._t_doc_lengths.c.doc_internal_id,
                     self._t_doc_lengths.c.length,
                 ).where(self._t_doc_lengths.c.index_name == name)
-            ).fetchall()
+            ).yield_per(5_000)
 
-            doc_lengths: Dict[int, int] = {
-                doc_id: length for doc_id, length in rows
-            }
+            for doc_id, length in result:
+                doc_lengths[doc_id] = length
 
         return {
             "index": index,
@@ -527,6 +893,13 @@ class AlchemyStorage(BaseStorage):
         Checks in order:
         1. Is *name* an alias that points to an existing physical index?
         2. Is *name* itself a physical index in ``lucis_metadata``?
+
+        Args:
+            name: Logical alias or physical index name to check.
+
+        Returns:
+            ``True`` if the index (or its alias target) exists in
+            ``lucis_metadata``.
         """
         resolved = self.resolve_alias(name)
         with self._engine.connect() as conn:
@@ -540,10 +913,14 @@ class AlchemyStorage(BaseStorage):
     # Extras 
 
     def delete(self, name: str) -> None:
-        """Remove all data for the given index from every ``lucis_*`` table.
+        """Remove all data for *name* from every ``lucis_*`` table.
 
-        If the index is sharded, all shard entries and the shard
+        If the index is sharded, all child shard entries and the shard
         registry are cleaned up automatically.
+
+        Args:
+            name: Physical index name to delete.  Aliases pointing to
+                this name are **not** removed automatically.
         """
         # Collect shard children (if any)
         shard_keys = self.load_shard_registry(name)
@@ -584,7 +961,12 @@ class AlchemyStorage(BaseStorage):
                 )
 
     def list_indices(self):
-        """Return a list of all index names stored in the database."""
+        """Return a sorted list of all index names stored in the database.
+
+        Returns:
+            List of physical index names present in ``lucis_metadata``
+            (excludes aliases).
+        """
         with self._engine.connect() as conn:
             rows = conn.execute(
                 select(self._t_metadata.c.index_name).order_by(
@@ -600,12 +982,25 @@ class AlchemyStorage(BaseStorage):
 
         If *name* is a registered alias, return its target.
         Otherwise return *name* unchanged.
+
+        Args:
+            name: Logical alias or physical index name.
+
+        Returns:
+            Physical index name the alias points to, or *name* if it
+            is not a registered alias.
         """
         target = self.get_alias(name)
         return target if target is not None else name
 
     def set_alias(self, alias_name: str, target_index: str) -> None:
-        """Create or update an alias → target mapping (atomic)."""
+        """Create or update an alias → target mapping (atomic).
+
+        Args:
+            alias_name: Logical name users reference the index by.
+            target_index: Physical versioned name the alias should
+                point to (e.g. ``"articles__v20260210_143022"``).
+        """
         with self._engine.begin() as conn:
             conn.execute(
                 delete(self._t_aliases).where(
@@ -620,7 +1015,15 @@ class AlchemyStorage(BaseStorage):
             )
 
     def get_alias(self, alias_name: str) -> Optional[str]:
-        """Return the physical index name for *alias_name*, or ``None``."""
+        """Return the physical index name for *alias_name*.
+
+        Args:
+            alias_name: The logical alias to look up.
+
+        Returns:
+            Physical index name the alias points to, or ``None`` if
+            *alias_name* is not registered.
+        """
         with self._engine.connect() as conn:
             row = conn.execute(
                 select(self._t_aliases.c.target_index).where(
@@ -630,7 +1033,11 @@ class AlchemyStorage(BaseStorage):
         return row[0] if row else None
 
     def list_aliases(self) -> Dict[str, str]:
-        """Return all aliases as ``{alias_name: target_index}``."""
+        """Return all registered aliases.
+
+        Returns:
+            ``{alias_name: target_index}`` dict sorted by alias name.
+        """
         with self._engine.connect() as conn:
             rows = conn.execute(
                 select(
@@ -641,7 +1048,11 @@ class AlchemyStorage(BaseStorage):
         return {row[0]: row[1] for row in rows}
 
     def delete_alias(self, alias_name: str) -> None:
-        """Remove an alias (does NOT delete the physical index)."""
+        """Remove an alias (does **not** delete the physical index).
+
+        Args:
+            alias_name: The alias to remove.
+        """
         with self._engine.begin() as conn:
             conn.execute(
                 delete(self._t_aliases).where(
@@ -659,6 +1070,13 @@ class AlchemyStorage(BaseStorage):
 
         Shard entries (``__shard__``) are excluded — only parent
         version names are returned.
+
+        Args:
+            base_name: The logical/alias name whose versions to list.
+
+        Returns:
+            Sorted list of versioned physical names, e.g.
+            ``["articles__v20260210_143022", "articles__v20260210_150545"]``.
         """
         with self._engine.connect() as conn:
             rows = conn.execute(
@@ -672,7 +1090,15 @@ class AlchemyStorage(BaseStorage):
     # Source-info persistence (smart worker support)
 
     def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
-        """Persist data-source metadata into ``lucis_metadata``."""
+        """Persist data-source metadata into ``lucis_metadata``.
+
+        Args:
+            name: Physical index name to associate the metadata with.
+            info: Source-info dict with keys such as ``type``,
+                ``table_name``, ``text_column`` (str or list),
+                ``id_column``, ``date_column``, ``where_clause``,
+                and ``query``.
+        """
         import json as _json
         text_col = info.get("text_column")
         # Multi-column: serialize as JSON list; single column: plain string
@@ -692,7 +1118,15 @@ class AlchemyStorage(BaseStorage):
             )
 
     def load_source_info(self, name: str) -> Optional[Dict[str, Any]]:
-        """Load source metadata from ``lucis_metadata``."""
+        """Load source metadata from ``lucis_metadata``.
+
+        Args:
+            name: Physical index name whose metadata to retrieve.
+
+        Returns:
+            Source-info dict (see :meth:`save_source_info` for key
+            descriptions), or ``None`` if no metadata was stored.
+        """
         with self._engine.connect() as conn:
             row = conn.execute(
                 select(
@@ -746,7 +1180,14 @@ class AlchemyStorage(BaseStorage):
         return None
 
     def count_rows(self, table_name: str) -> Optional[int]:
-        """Return ``SELECT COUNT(*) FROM <table_name>``."""
+        """Return ``SELECT COUNT(*) FROM <table_name>``.
+
+        Args:
+            table_name: Name of the user table to count rows in.
+
+        Returns:
+            Integer row count.
+        """
         with self._engine.connect() as conn:
             result = conn.execute(
                 sa_text(f"SELECT COUNT(*) FROM {table_name}")
@@ -755,8 +1196,34 @@ class AlchemyStorage(BaseStorage):
 
     # Shard support (temporal partitioning)
 
+    def get_total_docs(self, name: str) -> int:
+        """Return *total_docs* for *name* without loading the full index.
+
+        Uses a single metadata-only query — much lighter than ``load()``.
+        Returns 0 if the index does not exist.
+
+        Args:
+            name: Physical index name (already resolved from alias).
+
+        Returns:
+            Document count stored in ``lucis_metadata``, or 0.
+        """
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(self._t_metadata.c.total_docs)
+                .where(self._t_metadata.c.index_name == name)
+                .limit(1)
+            ).fetchone()
+        return int(row[0]) if row else 0
+
     def save_shard_registry(self, index_name: str, shard_keys: list) -> None:
-        """Persist the shard keys for a sharded index."""
+        """Persist the shard keys for a sharded index.
+
+        Args:
+            index_name: The versioned physical name of the parent index.
+            shard_keys: List of shard keys to register
+                (e.g. ``["2026_01", "9999_99"]``).
+        """
         with self._engine.begin() as conn:
             conn.execute(
                 delete(self._t_shard_registry).where(
@@ -771,7 +1238,15 @@ class AlchemyStorage(BaseStorage):
                 conn.execute(self._t_shard_registry.insert(), rows)
 
     def load_shard_registry(self, index_name: str) -> list:
-        """Return shard keys for *index_name*, sorted. Empty = not sharded."""
+        """Return shard keys for *index_name*, sorted.
+
+        Args:
+            index_name: The versioned physical name of the parent index.
+
+        Returns:
+            Sorted list of shard keys.  An empty list means the index
+            is monolithic (not sharded).
+        """
         with self._engine.connect() as conn:
             rows = conn.execute(
                 select(self._t_shard_registry.c.shard_key)
@@ -789,6 +1264,11 @@ class AlchemyStorage(BaseStorage):
 
         Checks for columns named ``created_at``, ``updated_at``, or
         ``timestamp`` (in that order).
+
+        Args:
+            table_name: Name of the user table to inspect.
+            schema: Database schema (optional, e.g. ``"public"`` for
+                PostgreSQL).
 
         Returns:
             The column name if found, otherwise ``None``.
@@ -819,13 +1299,21 @@ class AlchemyStorage(BaseStorage):
         Supports **cross-field search**: pass a list of column names
         to concatenate them into a single document at the SQL level.
 
-        Returns ``(data, dates)`` where:
+        Args:
+            table_name: Source table name.
+            text_column: Column name or list of column names for document text.
+            id_column: Column to use as document ID (optional).
+                When ``None``, row indices are used as string keys.
+            date_column: Column for temporal shard routing (optional).
+            where_clause: Optional SQL ``WHERE`` filter
+                (without the ``WHERE`` keyword).
+            schema: Database schema (optional).
 
-        - *data*: ``Dict[str, str]`` mapping ``{doc_id: text}``.
-        - *dates*: ``Dict[str, Any]`` mapping ``{doc_id: date_value}``.
+        Returns:
+            Tuple ``(data, dates)`` where:
 
-        When *id_column* is ``None``, row indices are used as string
-        keys (``"0"``, ``"1"``, …).
+            - *data*: ``Dict[str, str]`` mapping ``{doc_id: text}``.
+            - *dates*: ``Dict[str, Any]`` mapping ``{doc_id: date_value}``.
         """
         user_meta = MetaData()
         user_table = Table(
@@ -872,6 +1360,90 @@ class AlchemyStorage(BaseStorage):
                 dates[doc_id] = None
 
         return data, dates
+
+    def stream_table_with_dates(
+        self,
+        table_name: str,
+        text_column: Union[str, List[str]],
+        id_column: Optional[str] = None,
+        date_column: Optional[str] = None,
+        where_clause: Optional[str] = None,
+        schema: Optional[str] = None,
+        batch_size: int = 5_000,
+    ):
+        """Stream rows from a table as ``(doc_id_str, text, date_val)`` tuples.
+
+        Uses a **server-side cursor** (``yield_per``) so only *batch_size*
+        rows are fetched from the database at a time.  The peak RAM
+        from data ingestion is bounded by ``batch_size × row_size``
+        instead of holding all rows in memory at once.
+
+        This is the streaming counterpart to :meth:`read_table_with_dates`
+        and is the recommended path for datasets > 100 K rows.
+
+        Args:
+            table_name: Source table name.
+            text_column: Column name or list of column names for text.
+            id_column: Column to use as document ID (optional).
+            date_column: Column for temporal shard routing (optional).
+            where_clause: Optional SQL ``WHERE`` filter.
+            schema: Database schema (optional).
+            batch_size: Number of rows to buffer per server fetch.
+                Default 5 000 — a safe balance between network round-trips
+                and memory pressure.
+
+        Yields:
+            ``(doc_id_str, text, date_val)`` tuples.
+            *doc_id_str* is always a string.
+            *date_val* is ``None`` when *date_column* is not given.
+
+        Example::
+
+            for doc_id, text, date in storage.stream_table_with_dates(
+                "emails", "body", id_column="id", date_column="created_at"
+            ):
+                ...
+        """
+        user_meta = MetaData()
+        user_table = Table(
+            table_name, user_meta, autoload_with=self._engine, schema=schema
+        )
+
+        text_expr = self._build_text_expr(user_table, text_column)
+        cols = []
+        if id_column:
+            cols.append(user_table.c[id_column])
+        cols.append(text_expr)
+        if date_column:
+            cols.append(user_table.c[date_column])
+
+        stmt = select(*cols)
+        if where_clause:
+            stmt = stmt.where(sa_text(where_clause))
+
+        # stream_results=True + yield_per activates the server-side cursor
+        # so SQLAlchemy fetches *batch_size* rows per network round-trip.
+        conn_opts = {"stream_results": True, "yield_per": batch_size}
+        row_counter = 0
+
+        with self._engine.connect().execution_options(**conn_opts) as conn:
+            result = conn.execute(stmt)
+            if id_column and date_column:
+                for row in result:
+                    yield str(row[0]), row[1], row[2]
+                    row_counter += 1
+            elif id_column:
+                for row in result:
+                    yield str(row[0]), row[1], None
+                    row_counter += 1
+            elif date_column:
+                for i, row in enumerate(result):
+                    yield str(i), row[0], row[1]
+                    row_counter += 1
+            else:
+                for i, row in enumerate(result):
+                    yield str(i), row[0], None
+                    row_counter += 1
 
     # Read helpers
 
@@ -985,12 +1557,14 @@ class AlchemyStorage(BaseStorage):
             self._engine.dispose()
 
     def __del__(self):
+        """Dispose the engine when the object is garbage-collected."""
         try:
             self.close()
         except Exception:
             pass
 
     def __repr__(self) -> str:
+        """Return a masked URL representation (password hidden by SQLAlchemy)."""
         # Mask password in URL for safety
         url = str(self._engine.url)
         return f"AlchemyStorage(url='{url}')"
