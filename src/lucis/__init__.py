@@ -19,6 +19,9 @@ from .models.search import SearchResult, SearchResponse
 from .storage.sqlite_storage import SQLiteStorage
 from .storage.metadata_storage import MetadataStorage
 
+# Sync layer (Phase 10 — Modular Architecture)
+from .sync.source_spec import SourceSpec
+
 # Worker (Phase 4 — Shadow Indexing)
 from .core.worker import IndexWorker
 
@@ -67,6 +70,9 @@ __all__ = [
     
     # Worker
     "IndexWorker",
+
+    # Sync
+    "SourceSpec",
     
     # Health
     "HealthReport",
