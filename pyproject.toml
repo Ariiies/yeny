@@ -1,28 +1,29 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "lucis"
-version = "0.1.0"
-authors = [
-  { name="Luis Aries Meza Castillo", email="luisaries1998@gmail.com" },
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "unit: Unit tests (fast)",
+    "integration: Integration tests (slower)",
+    "slow: Tests that take significant time",
 ]
-description = "A minimalist NLP toolkit and search engine generator for Python."
-readme = "README.md"
-requires-python = ">=3.11"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+
+[tool.coverage.run]
+source = ["src/lucis"]
+omit = [
+    "*/__pycache__/*",
+    "*/test_*",
+    "setup.py",
 ]
-dependencies = [] # Core no tiene dependencias externas
 
-[project.optional-dependencies]
-plus = ["numpy", "polars"] # Para cuando el usuario quiera usar el PlusEngine
-alchemy = ["sqlalchemy>=2.0"]  # Para AlchemyStorage (MySQL, PostgreSQL, etc.)
-mysql = ["sqlalchemy>=2.0", "pymysql"]  # AlchemyStorage + MySQL driver
-postgresql = ["sqlalchemy>=2.0", "psycopg2-binary"]  # AlchemyStorage + PostgreSQL driver
-
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+precision = 2
+show_missing = true

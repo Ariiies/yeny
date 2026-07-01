@@ -65,8 +65,10 @@ lucis_data/
 /*
 !src/
 !tests/
+!docs/
 !pyproject.toml
 !README.md
 !MANIFEST.in
 !.gitignore
 !LICENSE
+!docs/**

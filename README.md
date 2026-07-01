@@ -1,102 +1,119 @@
 # Lucis
 
-> **A minimalist NLP toolkit and search engine generator for Python.**
+> A minimalist NLP toolkit and search engine generator for Python.
 
-Lucis is a lightweight, flexible library designed to help developers build and integrate search functionality into their applications with zero friction. 
+Lucis is a lightweight, production-oriented search toolkit that helps you build full-text search features quickly, while still giving you advanced controls when your dataset grows.
 
-It follows a "progressive power" philosophy:
-1.  **Core Engine**: Starts as a pure Python dependency-free toolkit (perfect for simple use cases or restricted environments).
-2.  **Plus Engine**: Upgrades seamlessly to use **NumPy** and **Polars** for high-performance vector operations when available.
+It follows a progressive-power philosophy:
+- Start with pure Python and zero mandatory external dependencies.
+- Scale to SQL-backed persistence and temporal sharding when needed.
+- Keep API ergonomics simple through a single high-level `Lucis` entrypoint.
 
-## 🚀 Features
+## Features
 
--   **Zero Dependencies (Core)**: The base engine runs on standard Python 3.11+. No C-extensions, no heavy libraries.
--   **Optional Performance (Plus)**: Install the `[plus]` extra to unlock SIMD-accelerated computing with NumPy.
--   **Plug-and-Play**: Simple API to ingest data and start searching immediately.
--   **Persistable**: Save and load your indices (currently JSON-based, SQL planned).
--   **Built-in NLP**: Includes efficiently implemented tokenizers (Word, N-gram, Char-gram).
+- Pure Python engines (`core` and `lite`)
+- Built-in NLP preprocessors and tokenizers
+- Ranked retrieval with structured response models
+- Multiple storage backends:
+    - JSON
+    - SQLite
+    - SQLAlchemy-compatible databases (including MySQL and PostgreSQL)
+- Versioned index persistence with rollback support
+- Temporal sharding for large time-series corpora
+- Background reindexing with `IndexWorker`
+- Health and diagnostics reporting
+- Standalone utility functions for indexing and vector math
 
-## 📦 Installation
+## Installation
 
-Since this project is currently in private beta, you can install it locally:
+Install from source:
 
 ```bash
 git clone https://github.com/Ariiies/lucis.git
 cd lucis
-
-# Install Core (No external dependencies)
 pip install .
-
-# Install with Plus features (NumPy + Polars support)
-pip install .[plus]
 ```
 
-## ⚡ Quick Start
+Optional SQL support:
 
-### 1. Basic Usage (Core)
+```bash
+# Generic SQLAlchemy support
+pip install .[alchemy]
+
+# MySQL
+pip install .[mysql]
+
+# PostgreSQL
+pip install .[postgresql]
+```
+
+## Quick Start
 
 ```python
 from lucis import Lucis
 
-# Your dataset (List or Dict)
 documents = {
-    "doc1": "Python is amazing for data science and AI",
-    "doc2": "Search engines are complex systems",
-    "doc3": "Lucis makes building searchers simple"
+        "doc1": "Python is a versatile language for backend systems",
+        "doc2": "JavaScript dominates modern frontend development",
+        "doc3": "Lucis makes search implementation straightforward",
 }
 
-# Initialize and build index
-# This automatically chooses the best available engine (Plus if installed, else Core)
-cp = Lucis.from_dict(documents, name="demo_index")
+searcher = Lucis.from_dict(documents, name="demo_index", engine="core")
+response = searcher.search("python frontend", top_k=2)
 
-# Search!
-results = cp.search("python search", top_k=2)
-
-print(results)
-# Output:
-# SearchResponse(query='python search', tokens=['python', 'search'], engine='CoreEngine', total_results=2, search_time_ms=0.14, results=[SearchResult(doc_id='doc1', score=0.4512, rank=1), SearchResult(doc_id='doc2', score=0.3841, rank=2)])
-
-# You can also get a clean dictionary representation
-print(results.to_dict())
-# Output:
-# {'query': 'python search', 'tokens': ['python', 'search'], 'engine': 'CoreEngine', 'total_results': 2, 'results': [{'doc_id': 'doc1', 'score': 0.4512, 'rank': 1}, ...]}
+print(response)
+print(response.to_dict())
 ```
 
-### 2. Persistence
-
-Save your engine to disk and load it later:
+Persist and reload:
 
 ```python
-# Save the index to 'lucis_data/' (default storage)
-cp.save()
+searcher.save()
 
-# ... later, in another script ...
-cp_loaded = Lucis(name="demo_index")
-results = cp_loaded.search("data science")
+# Later...
+loaded = Lucis(name="demo_index")
+response = loaded.search("python")
 ```
 
-## 🏗 Architecture
+## Architecture Snapshot
 
-Lucis is built on a modular architecture:
+- `lucis.main.Lucis`: high-level API and orchestration
+- `lucis.engines`:
+    - `CoreEngine`: TF-IDF + cosine similarity
+    - `LiteEngine`: lightweight normalized TF approach
+- `lucis.storage`:
+    - `JSONStorage`
+    - `SQLiteStorage`
+    - `AlchemyStorage`
+    - metadata/versioning layers
+- `lucis.worker`: async/periodic reindex worker
+- `lucis.health`: system and index health reporting
+- `lucis.utils`: NLP, indexing helpers, math, serialization, mmap helpers
 
--   `lucis.engines`: implementation of search algorithms.
-    -   `CoreEngine`: Dictionary-based inverted index + Math implementation in pure Python.
-    -   `PlusEngine`: Vectorized operations using `numpy.ndarray`.
--   `lucis.storage`: Handles data persistence (currently `JSONStorage`).
--   `lucis.utils`: Reusable NLP utilities (tokenizers, stopword filters).
+## Documentation
 
-## 🗺 Roadmap (v0.x -> v1.0)
+Lucis includes full documentation in Spanish and English.
 
-- [x] **v0.1.0**: Initial release with Core (Dict) and Plus (NumPy) engines. JSON persistence.
-- [ ] **v0.2.0**: Enhanced queries (Phrase search `"term1 term2"`, Boolean operators).
-- [ ] **v0.3.0**: SQL Persistence backend (SQLite/PostgreSQL) for larger datasets.
-- [ ] **v0.4.0**: BM25 Ranking algorithm implementation.
-- [ ] **v1.0.0**: Stable API and PyPI release.
+- [English Index](docs/en/01-index.md)
+- [Indice en Español](docs/es/01-index.md)
 
-## 🤝 Contributing
+Useful entry points:
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- Getting started: [English](docs/en/02-first-steps.md), [Español](docs/es/02-primeros-pasos.md)
+- Lucis object reference: [English](docs/en/03-lucis-object.md), [Español](docs/es/03-objeto-lucis.md)
+- API reference: [English](docs/en/15-api-reference.md), [Español](docs/es/15-api-referencia.md)
+- Testing guide: [English](docs/en/16-tests.md), [Español](docs/es/16-pruebas.md)
 
-## 📄 License
+## Testing
+
+```bash
+python -m pytest -q
+```
+
+## Contributing
+
+Contributions are welcome. Open an issue or submit a pull request.
+
+## License
 
 [MIT License](LICENSE)
