@@ -117,7 +117,7 @@ buscador_core = Lucis.from_dict(datos, name="preciso", engine="core")
 buscador_lite = Lucis.from_dict(datos, name="rapido", engine="lite")
 ```
 
-See [Search Engines](motores.md) for complete details.
+See [Search Engines](04-engines.md) for complete details.
 
 ---
 
@@ -144,7 +144,7 @@ The preprocessor can return:
 
 The same preprocessor is used for both indexing and searching, ensuring consistency in the vector space.
 
-See [Preprocessors](preprocesadores.md) for more details and examples.
+See [Preprocessors](05-preprocessors.md) for more details and examples.
 
 ---
 

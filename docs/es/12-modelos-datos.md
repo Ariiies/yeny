@@ -142,5 +142,5 @@ from lucis.core.health import ShardHealth
 
 ## Siguiente paso
 
-- [Excepciones](excepciones.md) — Jerarquía de errores
-- [Referencia API](api-referencia.md) — Firmas completas
+- [Excepciones](13-excepciones.md) — Jerarquía de errores
+- [Referencia API](15-api-referencia.md) — Firmas completas

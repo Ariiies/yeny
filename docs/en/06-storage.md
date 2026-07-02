@@ -218,5 +218,5 @@ buscador = Lucis(name="mi_indice", storage=MiStorage())
 
 ## Next step
 
-- [Useful Features](funciones-utiles.md) — Modular Search Toolkit
-- [Temporary Sharding](sharding-temporal.md) — Monthly partitioning for large datasets
+- [Useful Features](07-utility-functions.md) — Modular Search Toolkit
+- [Temporary Sharding](08-temporary-sharding.md) — Monthly partitioning for large datasets

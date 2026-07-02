@@ -300,5 +300,5 @@ buscador = Lucis.from_dict(datos, name="lemmatized", preprocessor=preprocesador_
 
 ## Siguiente paso
 
-- [Almacenamiento](almacenamiento.md) — Backends de persistencia
-- [Funciones útiles](funciones-utiles.md) — Toolkit modular standalone
+- [Almacenamiento](05-almacenamiento.md) — Backends de persistencia
+- [Funciones útiles](07-funciones-utiles.md) — Toolkit modular standalone

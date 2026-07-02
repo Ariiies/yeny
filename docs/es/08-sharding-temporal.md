@@ -252,5 +252,5 @@ Los archivos `.lcs` se cargan por **memory-mapped I/O** (mmap): el sistema opera
 
 ## Siguiente paso
 
-- [IndexWorker](worker.md) — Reindexación automática en segundo plano
-- [Monitoreo de salud](salud.md) — RAM y diagnósticos por shard
+- [IndexWorker](09-worker.md) — Reindexación automática en segundo plano
+- [Monitoreo de salud](10-salud.md) — RAM y diagnósticos por shard

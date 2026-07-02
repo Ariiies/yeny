@@ -214,5 +214,5 @@ worker.start()
 
 ## Next step
 
-- [Health Monitoring](salud.md) — RAM, timing and diagnostics
-- [Practical Recipes](recetas.md) — Worker with MySQL, continuous monitoring
+- [Health Monitoring](10-health.md) — RAM, timing and diagnostics
+- [Practical Recipes](14-recipes.md) — Worker with MySQL, continuous monitoring

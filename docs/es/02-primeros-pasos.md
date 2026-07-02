@@ -117,7 +117,7 @@ buscador_core = Lucis.from_dict(datos, name="preciso", engine="core")
 buscador_lite = Lucis.from_dict(datos, name="rapido", engine="lite")
 ```
 
-Consulta [Motores de búsqueda](motores.md) para detalles completos.
+Consulta [Motores de búsqueda](04-motores.md) para detalles completos.
 
 ---
 
@@ -144,7 +144,7 @@ El preprocesador puede devolver:
 
 El mismo preprocesador se usa tanto para indexación como para búsqueda, garantizando consistencia en el espacio vectorial.
 
-Consulta [Preprocesadores](preprocesadores.md) para más detalles y ejemplos.
+Consulta [Preprocesadores](05-preprocesadores.md) para más detalles y ejemplos.
 
 ---
 

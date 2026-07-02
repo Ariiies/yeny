@@ -252,5 +252,5 @@ lucis_data/lcs/
 
 ## Next step
 
-- [IndexWorker](worker.md) — Automatic background reindexing
-- [Health Monitoring](salud.md) — RAM and shard diagnostics
+- [IndexWorker](09-worker.md) — Automatic background reindexing
+- [Health Monitoring](10-health.md) — RAM and shard diagnostics

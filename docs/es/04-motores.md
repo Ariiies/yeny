@@ -186,5 +186,5 @@ Instalar con: `pip install lucis[plus]`
 
 ## Siguiente paso
 
-- [Preprocesadores](preprocesadores.md) — Personalizar tokenización y limpieza de texto
-- [Funciones útiles](funciones-utiles.md) — Usar las primitivas de búsqueda como toolkit standalone
+- [Preprocesadores](04-preprocesadores.md) — Personalizar tokenización y limpieza de texto
+- [Funciones útiles](07-funciones-utiles.md) — Usar las primitivas de búsqueda como toolkit standalone

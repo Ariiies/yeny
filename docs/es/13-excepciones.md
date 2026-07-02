@@ -139,5 +139,5 @@ except LucisError as e:
 
 ## Siguiente paso
 
-- [Recetas prácticas](recetas.md) — Ejemplos completos de extremo a extremo
-- [Referencia API](api-referencia.md) — Todas las firmas
+- [Recetas prácticas](14-recetas.md) — Ejemplos completos de extremo a extremo
+- [Referencia API](15-api-referencia.md) — Todas las firmas

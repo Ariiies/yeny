@@ -314,5 +314,5 @@ print(f"Docs: {report.total_docs}")
 
 ## Siguiente paso
 
-- [Referencia API](api-referencia.md) — Todas las firmas y parámetros
-- [Cómo funciona](como-funciona.md) — Internos del motor
+- [Referencia API](15-api-referencia.md) — Todas las firmas y parámetros
+- [Cómo funciona](11-como-funciona.md) — Internos del motor

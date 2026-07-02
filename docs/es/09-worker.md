@@ -214,5 +214,5 @@ worker.start()
 
 ## Siguiente paso
 
-- [Monitoreo de salud](salud.md) — RAM, timing y diagnósticos
-- [Recetas prácticas](recetas.md) — Worker con MySQL, monitoreo continuo
+- [Monitoreo de salud](10-salud.md) — RAM, timing y diagnósticos
+- [Recetas prácticas](14-recetas.md) — Worker con MySQL, monitoreo continuo

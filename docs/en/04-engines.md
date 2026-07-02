@@ -186,5 +186,5 @@ Install with: `pip install lucis[plus]`
 
 ## Next step
 
-- [Preprocessors](preprocesadores.md) — Customize tokenization and text cleansing
-- [Useful Functions](funciones-utiles.md) — Use search primitives as a standalone toolkit
+- [Preprocessors](05-preprocessors.md) — Customize tokenization and text cleansing
+- [Useful Functions](07-utility-functions.md) — Use search primitives as a standalone toolkit

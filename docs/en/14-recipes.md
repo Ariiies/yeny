@@ -314,5 +314,5 @@ print(f"Docs: {report.total_docs}")
 
 ## Next step
 
-- [API Reference](api-referencia.md) — All signatures and parameters
-- [How it works](como-funciona.md) — Engine internals
+- [API Reference](15-api-reference.md) — All signatures and parameters
+- [How it works](11-how-it-works.md) — Engine internals

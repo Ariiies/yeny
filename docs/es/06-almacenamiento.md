@@ -218,5 +218,5 @@ buscador = Lucis(name="mi_indice", storage=MiStorage())
 
 ## Siguiente paso
 
-- [Funciones útiles](funciones-utiles.md) — Toolkit modular para búsqueda
-- [Sharding temporal](sharding-temporal.md) — Partición mensual para grandes datasets
+- [Funciones útiles](07-funciones-utiles.md) — Toolkit modular para búsqueda
+- [Sharding temporal](08-sharding-temporal.md) — Partición mensual para grandes datasets

@@ -203,5 +203,5 @@ Dict structure:
 
 ## Next step
 
-- [How Lucis works](como-funciona.md) — Inverted index internals
-- [Practical recipes](recetas.md) — Production monitoring
+- [How Lucis works](11-how-it-works.md) — Inverted index internals
+- [Practical recipes](14-recipes.md) — Production monitoring

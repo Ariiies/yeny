@@ -203,5 +203,5 @@ Estructura del dict:
 
 ## Siguiente paso
 
-- [Cómo funciona Lucis](como-funciona.md) — Internos del índice invertido
-- [Recetas prácticas](recetas.md) — Monitoreo en producción
+- [Cómo funciona Lucis](11-como-funciona.md) — Internos del índice invertido
+- [Recetas prácticas](14-recetas.md) — Monitoreo en producción

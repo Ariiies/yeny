@@ -186,5 +186,5 @@ El número de workers se configura automáticamente según los cores disponibles
 
 ## Siguiente paso
 
-- [Modelos de datos](modelos-datos.md) — SearchResult, SearchResponse
-- [Referencia API](api-referencia.md) — Todas las firmas y parámetros
+- [Modelos de datos](12-modelos-datos.md) — SearchResult, SearchResponse
+- [Referencia API](15-api-referencia.md) — Todas las firmas y parámetros

@@ -346,7 +346,7 @@ worker.start()
 # El worker monitoreará cambios y reindexará automáticamente
 ```
 
-Consulta [IndexWorker](worker.md) para documentación completa.
+Consulta [IndexWorker](09-worker.md) para documentación completa.
 
 ---
 
@@ -374,7 +374,7 @@ monitor.stop()
 monitor.print_summary()
 ```
 
-Consulta [Health Monitoring](salud.md) para documentación completa.
+Consulta [Health Monitoring](10-salud.md) para documentación completa.
 
 ---
 

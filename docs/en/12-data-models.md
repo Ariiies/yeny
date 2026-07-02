@@ -89,7 +89,7 @@ data = response.to_dict()        # dict JSON-ready
 
 ## HealthReport
 
-Health snapshot of a Lucis instance. Documented in detail in [Health Monitoring](salud.md).
+Health snapshot of a Lucis instance. Documented in detail in [Health Monitoring](10-health.md).
 
 ```python
 from lucis.core.health import HealthReport
@@ -122,7 +122,7 @@ Derived properties: `index_ram_human`, `process_rss_human`, `disk_total_bytes`, 
 
 ## ShardHealth
 
-RAM statistics for an individual shard. Documented in [Health Monitoring](salud.md#shardhealth--detalle-por-shard).
+RAM statistics for an individual shard. Documented in [Temporary Sharding](08-temporary-sharding.md).
 
 ```python
 from lucis.core.health import ShardHealth
@@ -142,5 +142,5 @@ from lucis.core.health import ShardHealth
 
 ## Next step
 
-- [Exceptions](excepciones.md) — Error hierarchy
-- [API Reference](api-referencia.md) — Full signatures
+- [Exceptions](13-exceptions.md) — Error hierarchy
+- [API Reference](15-api-reference.md) — Full signatures

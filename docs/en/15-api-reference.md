@@ -497,7 +497,7 @@ from lucis.models.search import SearchResult, SearchResponse
 from lucis.core.health import HealthReport, ShardHealth
 ```
 
-Detailed in [Data models](modelos-datos.md).
+Detailed in [Data models](12-data-models.md).
 
 ---
 
@@ -514,7 +514,7 @@ from lucis.exceptions import (
 )
 ```
 
-Detailed in [Exceptions](excepciones.md).
+Detailed in [Exceptions](13-exceptions.md).
 
 ---
 
@@ -531,7 +531,7 @@ from lucis.core.shard import (
 )
 ```
 
-Detailed in [Temporary Sharding](sharding-temporal.md).
+Detailed in [Temporary Sharding](08-temporary-sharding.md).
 
 ---
 

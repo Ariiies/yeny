@@ -315,5 +315,5 @@ Ambos producen `str` (no bytes), compatible con columnas SQL TEXT.
 
 ## Siguiente paso
 
-- [Sharding temporal](sharding-temporal.md) — Partición mensual para grandes datasets
-- [IndexWorker](worker.md) — Reindexación automática
+- [Sharding temporal](08-sharding-temporal.md) — Partición mensual para grandes datasets
+- [IndexWorker](09-worker.md) — Reindexación automática

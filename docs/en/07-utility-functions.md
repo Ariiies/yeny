@@ -315,5 +315,5 @@ Both produce `str` (not bytes), compatible with SQL TEXT columns.
 
 ## Next step
 
-- [Temporary Sharding](sharding-temporal.md) — Monthly partitioning for large datasets
-- [IndexWorker](worker.md) — Automatic reindexing
+- [Temporary Sharding](08-temporary-sharding.md) — Monthly partitioning for large datasets
+- [IndexWorker](09-worker.md) — Automatic reindexing

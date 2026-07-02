@@ -193,7 +193,7 @@ print(resultados.results[0].score)    # 0.4512
 | `since` | `str` | `None` | Start of time range (inclusive) |
 | `until` | `str` | `None` | End of time range (inclusive) |
 
-**Search with temporal filter** (only for indexes with [sharding](sharding-temporal.md)):
+**Search with temporal filter** (only for indexes with [sharding](08-temporary-sharding.md)):
 
 ```python
 # Solo buscar en enero-marzo 2026
@@ -346,7 +346,7 @@ worker.start()
 # El worker monitoreará cambios y reindexará automáticamente
 ```
 
-See [IndexWorker](worker.md) for complete documentation.
+See [IndexWorker](09-worker.md) for complete documentation.
 
 ---
 
@@ -374,7 +374,7 @@ monitor.stop()
 monitor.print_summary()
 ```
 
-See [Health Monitoring](salud.md) for complete documentation.
+See [Health Monitoring](10-health.md) for complete documentation.
 
 ---
 

@@ -186,5 +186,5 @@ The number of workers is automatically configured according to the available cor
 
 ## Next step
 
-- [Data Models](modelos-datos.md) — SearchResult, SearchResponse
-- [API Reference](api-referencia.md) — All signatures and parameters
+- [Data Models](12-data-models.md) — SearchResult, SearchResponse
+- [API Reference](15-api-reference.md) — All signatures and parameters
