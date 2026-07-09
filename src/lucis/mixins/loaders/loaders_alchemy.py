@@ -11,12 +11,12 @@ it is the only one with a (lazy) dependency on ``sqlalchemy``.
 import os
 from typing import TYPE_CHECKING, List, Optional, Union
 
-from ..sync.source_spec import SourceSpec
-from .._internals import _get_alchemy_reader_class
-from ..storage.metadata_storage import MetadataStorage
+from ...sync.source_spec import SourceSpec
+from ..._internals import _get_alchemy_reader_class
+from ...storage.metadata_storage import MetadataStorage
 
 if TYPE_CHECKING:
-    from ..main import Lucis
+    from ...main import Lucis
 
 
 class AlchemyLoadersMixin:

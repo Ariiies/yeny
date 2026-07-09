@@ -8,7 +8,7 @@ already held in memory (no external database involved).
 from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
-    from ..main import Lucis
+    from ...main import Lucis
 
 
 class BasicLoadersMixin:

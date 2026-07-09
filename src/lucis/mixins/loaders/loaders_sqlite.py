@@ -8,11 +8,11 @@ module.
 """
 from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
-from ..sync.source_spec import SourceSpec
-from .._internals import _build_sql_text_expr
+from ...sync.source_spec import SourceSpec
+from ..._internals import _build_sql_text_expr
 
 if TYPE_CHECKING:
-    from ..main import Lucis
+    from ...main import Lucis
 
 
 class SQLiteLoadersMixin:
