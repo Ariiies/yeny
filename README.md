@@ -1,4 +1,6 @@
-# Lucis
+<p align="center">
+  <img src="assets/lucis_lockup.svg" height="120" align="middle" alt="Lucis Logo">
+</p>
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github)](https://github.com/sponsors/Ariiies)
 [![PyPI](https://img.shields.io/pypi/v/lucis)](https://pypi.org/project/lucis/)
@@ -6,7 +8,7 @@
 
 > A minimalist NLP toolkit and search engine generator for Python.
 
-### "An easy way to make searchers with Python"
+### "An easy way to build search engines in Python."
 
 Lucis is a lightweight, production-oriented search toolkit that helps you build full-text search features quickly, while still giving you advanced controls when your dataset grows.
 

@@ -72,3 +72,5 @@ lucis_data/
 !.gitignore
 !LICENSE
 !docs/**
+!assets/
+!assets/**
