@@ -74,3 +74,5 @@ lucis_data/
 !docs/**
 !assets/
 !assets/**
+!.gitattributes
+!.editorconfig
