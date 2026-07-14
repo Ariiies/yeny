@@ -538,6 +538,15 @@ class ShardManager:
         dummy = self._create_engine()
         return dummy.preprocessor
 
+    @property
+    def has_dirty_shards(self) -> bool:
+        """``True`` if any shards have been modified since last persist.
+
+        Used by the Lucis facade to decide between selective cleanup
+        (reload only dirty shards) and full cleanup (reload everything).
+        """
+        return bool(self._dirty_keys)
+
     # Shard lifecycle
 
     def _create_engine(self) -> BaseEngine:
@@ -812,6 +821,94 @@ class ShardManager:
                 self._dirty_keys.add(shard_key)
 
         return total_removed
+
+    # Cleanup helpers (used by the Lucis facade)
+
+    def reload_dirty_shards(self, logical_name: str, storage: Any) -> int:
+        """Reload only dirty shards from .lcs / storage.
+
+        Updates the lazy base name to the latest physical version,
+        tears down each dirty shard's build-time data, and reloads
+        it from the new .lcs (or DB fallback).  Clears the dirty set
+        afterwards.
+
+        This is the selective cleanup path used after incremental
+        operations (``add_documents``, ``remove_documents``) where
+        only a subset of shards changed.
+
+        Args:
+            logical_name: Logical index name (used to resolve the
+                alias to the new physical name via *storage*).
+            storage: Storage backend (must expose ``get_alias()``).
+
+        Returns:
+            Number of dirty shards reloaded.
+        """
+        dirty = set(self._dirty_keys)
+        if not dirty:
+            return 0
+
+        # Update base name to the latest physical version so that
+        # _lcs_path resolves to the newly-written .lcs files.
+        new_base = storage.get_alias(logical_name)
+        if new_base:
+            self._lazy_base_name = new_base
+
+        for key in dirty:
+            engine = self.shards.get(key)
+            if engine:
+                close_fn = getattr(engine, "close_mmap", None)
+                if close_fn:
+                    close_fn()
+                else:
+                    engine.index = {}
+                    engine.doc_lengths = None
+                    engine.id_map = {}
+
+            # Reload from the new .lcs (or DB fallback)
+            new_engine = self._create_engine()
+            lcs = self._lcs_path(key)
+            if lcs and lcs_exists(lcs):
+                new_engine.load_mmap(lcs)
+            else:
+                shard_name = f"{new_base}__shard__{key}"
+                new_engine.load_engine(shard_name)
+
+            # Update memory tracking
+            old_mem = self._shard_mem.get(key, 0)
+            new_mem = self._estimate_engine_memory(new_engine)
+            self._loaded_mem += (new_mem - old_mem)
+            self._shard_mem[key] = new_mem
+            self.shards[key] = new_engine
+
+        self._dirty_keys.clear()
+        return len(dirty)
+
+    def teardown_all(self) -> None:
+        """Tear down all loaded shard engines and reset memory state.
+
+        Closes mmap handles (or clears in-memory arrays) for every
+        loaded shard, then clears all tracking dicts and resets
+        cumulative memory to zero.  After this call, the manager
+        holds no loaded engines — use :meth:`load_all` to repopulate.
+
+        This is the full cleanup path used after an initial build
+        or full reindex, where all shards must be discarded and
+        reloaded from storage.
+        """
+        for key in list(self.shards.keys()):
+            engine = self.shards[key]
+            close_fn = getattr(engine, "close_mmap", None)
+            if close_fn:
+                close_fn()
+            else:
+                engine.index = {}
+                engine.doc_lengths = None
+                engine.id_map = {}
+        self.shards.clear()
+        self._shard_mem.clear()
+        self._lru.clear()
+        self._loaded_mem = 0
 
     # Search
 
