@@ -262,9 +262,11 @@ def build_memory_measurements(
 
     Args:
         engine: Engine key attached to the measurements.
-        phase: Worker phase label, either ``build`` or ``load``.
+        phase: Worker phase label: ``build``, ``load_json``,
+            ``load_sqlite``, or ``load_mmap``.
         self_report: Worker-reported mapping produced by
             :func:`collect_self_memory`.
+
         tree_summary: Runner-side sampler summary, or ``None`` when psutil
             is not installed.
 

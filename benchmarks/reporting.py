@@ -305,20 +305,61 @@ def _limitations_section(
     fixed = [
         "Search latencies use the public `Lucis.search` boundary and "
         "include query preprocessing and response wrapping.",
-        "The load phase starts in a fresh process after build, but JSON, "
-        "SQLite, and mmap are measured sequentially in that process; the "
-        "OS page cache is not controlled.",
+        "Every backend load (JSON, SQLite, mmap) starts in its own fresh "
+        "interpreter, so Python state is process-cold; the OS page cache "
+        "is not controlled and may still warm later runs.",
+        "Memory values describe the whole phase workflow, not the "
+        "exclusive size of any engine object.",
         "Tree RSS sums resident pages shared by fork (copy-on-write), "
         "so it can overstate exclusive usage.",
         "Sampling-based peaks can miss shorter-lived worker processes.",
     ]
+
     lines = ["## Limitations", ""]
     lines.extend(f"- {note}" for note in [*fixed, *collected])
     lines.append("")
     return lines
 
 
+def _environment_rows(environment: Dict[str, Any]) -> List[Tuple[str, Any]]:
+    """Render environment metadata, formatting hardware values readably."""
+    rows: List[Tuple[str, Any]] = [
+        (key, environment.get(key, "n/a"))
+        for key in (
+            "python_version",
+            "python_implementation",
+            "platform",
+            "machine",
+            "lucis_version",
+        )
+    ]
+    cpu_model = environment.get("cpu_model")
+    rows.append(("cpu_model", cpu_model if cpu_model else "n/a"))
+    rows.append(("logical_cpu_count", environment.get("logical_cpu_count", "n/a")))
+    total_ram = environment.get("total_ram_bytes")
+    rows.append(
+        (
+            "total_ram_bytes",
+            f"{total_ram} ({format_bytes(total_ram)})"
+            if isinstance(total_ram, (int, float))
+            else "n/a",
+        )
+    )
+    mechanisms = environment.get("memory_mechanisms")
+    rows.append(
+        (
+            "memory_mechanisms",
+            ", ".join(mechanisms) if mechanisms else "n/a",
+        )
+    )
+    rows.append(("psutil_version", environment.get("psutil_version") or "n/a"))
+    rows.append(("git_commit", environment.get("git_commit", "n/a")))
+    rows.append(("git_dirty", environment.get("git_dirty", "n/a")))
+    return rows
+
+
 def render_markdown_report(result: Dict[str, Any]) -> str:
+
     """Render one saved benchmark result as a Markdown document.
 
     Args:
@@ -355,22 +396,9 @@ def render_markdown_report(result: Dict[str, Any]) -> str:
         "",
         "## Environment",
         "",
-        *_field_table(
-            [
-                (key, environment.get(key, "n/a"))
-                for key in (
-                    "python_version",
-                    "python_implementation",
-                    "platform",
-                    "machine",
-                    "logical_cpu_count",
-                    "lucis_version",
-                    "git_commit",
-                    "git_dirty",
-                )
-            ]
-        ),
+        *_field_table(_environment_rows(environment)),
         "",
+
         "## Configuration",
         "",
         *_field_table(

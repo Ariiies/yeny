@@ -1,10 +1,12 @@
 """Subprocess orchestration for the Lucis benchmark suite.
 
-Each engine runs its build and load phases in new interpreters inside one
-unique temporary directory. This prevents CoreEngine and LiteEngine from
-sharing Python state, keeps load measurements process-cold, and avoids
-accidentally autoloading an existing ``lucis_data`` directory.
+Each engine runs one build phase plus one load phase per persistence
+backend, every phase in a new interpreter inside one unique temporary
+directory. This prevents CoreEngine and LiteEngine from sharing Python
+state, keeps every backend load process-cold, and avoids accidentally
+autoloading an existing ``lucis_data`` directory.
 """
+
 
 from __future__ import annotations
 
@@ -30,8 +32,13 @@ from .memory import (
 from .results import validate_result, write_result
 
 
+LOAD_PHASES: Tuple[str, ...] = ("load_json", "load_sqlite", "load_mmap")
+"""Per-backend load phases executed after the build phase, in order."""
+
+
 class BenchmarkExecutionError(RuntimeError):
     """Raised when an isolated benchmark worker fails."""
+
 
 
 def _run_id() -> str:
@@ -66,9 +73,10 @@ def _run_worker(
         config: Validated benchmark run configuration.
         workspace: Per-engine workspace shared by the build and load
             phases.
-        phase: Worker phase, either ``"build"`` or ``"load"``.
+        phase: Worker phase: ``"build"`` or one of :data:`LOAD_PHASES`.
         temporary_path: Per-engine temporary directory used as the child
             working directory.
+
 
     Returns:
         Parsed worker response.
@@ -143,62 +151,70 @@ def _run_worker(
 def _run_engine(
     engine: str,
     config: BenchmarkRunConfig,
+    *,
+    progress: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
-    """Run both worker phases for one engine in one temporary workspace.
+    """Run all four worker phases for one engine in one workspace.
 
-    The build and load phases share the workspace but never the
-    interpreter, so standard and mmap loads start from a cold process.
+    The build phase and the three per-backend load phases share the
+    workspace but never an interpreter, so every backend load starts from
+    a process-cold Python state. The workspace is always removed when the
+    engine finishes, including after worker failures.
 
     Args:
         engine: Engine key, either ``"core"`` or ``"lite"``.
         config: Validated benchmark run configuration.
+        progress: Optional callback receiving one ``[engine/phase]``
+            message per phase.
 
     Returns:
         Combined dataset manifest, query manifest, and measurements from
-        both phases.
+        all four phases, with memory records labeled by phase.
 
     Raises:
-        BenchmarkExecutionError: If a worker fails or the dataset hash
-            changes between worker processes.
+        BenchmarkExecutionError: If a worker fails or a load phase reports
+            a dataset hash different from the build phase.
     """
     with tempfile.TemporaryDirectory(
         prefix=f"lucis-benchmark-{engine}-"
     ) as temporary:
         temporary_path = Path(temporary)
         workspace = temporary_path / "workspace"
-        build_response = _run_worker(
-            engine, config, workspace, "build", temporary_path
-        )
-        load_response = _run_worker(
-            engine, config, workspace, "load", temporary_path
-        )
-        if (
-            build_response["dataset"]["sha256"]
-            != load_response["dataset_sha256"]
-        ):
-            raise BenchmarkExecutionError(
-                f"{engine} dataset hash changed between worker processes"
+        phases = ("build", *LOAD_PHASES)
+        measurements: List[Dict[str, Any]] = []
+        dataset: Optional[Dict[str, Any]] = None
+        queries: Optional[Dict[str, Any]] = None
+
+        for phase in phases:
+            if progress is not None:
+                progress(f"[{engine}/{phase}]")
+            response = _run_worker(
+                engine, config, workspace, phase, temporary_path
             )
+            if phase == "build":
+                dataset = response["dataset"]
+                queries = response["queries"]
+            elif response["dataset_sha256"] != dataset["sha256"]:
+                raise BenchmarkExecutionError(
+                    f"{engine} {phase} worker reported a dataset hash "
+                    f"different from the build phase"
+                )
+            measurements.extend(response["measurements"])
+            measurements.extend(
+                build_memory_measurements(
+                    engine,
+                    phase,
+                    response.get("memory", {}),
+                    response.get("memory_tree"),
+                )
+            )
+
         return {
-            "dataset": build_response["dataset"],
-            "queries": build_response["queries"],
-            "measurements": [
-                *build_response["measurements"],
-                *build_memory_measurements(
-                    engine,
-                    "build",
-                    build_response.get("memory", {}),
-                    build_response.get("memory_tree"),
-                ),
-                *load_response["measurements"],
-                *build_memory_measurements(
-                    engine,
-                    "load",
-                    load_response.get("memory", {}),
-                    load_response.get("memory_tree"),
-                ),
-            ],
+            "dataset": dataset,
+            "queries": queries,
+            "measurements": measurements,
         }
+
 
 
 def run_benchmarks(
@@ -236,12 +252,13 @@ def run_benchmarks(
         if progress is not None:
             progress(
                 f"[{engine}] running profile {config.profile} "
-                f"in an isolated process..."
+                f"in isolated processes..."
             )
-        response = _run_engine(engine, config)
+        response = _run_engine(engine, config, progress=progress)
         responses.append(response)
         if progress is not None:
             progress(f"[{engine}] complete")
+
 
     measurements = [
         measurement

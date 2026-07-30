@@ -71,12 +71,19 @@ def _sample_result():
         "finished_at_utc": "2026-07-29T12:01:00+00:00",
         "environment": {
             "python_version": "3.12.3",
+            "python_implementation": "CPython",
             "platform": "Linux-7.0",
+            "machine": "x86_64",
+            "cpu_model": "Test CPU 9000",
             "logical_cpu_count": 8,
+            "total_ram_bytes": 16 * 1024**3,
+            "psutil_version": "7.2.2",
+            "memory_mechanisms": ["psutil", "resource", "proc"],
             "lucis_version": "0.1.0",
             "git_commit": "285320e",
             "git_dirty": False,
         },
+
         "configuration": {
             "profile": "tiny",
             "engines": ["core"],
@@ -200,7 +207,32 @@ def test_markdown_report_includes_roundtrip_and_limitations():
     assert "## Round-trip verification" in markdown
     assert "| core | json | 17 |" in markdown
     assert "## Limitations" in markdown
-    assert "page cache is not" in markdown
+    assert "page cache" in markdown
+    assert "process-cold" in markdown
+
+
+@pytest.mark.unit
+def test_markdown_report_shows_cpu_ram_and_memory_mechanism():
+    markdown = render_markdown_report(_sample_result())
+
+    assert "Test CPU 9000" in markdown
+    assert "16.00 GiB" in markdown
+    assert "psutil, resource, proc" in markdown
+    assert "7.2.2" in markdown
+
+
+@pytest.mark.unit
+def test_markdown_report_marks_missing_hardware_as_na_not_zero():
+    result = _sample_result()
+    result["environment"]["cpu_model"] = None
+    result["environment"]["total_ram_bytes"] = None
+
+    markdown = render_markdown_report(result)
+
+    assert "| cpu_model | n/a |" in markdown
+    assert "| total_ram_bytes | n/a |" in markdown
+    assert "0 B |" not in markdown
+
 
 
 @pytest.mark.unit

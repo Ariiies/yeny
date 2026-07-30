@@ -10,6 +10,7 @@ Example::
     python -m benchmarks run --profile small --engine core
     python -m benchmarks report benchmarks/results/<run>.json
     python -m benchmarks validate benchmarks/results/<run>.json
+    python -m benchmarks aggregate benchmarks/results/*.json --output summary.md
 """
 
 from __future__ import annotations
@@ -20,11 +21,13 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
 
+from .aggregate import AggregateError, aggregate_results, load_run, write_aggregate
 from .config import BenchmarkRunConfig, load_profiles
 from .memory import MemoryUnavailableError
 from .reporting import render_markdown_report, render_results_table
 from .results import validate_result, write_report
 from .runner import BenchmarkExecutionError, run_benchmarks
+
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,7 +106,31 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to a lucis-benchmark-*.json file.",
     )
+
+    aggregate_parser = subparsers.add_parser(
+        "aggregate",
+        help=(
+            "Combine compatible run JSON files into one Markdown and JSON "
+            "summary per environment group."
+        ),
+    )
+    aggregate_parser.add_argument(
+        "results",
+        type=Path,
+        nargs="+",
+        help="Paths to lucis-benchmark-*.json files.",
+    )
+    aggregate_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help=(
+            "Markdown summary path. A sibling '<name>.aggregate.json' "
+            "trace file is written too. Neither file is overwritten."
+        ),
+    )
     return parser
+
 
 
 def _selected_engines(selection: str) -> Sequence[str]:
@@ -175,7 +202,39 @@ def _validate_command(path: Path) -> int:
     return 0
 
 
+def _aggregate_command(args: argparse.Namespace) -> int:
+    """Aggregate compatible saved results into Markdown and JSON summaries.
+
+    Args:
+        args: Parsed ``aggregate`` subcommand arguments.
+
+    Returns:
+        ``0`` on success, ``4`` when a result cannot be read, fails
+        validation, is incompatible with the others, or an output file
+        would be overwritten.
+    """
+    try:
+        results = [load_run(path) for path in args.results]
+        aggregate = aggregate_results(
+            results,
+            sources=[str(path) for path in args.results],
+        )
+        markdown_path, json_path = write_aggregate(aggregate, args.output)
+    except AggregateError as exc:
+        print(f"Aggregation error: {exc}", file=sys.stderr)
+        return 4
+    except OSError as exc:
+        print(f"Aggregation error: {exc}", file=sys.stderr)
+        return 4
+    print(f"Markdown summary: {markdown_path}")
+    print(f"Aggregate JSON: {json_path}")
+    if aggregate["warnings"]:
+        print(f"Warnings: {len(aggregate['warnings'])} (see summary)")
+    return 0
+
+
 def _run_command(args: argparse.Namespace) -> int:
+
     """Execute one benchmark run from parsed CLI arguments.
 
     Args:
@@ -238,5 +297,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _report_command(args.result)
     if args.command == "validate":
         return _validate_command(args.result)
+    if args.command == "aggregate":
+        return _aggregate_command(args)
     parser.error(f"Unknown command: {args.command}")
     return 2
+

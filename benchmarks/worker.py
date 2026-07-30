@@ -1,11 +1,14 @@
 """Isolated benchmark worker for one Lucis engine.
 
-The parent runner starts this module twice per engine in fresh Python
+The parent runner starts this module four times per engine in fresh Python
 processes. The ``build`` phase generates the deterministic corpus, builds a
-controlled-word index, runs search measurements, and persists JSON, SQLite,
-and ``.lcs`` artifacts. The ``load`` phase reloads those artifacts in a new
-interpreter and verifies that result IDs survive every round-trip. Workers
-never write inside ``src/``.
+controlled-word index, runs search measurements, persists JSON, SQLite, and
+``.lcs`` artifacts, and writes the dataset/query contract the load phases
+consume. The ``load_json``, ``load_sqlite``, and ``load_mmap`` phases each
+reload exactly one backend in a new interpreter, so no backend inherits
+Python state warmed by a previous one, and each verifies that result IDs,
+ranking, and scores survive the round-trip. Workers never write inside
+``src/``.
 
 This module is an internal implementation detail. Users should invoke
 ``python -m benchmarks run`` instead.
@@ -14,10 +17,11 @@ This module is an internal implementation detail. Users should invoke
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping, Tuple
 
 from lucis import Lucis
 from lucis.utils.nlp import word_tokenizer
@@ -30,7 +34,12 @@ from .config import (
 from .datasets import GeneratedDataset, generate_dataset
 from .memory import collect_self_memory
 from .metrics import make_measurement, measure_once, measure_operation
-from .queries import QuerySpec, build_queries
+from .queries import (
+    GeneratedQueries,
+    QuerySpec,
+    build_queries,
+    queries_from_dict,
+)
 from .scenarios.mmap_load import measure_lcs_write, measure_mmap_load
 from .scenarios.persistence import (
     measure_json_save,
@@ -38,6 +47,15 @@ from .scenarios.persistence import (
     measure_standard_load,
 )
 from .scenarios.roundtrip import collect_result_sequence
+
+
+LOAD_PHASE_BACKENDS: Mapping[str, str] = {
+    "load_json": "json",
+    "load_sqlite": "sqlite",
+    "load_mmap": "mmap",
+}
+"""Mapping from worker load-phase names to persistence backend labels."""
+
 
 
 @dataclass(frozen=True)
@@ -281,6 +299,17 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
 
     expected_results = collect_result_sequence(build_instance, queries)
     _write_json_object(
+        context.workspace / "dataset_manifest.json",
+        dataset.manifest.to_dict(),
+    )
+    _write_json_object(
+        context.workspace / "queries.json",
+        {
+            "manifest": queries.manifest.to_dict(),
+            "items": [query.to_dict() for query in queries.items],
+        },
+    )
+    _write_json_object(
         context.workspace / "expected_results.json",
         {
             "engine": engine,
@@ -289,6 +318,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
             "results": expected_results,
         },
     )
+
 
     measurements.extend(measure_json_save(build_instance, engine=engine))
 
@@ -323,30 +353,39 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
         "queries": queries.manifest.to_dict(),
         "measurements": measurements,
         "memory": collect_self_memory(),
+        "pid": os.getpid(),
     }
 
 
-def _execute_load_phase(context: _RequestContext) -> Dict[str, Any]:
-    """Reload persisted artifacts in a fresh interpreter.
 
-    Regenerating the corpus is deterministic and doubles as a cross-process
-    determinism check against the build-phase manifest.
+def _read_workspace_contract(
+    context: _RequestContext,
+) -> Tuple[GeneratedQueries, Dict[str, Any], str]:
+    """Read the build-phase contract without regenerating the corpus.
+
+    Load phases consume the dataset manifest, query set, and expected
+    results written by the build phase. Rebuilding the queries from their
+    serialized form re-validates the query hash, and both the query
+    manifest and the expectations must point back to the build-phase
+    dataset hash, which keeps the cross-process chain of custody intact.
 
     Args:
         context: Validated worker request fields.
 
     Returns:
-        JSON-compatible response with the regenerated dataset hash and all
-        load-phase measurements.
+        Tuple containing the rebuilt query set, the raw expectations
+        object, and the build-phase dataset SHA-256.
 
     Raises:
-        RuntimeError: If the build-phase expectations belong to another
-            engine or corpus, or a persistence round-trip changes result
-            IDs.
+        RuntimeError: If the workspace contract belongs to another engine,
+            another dataset, or fails its internal hash checks.
     """
-    dataset, _ = measure_once(lambda: generate_dataset(context.profile))
-    queries = build_queries(dataset)
-
+    dataset_manifest = _read_json_object(
+        context.workspace / "dataset_manifest.json"
+    )
+    queries = queries_from_dict(
+        _read_json_object(context.workspace / "queries.json")
+    )
     expectations = _read_json_object(
         context.workspace / "expected_results.json"
     )
@@ -354,51 +393,52 @@ def _execute_load_phase(context: _RequestContext) -> Dict[str, Any]:
         raise RuntimeError(
             "Build-phase expectations belong to another engine"
         )
-    if expectations.get("dataset_sha256") != dataset.manifest.sha256:
-        raise RuntimeError("Dataset hash changed between worker processes")
+    dataset_sha256 = str(dataset_manifest.get("sha256", ""))
+    if not dataset_sha256:
+        raise RuntimeError("Build-phase dataset manifest has no hash")
+    if queries.manifest.dataset_sha256 != dataset_sha256:
+        raise RuntimeError(
+            "Query manifest belongs to another dataset"
+        )
+    if expectations.get("dataset_sha256") != dataset_sha256:
+        raise RuntimeError(
+            "Expected results belong to another dataset"
+        )
+    return queries, expectations, dataset_sha256
+
+
+def _execute_backend_load_phase(
+    context: _RequestContext,
+    backend: str,
+) -> Dict[str, Any]:
+    """Reload exactly one persistence backend in a fresh interpreter.
+
+    Running every backend in its own process keeps each load process-cold
+    with respect to Python state: no backend inherits import caches,
+    allocators, or engine state warmed by a previous backend. The
+    operating-system page cache remains uncontrolled and is documented as
+    a limitation.
+
+    Args:
+        context: Validated worker request fields.
+        backend: Backend label: ``json``, ``sqlite``, or ``mmap``.
+
+    Returns:
+        JSON-compatible response with the build-phase dataset hash and
+        only the requested backend's measurements.
+
+    Raises:
+        RuntimeError: If the workspace contract is inconsistent or the
+            round-trip changes result IDs, ranking, or scores.
+    """
+    queries, expectations, dataset_sha256 = _read_workspace_contract(
+        context
+    )
     expected_results = expectations["results"]
 
     engine = context.engine
-    measurements: List[Dict[str, Any]] = []
-    measurements.extend(
-        measure_standard_load(
-            "json",
-            lambda: Lucis(
-                name=f"benchmark_{engine}_build",
-                engine=engine,
-                storage_dir=str(context.workspace / "build"),
-                preprocessor=word_tokenizer,
-                autoload=True,
-                binary_dir=None,
-            ),
-            engine=engine,
-            queries=queries,
-            expected_results=expected_results,
-            warmups=context.warmups,
-            repetitions=context.repetitions,
-        )
-    )
-    measurements.extend(
-        measure_standard_load(
-            "sqlite",
-            lambda: Lucis(
-                name=f"benchmark_{engine}_sqlite",
-                engine=engine,
-                storage_type="sqlite",
-                db_path=str(context.workspace / "sqlite" / "benchmark.db"),
-                preprocessor=word_tokenizer,
-                autoload=True,
-                binary_dir=None,
-            ),
-            engine=engine,
-            queries=queries,
-            expected_results=expected_results,
-            warmups=context.warmups,
-            repetitions=context.repetitions,
-        )
-    )
-    measurements.extend(
-        measure_mmap_load(
+    if backend == "mmap":
+        measurements = measure_mmap_load(
             lambda: Lucis(
                 name=f"benchmark_{engine}_mmap",
                 engine=engine,
@@ -414,15 +454,45 @@ def _execute_load_phase(context: _RequestContext) -> Dict[str, Any]:
             warmups=context.warmups,
             repetitions=context.repetitions,
         )
-    )
+    else:
+        constructors = {
+            "json": lambda: Lucis(
+                name=f"benchmark_{engine}_build",
+                engine=engine,
+                storage_dir=str(context.workspace / "build"),
+                preprocessor=word_tokenizer,
+                autoload=True,
+                binary_dir=None,
+            ),
+            "sqlite": lambda: Lucis(
+                name=f"benchmark_{engine}_sqlite",
+                engine=engine,
+                storage_type="sqlite",
+                db_path=str(context.workspace / "sqlite" / "benchmark.db"),
+                preprocessor=word_tokenizer,
+                autoload=True,
+                binary_dir=None,
+            ),
+        }
+        measurements = measure_standard_load(
+            backend,
+            constructors[backend],
+            engine=engine,
+            queries=queries,
+            expected_results=expected_results,
+            warmups=context.warmups,
+            repetitions=context.repetitions,
+        )
 
     return {
         "engine": engine,
         "profile": context.profile.name,
-        "dataset_sha256": dataset.manifest.sha256,
+        "dataset_sha256": dataset_sha256,
         "measurements": measurements,
         "memory": collect_self_memory(),
+        "pid": os.getpid(),
     }
+
 
 
 def execute_request(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -431,25 +501,30 @@ def execute_request(request: Dict[str, Any]) -> Dict[str, Any]:
     Args:
         request: JSON-compatible request containing ``phase``, ``engine``,
             ``profile``, ``warmups``, ``repetitions``, and ``workspace``.
+            ``phase`` is ``build`` or one of the per-backend load phases
+            declared in :data:`LOAD_PHASE_BACKENDS`.
 
     Returns:
         JSON-compatible worker response. The build phase includes the
-        dataset and query manifests; the load phase includes its
-        regenerated dataset hash.
+        dataset and query manifests; each load phase includes the
+        build-phase dataset hash and only its own backend's metrics.
 
     Raises:
         ValueError: If the request contains an unknown phase, profile, or
             engine, or invalid repetition values.
         RuntimeError: If a generated present query unexpectedly finds no
-            results, or a persistence round-trip changes result IDs.
+            results, or a persistence round-trip changes result IDs,
+            ranking, or scores.
     """
     context = _parse_request(request)
     phase = str(request.get("phase", ""))
     if phase == "build":
         return _execute_build_phase(context)
-    if phase == "load":
-        return _execute_load_phase(context)
+    backend = LOAD_PHASE_BACKENDS.get(phase)
+    if backend is not None:
+        return _execute_backend_load_phase(context, backend)
     raise ValueError(f"Unknown worker phase: {phase!r}")
+
 
 
 def main(argv: List[str] | None = None) -> int:
