@@ -76,3 +76,9 @@ lucis_data/
 !assets/**
 !.gitattributes
 !.editorconfig
+!benchmarks/
+!benchmarks/**
+benchmarks/results/
+benchmarks/.cache/
+benchmarks/__pycache__/
+benchmarks/scenarios/__pycache__/

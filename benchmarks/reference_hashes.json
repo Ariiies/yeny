@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "generator_version": "lexical_zipf_v1",
+  "query_set_version": "queries_v1",
+  "python_campaign": "3.12",
+  "profiles": {
+    "tiny": {
+      "dataset_sha256": "60735906d9feebb636cd173b04d80497eda774956df222dbd4de291e9d135be0",
+      "queries_sha256": "78de5bc2f7e91be29ae348183ed12e3c386d477c5a354af377465acaf995a4f4"
+    },
+    "small": {
+      "dataset_sha256": "83dbd1dceae326ae6e04004dceb3059da821e98eb955dc00e85eb3a98078358f",
+      "queries_sha256": "dcb1773b3fe2421c3985fd73d7c5081a6a06bae05a4b97ba035bf5b64ae1d0f8"
+    },
+    "medium": {
+      "dataset_sha256": "bd6ff2e7de8f98bfa62a6a18b0abb06795ea7cb28ba3f27593362c08df434573",
+      "queries_sha256": "f9b4250d58530f8f6f4820087b9b018911387c795c426e5aba10636907b076b9"
+    },
+    "large": {
+      "dataset_sha256": "1d8d248c3c04004cb979f71b32c69fa02210c88b2c60fc4bab2ed75db1b5c0b4",
+      "queries_sha256": "cf5fa3f7f016f713af8122c52b795c5d845496c9a72d11d72e62e8f063b3fb37"
+    }
+  }
+}

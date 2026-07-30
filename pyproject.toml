@@ -18,6 +18,7 @@ dependencies = []
 alchemy = ["sqlalchemy"]
 mysql = ["sqlalchemy", "pymysql"]
 postgresql = ["sqlalchemy", "psycopg2-binary"]
+benchmark = ["psutil>=5.9"]
 
 [project.urls]
 Homepage = "https://github.com/Ariiies/lucis"

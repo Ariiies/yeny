@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "generator_version": "lexical_zipf_v1",
+  "profiles": {
+    "tiny": {
+      "documents": 100,
+      "vocabulary_size": 2048,
+      "min_document_tokens": 12,
+      "mode_document_tokens": 32,
+      "max_document_tokens": 52,
+      "zipf_exponent": 1.07,
+      "duplicate_rate": 0.02,
+      "seed": 20260117
+    },
+    "small": {
+      "documents": 1000,
+      "vocabulary_size": 2048,
+      "min_document_tokens": 12,
+      "mode_document_tokens": 32,
+      "max_document_tokens": 52,
+      "zipf_exponent": 1.07,
+      "duplicate_rate": 0.02,
+      "seed": 20260117
+    },
+    "medium": {
+      "documents": 10000,
+      "vocabulary_size": 2048,
+      "min_document_tokens": 12,
+      "mode_document_tokens": 32,
+      "max_document_tokens": 52,
+      "zipf_exponent": 1.07,
+      "duplicate_rate": 0.02,
+      "seed": 20260117
+    },
+    "large": {
+      "documents": 100000,
+      "vocabulary_size": 2048,
+      "min_document_tokens": 12,
+      "mode_document_tokens": 32,
+      "max_document_tokens": 52,
+      "zipf_exponent": 1.07,
+      "duplicate_rate": 0.02,
+      "seed": 20260117
+    }
+  }
+}

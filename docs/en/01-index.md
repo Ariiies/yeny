@@ -82,6 +82,7 @@ SearchResponse(
 - [Useful Functions](07-utility-functions.md) — Standalone Toolkit: build_index, bag of words, TF-IDF, cosine similarity
 - [Tests](16-tests.md) — How to run the suite, coverage and test structure
 - [Test Guide](16-tests.md) — Folder by folder, commands and recommended flow for contributors
+- [Benchmarks](17-benchmarks.md) — Reproducible Core/Lite measurements and result interpretation
 
 ### Advanced features
 - [Temporary Sharding](08-temporary-sharding.md) — Monthly partitioning for large datasets
@@ -95,6 +96,7 @@ SearchResponse(
 - [Recipes](14-recipes.md) — Complete practical examples
 - [API Reference](15-api-reference.md) — Comprehensive reference of all functions
 - [Tests](16-tests.md) — System tests and unit tests
+- [Benchmarks](17-benchmarks.md) — Profiles, metrics, commands and limitations
 
 ---
 

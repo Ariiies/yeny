@@ -25,6 +25,7 @@ It follows a progressive-power philosophy:
 - [Architecture Snapshot](#architecture-snapshot)
 - [Why Lucis?](#why-lucis)
 - [Documentation](#documentation)
+- [Benchmarks](#benchmarks)
 - [Testing](#testing)
 - [Sponsor](#sponsor)
 - [Contributing](#contributing)
@@ -148,7 +149,8 @@ Documents → Preprocessors → Engine → Storage
 
 ## Why Lucis?
 
-> **Note:** Benchmarks are upcoming. This section provides a qualitative overview to help you decide if Lucis fits your use case.
+> **Note:** The comparison below is qualitative. Lucis benchmarks compare its
+> own `core` and `lite` engines; they do not benchmark external projects.
 
 | Feature | Lucis | Whoosh | Meilisearch | Elasticsearch |
 |---|---|---|---|---|
@@ -183,6 +185,27 @@ Useful entry points:
 - Lucis object reference: [English](docs/en/03-lucis-object.md), [Español](docs/es/03-objeto-lucis.md)
 - API reference: [English](docs/en/15-api-reference.md), [Español](docs/es/15-api-referencia.md)
 - Testing guide: [English](docs/en/16-tests.md), [Español](docs/es/16-pruebas.md)
+- Benchmark guide: [English](docs/en/17-benchmarks.md), [Español](docs/es/17-benchmarks.md)
+
+## Benchmarks
+
+Lucis includes a deterministic local suite for comparing `CoreEngine` and
+`LiteEngine` with the same generated corpus, queries, and tokenizer:
+
+```bash
+python -m benchmarks run --profile tiny
+```
+
+It measures index construction, public search latency, JSON/SQLite
+persistence, `.lcs` serialization and `mmap` loading, artifact size, and
+available RSS memory. Results are saved as timestamped JSON so runs can be
+validated and compared without overwriting previous data.
+
+These benchmarks measure speed, resource use, and persistence fidelity—not
+search relevance or performance against other projects. See the
+[English guide](docs/en/17-benchmarks.md), the
+[guía en español](docs/es/17-benchmarks.md), or the
+[runner quick reference](benchmarks/README.md).
 
 ## Testing
 

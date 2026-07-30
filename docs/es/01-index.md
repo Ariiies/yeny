@@ -82,6 +82,7 @@ SearchResponse(
 - [Funciones útiles](07-funciones-utiles.md) — Toolkit standalone: build_index, bag of words, TF-IDF, similitud coseno
 - [Pruebas](16-pruebas.md) — Cómo ejecutar la suite, coverage y estructura de tests
 - [Guía de tests](16-pruebas.md) — Carpeta por carpeta, comandos y flujo recomendado para contribuidores
+- [Benchmarks](17-benchmarks.md) — Mediciones reproducibles de Core/Lite e interpretación de resultados
 
 ### Funcionalidades avanzadas
 - [Sharding temporal](08-sharding-temporal.md) — Partición mensual para grandes datasets
@@ -95,6 +96,7 @@ SearchResponse(
 - [Recetas](14-recetas.md) — Ejemplos prácticos completos
 - [API Reference](15-api-referencia.md) — Referencia exhaustiva de todas las funciones
 - [Pruebas/Tests](16-pruebas.md) — Tests y pruebas unitarias del sistema
+- [Benchmarks](17-benchmarks.md) — Perfiles, métricas, comandos y limitaciones
 
 ---
 
