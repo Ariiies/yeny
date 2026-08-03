@@ -37,7 +37,7 @@ def build_change_detector(
     else:
         last_count = [engine.total_docs if is_indexed else 0]
 
-    def _make_detector(fetch_count):
+    def _make_detector(fetch_count)->Callable[[], bool]:
         """Wrap a count-fetcher into a detector with deferred commit."""
         def detector():
             current = fetch_count()
@@ -100,8 +100,12 @@ def build_change_detector(
                 mx = int(row[1] or 0)
                 return cnt, mx
 
-            c0, m0 = _fetch_count_max_table()
-            last_count[0] = c0
+            # Seed only the MAX(id) fingerprint from the live table.  The
+            # count baseline intentionally keeps the *indexed* doc count
+            # (set above), so a drift introduced while the worker was down
+            # (DB rows != indexed docs) fires on the very first cycle and
+            # gets reconciled incrementally by the delta.
+            _, m0 = _fetch_count_max_table()
             last_max[0] = m0
 
             def detector_table_count_max():
@@ -162,7 +166,7 @@ def build_change_detector(
         else:
             db_path = getattr(source, "db_path", None)
 
-            def _fetch_sqlite():
+            def _fetch_sqlite()->int:
                 import sqlite3
                 conn = sqlite3.connect(db_path)
                 current = conn.execute(

@@ -16,20 +16,26 @@ class TestTargetLeads:
     def test_expected_targets_exist(self):
         refs = {row["reference"] for row in scd.TARGET_LEADS}
         for expected in (
-            "target-luis-aries",
+            "target-aries-meza",
             "target-aries-lucis",
-            "target-aries-netcommerce",
+            "target-cristiano-ronaldo",
             "target-real-madrid",
-            "target-honda-user",
+            "target-leo-messi",
+            "target-vinicus-junior",
+            "target-mcr",
+            "target-autos-usados",
+            "target-admin-publica",
+            "target-dev-service",
         ):
             assert expected in refs
 
     def test_null_dates_kept_as_none(self):
         rows = {row["reference"]: row for row in scd.TARGET_LEADS}
         assert rows["target-aries-lucis"]["created_at"] is None
-        assert rows["target-honda-user"]["created_at"] is None
+        assert rows["target-leo-messi"]["created_at"] is None
+        assert rows["target-vinicus-junior"]["created_at"] is None
         # Dated targets keep their fixed, documented dates (reproducibility):
-        assert rows["target-luis-aries"]["created_at"] == datetime(2026, 2, 19)
+        assert rows["target-aries-meza"]["created_at"] == datetime(2026, 2, 19)
 
     def test_rows_match_database_schema(self):
         import database

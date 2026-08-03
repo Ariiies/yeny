@@ -502,9 +502,11 @@ class ShardManager:
     @property
     def total_docs(self) -> int:
         """Total documents across all shards (uses cached metadata counts)."""
-        if self._doc_counts:
-            return sum(self._doc_counts.values())
-        return sum(e.total_docs for e in self.shards.values())
+        total = sum(e.total_docs for e in self.shards.values())
+        for key, cnt in self._doc_counts.items():
+            if key not in self.shards:
+                total += cnt
+        return total
 
     @property
     def shard_keys(self) -> List[str]:

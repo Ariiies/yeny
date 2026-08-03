@@ -2,10 +2,11 @@
 
     python seed_controlled_data.py
 
-These 9 records (Luis Aries, Aries Lucis, Aries Netcommerce, Real Madrid,
-Honda User, …) exist so you always know **what a search should find**.
-Each one carries a stable ``reference`` and a FIXED date (or None → NULL
-→ universal shard), which keeps the whole example reproducible.
+These 10 records (Luis Aries, Aries Lucis, Cristiano Ronaldo, Real Madrid,
+Leo Messi, Vinicus Junior, My Chemical Romance, Autos Usados, Admin Publica,
+and dev service) exist so you always know **what a search should find**.
+Each one carries a stable ``reference`` and a fixed date (or ``None`` →
+``NULL`` → universal shard), which keeps the whole example reproducible.
 
 Sensitive fields (name/email/number) are encrypted before they touch the
 database; re-running skips duplicates by reference.  This file is small
@@ -15,9 +16,9 @@ from datetime import datetime
 
 import database
 
-TARGET_LEADS = [
+TARGET_LEADS: list[dict] = [
     {
-        "reference": "target-luis-aries",
+        "reference": "target-aries-meza",
         "name": "Aries Meza",
         "email": "ariesmeza@hotmail.com",
         "number": "+526121696226",

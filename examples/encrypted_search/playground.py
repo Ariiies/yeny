@@ -206,8 +206,8 @@ def main():
     if database.count_leads() == 0:
         print(
             f"\nTable '{TABLE_NAME}' is empty.\n"
-            "  → python seed_controlled_data.py     (9 easy-to-find leads)\n"
-            "  → python generate_noise.py --records 1000   (optional volume)\n"
+            "  → python seed_controlled_data.py     (10 easy-to-find leads)\n"
+            "  → python generate_noise.py --records 100000   (optional volume)\n"
         )
         return
 

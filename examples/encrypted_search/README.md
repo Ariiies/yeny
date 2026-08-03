@@ -1,8 +1,8 @@
 # Encrypted Search with Lucis
 
 > Full-text search over Fernet-encrypted MySQL columns — with ~15 lines
-> of Lucis-specific code.  *(Ejemplo reproducible: índice ciego de
-> trigramas + HMAC, consultado con texto plano.)*
+> of Lucis-specific code.  *(Reproducible example: blind index of
+> trigrams + HMAC, queried with plain text.)*
 
 This example demonstrates how Lucis can index and search a MySQL table
 containing encrypted fields.  **The complete Lucis integration lives in
@@ -17,8 +17,11 @@ The remaining files only prepare or display data:
 | file | role |
 |------|------|
 | `database.py` | small helper: `.env`, table DDL, inserts, decrypt-for-display |
-| `seed_controlled_data.py` | inserts 9 easy-to-find leads (Luis Aries, Real Madrid, …) |
+| `seed_controlled_data.py` | inserts 10 easy-to-find leads (Aries Meza, Real Madrid, …) |
 | `generate_noise.py` | optional: deterministic bulk volume (`--records 100000`) |
+
+Prefer a visual overview? Jump to the [visual walkthrough: Lucis in 3
+steps](#10-visual-walkthrough-lucis-in-3-steps).
 
 ---
 
@@ -52,7 +55,7 @@ if not luc._is_indexed:
         preprocessor=preprocessor,
     )
 
-results = luc.search("luis hotmail 612")
+results = luc.search("aries hotmail 612")
 ```
 
 **That is all the Lucis-specific code there is.**  Everything else in the
@@ -96,8 +99,8 @@ CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 Then:
 
 ```bash
-python seed_controlled_data.py      # 9 controlled leads (encrypted)
-python generate_noise.py --records 100000 --seed 20260801 # optional, but recomended to see lucis potential and escalbility
+python seed_controlled_data.py      # 10 controlled leads (encrypted)
+python generate_noise.py --records 100000 --seed 20260801 # optional; useful for testing scale
 python playground.py                # builds the index, opens the menu
 ```
 
@@ -259,26 +262,72 @@ python playground.py
 
 ## 9. Expected output
 
-Searching `luis aries`:
+Searching `aries`:
 
 ```text
-10 result(s) in 2.0 ms (shards 75/75):
-  1. [0.2174] Luis Aries | luisaries1998@hotmail.com | +526121696226 | 127.168.192.2  (shard: 2026_02)
+2 result(s) in 2.0 ms (shards 75/75):
+  1. [0.2174] Aries Meza | ariesmeza@hotmail.com | +526121696226 | 127.168.192.2  (shard: 2026_02)
   2. [0.1429] Aries Lucis | aries.lucis@lucis.dev | +521551998877 | 127.168.192.0  (shard: 9999_99)
-  3. [0.1200] Aries Netcommerce | aries@netcommerce.com | +5215587654321 | 127.168.192.4  (shard: 2025_12)
-  …
 ```
 
 Queries that find `target-luis-aries` (normalization at work):
-`luis aries` · `Luis Aries` · `luisaries1998` · `hotmail 612` ·
-`hotmail.com` · `6121696226` · `+52 612 169 6226`.
+`aries` · `Aries Meza` · `ariesmeza` · `hotmail 612` · `hotmail.com` ·
+`6121696226` · `+52 612 169 6226`.
 
-Queries that find `target-aries-netcommerce`:
-`1271681924` · `127.168.192.4` · `aries netcommerce`.
+Queries that find `target-autos-usados`:
+`autos usados` · `autos.usados@hdm.honda.com` · `127.168.192.8`.
 
 ---
 
-## 10. Worker & health monitor (optional)
+## 10. Visual walkthrough: Lucis in 3 steps
+
+If you understand examples more easily through images, this walkthrough
+shows the complete flow: prepare the data, build or load the index, and
+search the encrypted fields.
+
+### Step 1 — Prepare the data
+
+After configuring `.env` and creating the database, in the venv install lucis example ([Check Quickstart](#2-quick-start)) and run the seed scripts:
+
+The first image shows the seed command. The second confirms that the
+database contains the example data.
+
+![Seed the controlled data](assets/example_1.png)
+
+![Confirm that the database was updated](assets/example_7.png)
+
+### Step 2 — Build or load the Lucis index
+
+Run the playground:
+
+```bash
+python playground.py
+```
+
+On the first run, Lucis builds the index from the database, so startup can
+take longer. On later runs, Lucis loads the saved index and starts faster.
+
+![Build the Lucis index](assets/example_2.png)
+
+![Load the saved index](assets/example_3.png)
+
+### Step 3 — Search
+
+Use the search option in the playground to search the encrypted fields with
+plain text. You can also provide date filters to limit the search to the
+relevant temporal shards.
+
+![Search encrypted fields](assets/example_4.png)
+
+![Use date filters](assets/example_5.png)
+
+The final screen shows the playground's resource and health information.
+The timings are local observations, not benchmarks.
+
+![View resource and health information](assets/example_6.png)
+
+
+## 11. Worker & health monitor (optional)
 
 `ENABLE_WORKER=true` starts a Lucis `IndexWorker` that re-syncs the index
 when the table changes (interval from `.env`) — insert a lead from the
@@ -289,7 +338,7 @@ observations, **not benchmarks**.
 
 ---
 
-## 11. Security & limitations
+## 12. Security & limitations
 
 - Two **independent** secrets: `ENCRYPTION_SECRET` (Fernet, data at rest)
   and `TOKEN_HMAC_SECRET` (blinds index tokens).  Never reuse one for the
@@ -306,7 +355,7 @@ observations, **not benchmarks**.
 
 ---
 
-## 12. Cleanup
+## 13. Cleanup
 
 ```sql
 -- MySQL

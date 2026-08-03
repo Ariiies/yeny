@@ -36,16 +36,68 @@ def build_delta_fn(
 
     # Optimized path: table + id_column → SQL-level delta
     if spec.type == "table" and spec.id_column:
-        return _build_delta_fn_by_id(spec, reader, storage)
+        return _build_delta_fn_by_id(spec, reader, storage, shard_manager, engine)
 
     # Universal path: fetch all → diff against known IDs
     return _build_delta_fn_universal(spec, reader, storage, shard_manager, engine)
+
+
+def _index_max_id(shard_manager: Any, engine: Any) -> Optional[int]:
+    """Highest original document id currently present in the index.
+
+    Used to seed the incremental watermark from the **index** rather than
+    from the live table, so rows inserted while the worker was down are
+    picked up on the first cycle.
+
+    Returns:
+        ``int`` — max indexed id (``0`` when the index is genuinely empty,
+        so the first cycle fetches the whole table once).  ``None`` — the
+        max cannot be determined safely (non-numeric ids, or an ``id_map``
+        only partially resident due to lazy/evicted shards).  The caller
+        then falls back to the live ``MAX(id)`` seed.
+    """
+    if shard_manager is not None:
+        total = getattr(shard_manager, "total_docs", 0) or 0
+        if total <= 0:
+            return 0
+        # NOTE: do NOT use shard_manager.id_map here — internal doc ids are
+        # per-shard (0-based), so the unified view silently drops docs on
+        # key collisions.  Iterate each shard's own id_map instead.
+        try:
+            ids = [
+                int(v)
+                for shard in shard_manager.shards.values()
+                for v in getattr(shard, "id_map", {}).values()
+                if v is not None
+            ]
+        except (TypeError, ValueError):
+            return None
+    else:
+        total = getattr(engine, "total_docs", 0) or 0
+        if total <= 0:
+            return 0
+        id_map = getattr(engine, "id_map", None)
+        if id_map is None:
+            return None
+        try:
+            ids = [int(v) for v in id_map.values() if v is not None]
+        except (TypeError, ValueError):
+            return None
+
+    if len(ids) < total:
+        # id_map does not cover every indexed doc (lazy/evicted shards) —
+        # a max computed from it could be too low and re-fetch rows that
+        # are already indexed, so refuse to seed from it.
+        return None
+    return max(ids) if ids else 0
 
 
 def _build_delta_fn_by_id(
     spec: SourceSpec,
     reader: Any,
     storage: Any,
+    shard_manager: Any = None,
+    engine: Any = None,
 ) -> Callable:
     """Optimized delta: ``WHERE id > last_max_id`` at the SQL level.
 
@@ -53,6 +105,11 @@ def _build_delta_fn_by_id(
     produces ``(data, dates)`` tuples for shard routing.
 
     Uses *reader* for Alchemy sources, falls back to *storage*.
+
+    The ``last_max_id`` watermark is seeded from the **index** (see
+    :func:`_index_max_id`) so rows inserted while the worker was down are
+    fetched on the first cycle.  When the index cannot provide a safe max,
+    it falls back to the live ``MAX(id)`` — the historical behaviour.
     """
     id_col = spec.id_column
     table_name = spec.table_name
@@ -63,17 +120,21 @@ def _build_delta_fn_by_id(
     # Prefer reader for source DB access
     source = reader if reader else storage
     last_max = [0]
+    seed = _index_max_id(shard_manager, engine)
 
     if hasattr(source, "_engine"):
         # AlchemyReader / AlchemyStorage
         from sqlalchemy import text as _sa_text
 
-        with source._engine.connect() as conn:
-            result = conn.execute(
-                _sa_text(f"SELECT MAX({id_col}) FROM {table_name}")
-            ).scalar()
-            if result is not None:
-                last_max[0] = result
+        if seed is not None:
+            last_max[0] = seed
+        else:
+            with source._engine.connect() as conn:
+                result = conn.execute(
+                    _sa_text(f"SELECT MAX({id_col}) FROM {table_name}")
+                ).scalar()
+                if result is not None:
+                    last_max[0] = result
 
         # Build text expression for multi-column support
         text_expr = source._sql_concat_columns(text_col)
@@ -134,13 +195,16 @@ def _build_delta_fn_by_id(
         import sqlite3 as _sqlite3
 
         db_path = getattr(storage, "db_path", None)
-        conn = _sqlite3.connect(db_path)
-        result = conn.execute(
-            f"SELECT MAX({id_col}) FROM {table_name}"
-        ).fetchone()[0]
-        conn.close()
-        if result is not None:
-            last_max[0] = result
+        if seed is not None:
+            last_max[0] = seed
+        else:
+            conn = _sqlite3.connect(db_path)
+            result = conn.execute(
+                f"SELECT MAX({id_col}) FROM {table_name}"
+            ).fetchone()[0]
+            conn.close()
+            if result is not None:
+                last_max[0] = result
 
         # Build text expression for multi-column support
         text_expr = _build_sql_text_expr(text_col)

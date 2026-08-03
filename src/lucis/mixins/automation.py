@@ -16,7 +16,7 @@ from ..sync.data_providers import build_data_fn, build_streaming_fn
 from ..sync.delta_providers import build_delta_fn
 from ..sync.change_detectors import build_change_detector
 from ..core.health import health_check as _health_check, HealthMonitor
-from .._internals import _get_alchemy_reader_class
+from .._internals import _get_alchemy_reader_class, _ENGINE_REGISTRY
 
 if TYPE_CHECKING:
     from ..core.worker import IndexWorker
@@ -502,10 +502,10 @@ class AutomationMixin:
             self.connect_source(source_url)
 
         # Auto-detect incremental mode based on engine scoring model:
-        # LiteEngine (name="lite"): TF scoring, exact incremental — no precision loss
-        # CoreEngine (name="core"): TF-IDF cosine, IDF drifts with incremental → full rebuild
+        # LiteEngine (registry key "lite"): TF scoring, exact incremental — no precision loss
+        # CoreEngine (registry key "core"): TF-IDF cosine, IDF drifts with incremental → full rebuild
         if incremental is None:
-            incremental = self.engine.name == "lite"
+            incremental = isinstance(self.engine, _ENGINE_REGISTRY["lite"])
 
         # Auto-generate delta_fn for incremental mode (via sync layer)
         if incremental and delta_fn is None:
