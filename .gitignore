@@ -48,11 +48,11 @@ coverage.xml
 .hypothesis/
 test_data/
 
-# Project specific ignores (Playground & Local Data)
-playground.py
-playground2.py
-dataset.py
-lucis_data/
+# Project specific ignores (Playground & Local Data — root-level only)
+/playground.py
+/playground2.py
+/dataset.py
+/lucis_data/
 *.mp4
 *.avi
 *.mov
@@ -82,3 +82,11 @@ benchmarks/results/
 benchmarks/.cache/
 benchmarks/__pycache__/
 benchmarks/scenarios/__pycache__/
+
+# Examples (tracked), but never their local secrets or generated data
+!examples/
+!examples/**
+examples/encrypted_search/.env
+examples/encrypted_search/lucis_data/
+examples/encrypted_search/output/
+examples/**/__pycache__/

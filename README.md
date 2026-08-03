@@ -6,7 +6,7 @@
 [![PyPI](https://img.shields.io/pypi/v/lucis)](https://pypi.org/project/lucis/)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
 
-> A minimalist NLP toolkit and search engine generator for Python.
+> A lightweight toolkit for building custom search systems in Python.
 
 ### "An easy way to build search engines in Python."
 
@@ -22,6 +22,7 @@ It follows a progressive-power philosophy:
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Examples](#examples)
 - [Architecture Snapshot](#architecture-snapshot)
 - [Why Lucis?](#why-lucis)
 - [Documentation](#documentation)
@@ -113,6 +114,25 @@ searcher.save()
 loaded = Lucis(name="demo_index")
 response = loaded.search("python")
 ```
+
+## Examples
+
+Runnable, documented end-to-end scenarios live in [`examples/`](examples/):
+
+- **[Encrypted search over MySQL](examples/encrypted_search/README.md)** —
+  full-text search over Fernet-encrypted columns (`name`/`email`/`number`)
+  using a blind index of HMAC-trigrams, temporal sharding, `.lcs`
+  persistence and an interactive playground. The whole Lucis integration
+  fits in ~15 lines inside `playground.py`.
+
+```bash
+cd examples/encrypted_search
+pip install "../..[encrypted-search-example]"
+python seed_controlled_data.py && python playground.py
+```
+
+See [`examples/encrypted_search/README.md`](examples/encrypted_search/README.md)
+for setup, security model and adaptation guide.
 
 ## Architecture Snapshot
 

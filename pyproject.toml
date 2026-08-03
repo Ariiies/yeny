@@ -19,6 +19,23 @@ alchemy = ["sqlalchemy"]
 mysql = ["sqlalchemy", "pymysql"]
 postgresql = ["sqlalchemy", "psycopg2-binary"]
 benchmark = ["psutil>=5.9"]
+# Dependencies for examples/encrypted_search (MySQL + Fernet + .env loading;
+# psutil only powers the optional --measure-memory flag)
+encrypted-search-example = [
+    "sqlalchemy>=2.0",
+    "pymysql>=1.0",
+    "cryptography>=41.0",
+    "python-dotenv>=1.0",
+    "psutil>=5.9",
+]
+# Convenience alias: every extra needed to run all bundled examples
+examples = [
+    "sqlalchemy>=2.0",
+    "pymysql>=1.0",
+    "cryptography>=41.0",
+    "python-dotenv>=1.0",
+    "psutil>=5.9",
+]
 
 [project.urls]
 Homepage = "https://github.com/Ariiies/lucis"
