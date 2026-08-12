@@ -9,9 +9,11 @@ used standalone for periodic monitoring.
 Example — one-shot health check::
 
     from lucis import Lucis
+    from lucis.config import LucisOptions
 
     luc = Lucis(name="email_idx", engine="lite",
-                storage_type="alchemy", alchemy_url=DB_URL)
+                options=LucisOptions(storage_type="alchemy",
+                                    connection_url=DB_URL))
     report = luc.health_check()
     print(report)
 

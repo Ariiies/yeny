@@ -6,8 +6,10 @@ methods that create a ready-to-search Lucis instance by reading rows
 directly from a SQLite database via the standard-library ``sqlite3``
 module.
 """
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from dataclasses import replace
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
 
+from ...config import LucisOptions
 from ...sync.source_spec import SourceSpec
 from ..._internals import _build_sql_text_expr
 
@@ -28,7 +30,10 @@ class SQLiteLoadersMixin:
         id_column: Optional[str] = None,
         where_clause: Optional[str] = None,
         name: str = "default",
-        **kwargs,
+        *,
+        engine: str = "core",
+        preprocessor: Optional[Callable] = None,
+        options: Optional[LucisOptions] = None,
     ) -> "Lucis":
         """
         Create a Lucis instance by reading rows from an existing SQLite table.
@@ -46,7 +51,10 @@ class SQLiteLoadersMixin:
             id_column: Column to use as document ID (optional).
             where_clause: Optional SQL ``WHERE`` filter (without the ``WHERE`` keyword).
             name: Identifier for the persisted index.
-            **kwargs: Extra arguments forwarded to ``Lucis.__init__``.
+            engine: Search engine implementation: ``"core"`` or ``"lite"``.
+            preprocessor: Optional shared indexing/search preprocessing function.
+            options: Advanced storage, binary, and memory configuration.  The
+                source ``db_path`` and SQLite backend are applied automatically.
 
         Returns:
             A ready-to-search Lucis instance.
@@ -81,14 +89,22 @@ class SQLiteLoadersMixin:
 
         conn.close()
 
-        # Default to sqlite storage backed by the same db
-        kwargs.setdefault("storage_type", "sqlite")
-        kwargs.setdefault("db_path", db_path)
-        instance = cls(name=name, autoload=False, **kwargs)
+        source_options = replace(
+            options or LucisOptions(),
+            storage_type="sqlite",
+            db_path=db_path,
+        )
+        instance = cls(
+            name=name,
+            engine=engine,
+            preprocessor=preprocessor,
+            autoload=False,
+            options=source_options,
+        )
         instance._source_info = SourceSpec(
             type="table",
-            table_name=table_name,
-            text_column=text_column,
+            table=table_name,
+            text_columns=text_column,
             id_column=id_column,
             date_column=None,
             where_clause=where_clause,
@@ -102,7 +118,10 @@ class SQLiteLoadersMixin:
         query: str,
         db_path: str,
         name: str = "default",
-        **kwargs,
+        *,
+        engine: str = "core",
+        preprocessor: Optional[Callable] = None,
+        options: Optional[LucisOptions] = None,
     ) -> "Lucis":
         """
         Create a Lucis instance from an arbitrary SQL ``SELECT`` query.
@@ -115,7 +134,10 @@ class SQLiteLoadersMixin:
             query: A ``SELECT`` statement to execute.
             db_path: Path to the SQLite database file.
             name: Identifier for the persisted index.
-            **kwargs: Extra arguments forwarded to ``Lucis.__init__``.
+            engine: Search engine implementation: ``"core"`` or ``"lite"``.
+            preprocessor: Optional shared indexing/search preprocessing function.
+            options: Advanced storage, binary, and memory configuration.  The
+                source ``db_path`` and SQLite backend are applied automatically.
 
         Returns:
             A ready-to-search Lucis instance.
@@ -152,9 +174,18 @@ class SQLiteLoadersMixin:
 
         conn.close()
 
-        kwargs.setdefault("storage_type", "sqlite")
-        kwargs.setdefault("db_path", db_path)
-        instance = cls(name=name, autoload=False, **kwargs)
+        source_options = replace(
+            options or LucisOptions(),
+            storage_type="sqlite",
+            db_path=db_path,
+        )
+        instance = cls(
+            name=name,
+            engine=engine,
+            preprocessor=preprocessor,
+            autoload=False,
+            options=source_options,
+        )
         instance._source_info = SourceSpec(
             type="query",
             query=query,

@@ -9,15 +9,14 @@ bug or a new source type stays isolated to a single file:
 - ``BasicLoadersMixin`` (``loaders_basic.py``): ``from_dict``, ``from_list``.
 - ``SQLiteLoadersMixin`` (``loaders_sqlite.py``): ``from_sqlite_table``,
   ``from_sqlite_query``.
-- ``AlchemyLoadersMixin`` (``loaders_alchemy.py``): ``from_alchemy_table``,
-  ``from_alchemy_query``.
+- ``DatabaseLoadersMixin`` (``loaders_db.py``): ``from_table``, ``from_query``.
 """
 from .loaders_basic import BasicLoadersMixin
 from .loaders_sqlite import SQLiteLoadersMixin
-from .loaders_alchemy import AlchemyLoadersMixin
+from .loaders_db import DatabaseLoadersMixin
 
 
-class LoaderMixin(BasicLoadersMixin, SQLiteLoadersMixin, AlchemyLoadersMixin):
+class LoaderMixin(BasicLoadersMixin, SQLiteLoadersMixin, DatabaseLoadersMixin):
     """Mixin that provides ``from_*`` factory class methods.
 
     These methods create a new ``Lucis`` instance, ingest data from
@@ -27,6 +26,11 @@ class LoaderMixin(BasicLoadersMixin, SQLiteLoadersMixin, AlchemyLoadersMixin):
     All methods are ``@classmethod`` — they receive ``cls`` (which is
     ``Lucis`` at runtime due to MRO) and delegate to ``index()``,
     ``save()``, and internal helpers defined on the full class.
+
+    Public intent (source, name, engine, and preprocessor) stays explicit;
+    advanced infrastructure is carried by ``LucisOptions`` and database table
+    tuning by ``TableConfig``.  The factories deliberately avoid
+    catch-all ``**kwargs`` so misspelled options fail immediately.
 
     This class itself only composes the three source-specific mixins
     above; it does not define any behavior of its own.

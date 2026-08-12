@@ -31,28 +31,36 @@ This is the whole thing — copied from `playground.py`:
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions, TableSource
 from preprocessor import preprocessor   # only for encrypted fields
+
+OPTIONS = LucisOptions(
+    storage_dir="./lucis_data",
+    memory_limit_mb=512,
+)
 
 # Path 1 — a saved index already exists → autoload (mmap, fast).
 luc = Lucis(
     name="encrypted_leads",
     engine="lite",
     preprocessor=preprocessor,
-    memory_limit_mb=512,
-    storage_dir="./lucis_data",
+    options=OPTIONS,
 )
 
 # Path 2 — no saved index → build it straight from the table.
-if not luc._is_indexed:
-    luc = Lucis.from_alchemy_table(
-        table_name="leads",
-        id_column="id",
-        text_column=["name", "email", "number", "ip"],  # cross-field
-        date_column="created_at",                       # temporal shards
-        url=DB_URL,
+if not luc.is_indexed:
+    luc = Lucis.from_table(
+        TableSource(
+            table="leads",
+            connection_url=DB_URL,
+            text_columns=["name", "email", "number", "ip"],
+            id_column="id",
+            date_column="created_at",
+        ),
         name="encrypted_leads",
         engine="lite",
         preprocessor=preprocessor,
+        options=OPTIONS,
     )
 
 results = luc.search("aries hotmail 612")

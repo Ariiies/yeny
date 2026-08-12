@@ -25,7 +25,7 @@ def build_change_detector(
     ``"query"`` sources (wraps the original query in
     ``SELECT COUNT(*) FROM (…)``).
 
-    Uses *reader* for Alchemy sources, falls back to *storage*.
+    Uses *reader* for database sources, then falls back to *storage*.
     """
     if spec is None:
         return None
@@ -65,7 +65,7 @@ def build_change_detector(
         return detector
 
     if spec.type == "table":
-        table_name = spec.table_name
+        table_name = spec.table
 
         # Enhanced table detector: if id_column exists, track COUNT + MAX(id)
         # so mixed "delete + insert" cycles are detected even when count

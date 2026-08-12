@@ -439,12 +439,12 @@ class SQLiteStorage(BaseStorage):
         Args:
             name: Physical index name to associate the metadata with.
             info: Source-info dict with keys such as ``type``,
-                ``table_name``, ``text_column`` (str or list),
+                ``table``, ``text_columns`` (str or list),
                 ``id_column``, ``date_column``, ``where_clause``,
                 and ``query``.
         """
         import json as _json
-        text_col = info.get("text_column")
+        text_col = info.get("text_columns")
         # Multi-column: serialize as JSON list; single column: plain string
         source_column = _json.dumps(text_col) if isinstance(text_col, list) else text_col
         cur = self.conn.cursor()
@@ -454,7 +454,7 @@ class SQLiteStorage(BaseStorage):
             "source_date_column = ?, source_query = ?, source_where = ? "
             "WHERE index_name = ?",
             (
-                info.get("table_name"),
+                info.get("table"),
                 source_column,
                 info.get("id_column"),
                 info.get("date_column"),
@@ -501,8 +501,8 @@ class SQLiteStorage(BaseStorage):
         if source_query is not None:
             return {
                 "type": "query",
-                "table_name": None,
-                "text_column": None,
+                "table": None,
+                "text_columns": None,
                 "id_column": None,
                 "date_column": None,
                 "where_clause": None,
@@ -513,8 +513,8 @@ class SQLiteStorage(BaseStorage):
         if source_table is not None:
             return {
                 "type": "table",
-                "table_name": source_table,
-                "text_column": text_column,
+                "table": source_table,
+                "text_columns": text_column,
                 "id_column": source_id_column,
                 "date_column": source_date_column,
                 "where_clause": source_where,

@@ -31,6 +31,7 @@ for r in response.results:
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions
 
 luc = Lucis.from_sqlite_table(
     db_path="blog.db",
@@ -39,19 +40,19 @@ luc = Lucis.from_sqlite_table(
     id_column="slug",
     name="blog_idx",
     engine="core",
-    storage_type="sqlite",
 )
 
 # Buscar
-response = luc.search("tutorial python", limit=5)
+response = luc.search("tutorial python", top_k=5)
 for r in response.results:
     print(f"  {r.doc_id}: {r.score:.4f}")
 
-# Guardar el índice para no re-procesar al reiniciar
-luc.save()
-
-# Cargar en el próximo arranque
-luc.load()
+# The factory persists automatically; a new process can reopen it:
+luc = Lucis(
+    name="blog_idx",
+    engine="core",
+    options=LucisOptions(storage_type="sqlite", db_path="blog.db"),
+)
 ```
 
 ---
@@ -73,8 +74,6 @@ productos = {
 luc = Lucis(
     name="productos",
     engine="lite",
-    tokenizer="char_ngram",   # trigramas de caracteres
-    ngram_size=3,
 )
 luc.index(productos)
 
@@ -89,32 +88,27 @@ for r in response.results:
 ## 4. Worker with MySQL database
 
 ```python
-from lucis import Lucis, IndexWorker
+from lucis import Lucis
+from lucis.config import LucisOptions, TableSource
 
 MYSQL_URL = "mysql+pymysql://user:pass@localhost/mi_db"
 
-luc = Lucis.from_alchemy_table(
-    alchemy_url=MYSQL_URL,
-    table_name="articulos",
-    text_column="contenido",
-    id_column="id",
-    date_column="created_at",
+luc = Lucis.from_table(
+    TableSource(
+        table="articulos",
+        connection_url=MYSQL_URL,
+        text_columns="contenido",
+        id_column="id",
+        date_column="created_at",
+    ),
     name="articulos_idx",
     engine="lite",
-    storage_type="alchemy",
-    max_loaded_shards=6,
-    memory_limit_mb=2048,
+    options=LucisOptions(max_loaded_shards=6, memory_limit_mb=2048),
 )
 
-def obtener_datos():
-    return luc.storage.read_table(
-        "articulos", text_column="contenido", id_column="id"
-    )
-
-worker = IndexWorker(
-    lucis=luc,
-    data_fn=obtener_datos,
+worker = luc.create_worker(
     interval=120,
+    connection_url=MYSQL_URL,
     auto_purge=True,
     keep_versions=3,
     on_rebuild=lambda name: print(f"[rebuild] {name}"),
@@ -134,6 +128,7 @@ To search multiple fields simultaneously, concatenate the fields when indexing:
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions
 
 articulos = [
     {"titulo": "Guía de Python", "cuerpo": "Aprende Python desde cero", "tags": "tutorial python"},
@@ -206,12 +201,16 @@ print(f"Similitud: {sim:.4f}")
 from lucis import Lucis
 
 # Empezar con JSON (desarrollo)
-luc = Lucis(name="mi_idx", engine="lite", storage_type="json")
+luc = Lucis(name="mi_idx", engine="lite")
 luc.index(mis_datos)
 luc.save()
 
 # Migrar a SQLite (producción)
-luc_prod = Lucis(name="mi_idx", engine="lite", storage_type="sqlite", db_path="prod.db")
+luc_prod = Lucis(
+    name="mi_idx",
+    engine="lite",
+    options=LucisOptions(storage_type="sqlite", db_path="prod.db"),
+)
 luc_prod.index(mis_datos)  # re-indexar con el nuevo storage
 luc_prod.save()
 
@@ -219,8 +218,10 @@ luc_prod.save()
 luc_pg = Lucis(
     name="mi_idx",
     engine="lite",
-    storage_type="alchemy",
-    alchemy_url="postgresql+psycopg2://user:pass@host/db",
+    options=LucisOptions(
+        storage_type="alchemy",
+        connection_url="postgresql+psycopg2://user:pass@host/db",
+    ),
 )
 luc_pg.index(mis_datos)
 luc_pg.save()
@@ -234,9 +235,13 @@ luc_pg.save()
 import json
 import time
 from lucis import Lucis
+from lucis.config import LucisOptions
 
-luc = Lucis(name="prod_idx", engine="lite", storage_type="sqlite", db_path="prod.db")
-luc.load()
+luc = Lucis(
+    name="prod_idx",
+    engine="lite",
+    options=LucisOptions(storage_type="sqlite", db_path="prod.db"),
+)
 
 # Health check puntual con benchmark
 report = luc.health_check(benchmark_query="test de latencia")
@@ -294,16 +299,21 @@ luc.index(datos_web)
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions
 
-luc = Lucis(name="mi_idx", engine="lite", storage_type="sqlite", db_path="app.db")
+luc = Lucis(
+    name="mi_idx",
+    engine="lite",
+    options=LucisOptions(storage_type="sqlite", db_path="app.db"),
+)
 
 # Ver versiones disponibles
 versiones = luc.list_versions()
 for v in versiones:
     print(v)
 
-# Cargar una versión específica
-luc.load(version=versiones[-2])  # penúltima versión
+# Volver a la versión anterior y recargarla
+luc.rollback()
 
 # Verificar
 report = luc.health_check()

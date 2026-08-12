@@ -23,6 +23,7 @@ import time
 from datetime import datetime
 
 from lucis import Lucis
+from lucis.config import LucisOptions, TableSource
 
 import database
 import preprocessor as crypto
@@ -46,6 +47,10 @@ INDEX_NAME = os.getenv("LUCIS_INDEX_NAME", "encrypted_leads")
 ENGINE = os.getenv("LUCIS_ENGINE", "lite")
 MEMORY_LIMIT_MB = int(os.getenv("LUCIS_MEMORY_LIMIT_MB", "512"))
 STORAGE_DIR = os.getenv("LUCIS_STORAGE_DIR", "./lucis_data")
+OPTIONS = LucisOptions(
+    storage_dir=STORAGE_DIR,
+    memory_limit_mb=MEMORY_LIMIT_MB,
+)
 
 # Preprocessor: set USE_ENCRYPTED_PREPROCESSOR=false for plain-text tables
 # → Lucis then uses its built-in tokenizer and preprocessor.py is unused.
@@ -77,11 +82,10 @@ def load_or_build_index():
         name=INDEX_NAME,
         engine=ENGINE,
         preprocessor=ACTIVE_PREPROCESSOR,
-        memory_limit_mb=MEMORY_LIMIT_MB,
-        storage_dir=STORAGE_DIR,
+        options=OPTIONS,
     )
     load_s = time.perf_counter() - load_start
-    if luc._is_indexed:
+    if luc.is_indexed:
         print(
             f"Index '{INDEX_NAME}' loaded: {luc.total_docs:,} documents "
             f"in {load_s:.2f}s"
@@ -95,17 +99,18 @@ def load_or_build_index():
     print("No saved index found — building from table "
           f"'{TABLE_NAME}' ({', '.join(TEXT_COLUMNS)})…")
     build_start = time.perf_counter()
-    luc = Lucis.from_alchemy_table(
-        table_name=TABLE_NAME,
-        id_column=ID_COLUMN,
-        text_column=TEXT_COLUMNS,
-        date_column=DATE_COLUMN,
-        url=DB_URL,
+    luc = Lucis.from_table(
+        TableSource(
+            table=TABLE_NAME,
+            connection_url=DB_URL,
+            text_columns=TEXT_COLUMNS,
+            id_column=ID_COLUMN,
+            date_column=DATE_COLUMN,
+        ),
         name=INDEX_NAME,
         engine=ENGINE,
         preprocessor=ACTIVE_PREPROCESSOR,
-        memory_limit_mb=MEMORY_LIMIT_MB,
-        storage_dir=STORAGE_DIR,
+        options=OPTIONS,
     )
     build_s = time.perf_counter() - build_start
     print(
@@ -217,7 +222,7 @@ def main():
     worker = None
     if ENABLE_WORKER:
         worker = luc.create_worker(
-            interval=WORKER_INTERVAL_SECONDS, source_url=DB_URL
+            interval=WORKER_INTERVAL_SECONDS, connection_url=DB_URL
         )
         worker.start()
         print(f"Worker started (re-syncs every {WORKER_INTERVAL_SECONDS}s)")

@@ -2,6 +2,7 @@
 import pytest
 
 from lucis import Lucis
+from lucis.config import LucisOptions
 from lucis.exceptions import LucisEngineError
 from lucis.utils.nlp import word_tokenizer
 
@@ -15,8 +16,7 @@ def test_rollback_restores_previous_version(sample_corpus, tmp_path):
 	lucis = Lucis(
 		name="articles",
 		engine="core",
-		storage_type="sqlite",
-		db_path=str(db_path),
+		options=LucisOptions(storage_type="sqlite", db_path=str(db_path)),
 		preprocessor=word_tokenizer,
 		autoload=False,
 	)
@@ -53,8 +53,7 @@ def test_rollback_without_previous_version_raises(tmp_path):
 	lucis = Lucis(
 		name="articles",
 		engine="core",
-		storage_type="sqlite",
-		db_path=str(db_path),
+		options=LucisOptions(storage_type="sqlite", db_path=str(db_path)),
 		preprocessor=word_tokenizer,
 		autoload=False,
 	)

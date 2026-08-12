@@ -8,8 +8,13 @@ Lucis incluye herramientas de diagnóstico para monitorear RAM, latencia de bús
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions
 
-luc = Lucis(name="mi_idx", engine="lite", storage_type="sqlite", db_path="app.db")
+luc = Lucis(
+    name="mi_idx",
+    engine="lite",
+    options=LucisOptions(storage_type="sqlite", db_path="app.db"),
+)
 luc.index(datos)
 
 report = luc.health_check()

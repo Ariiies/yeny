@@ -6,7 +6,7 @@ point** for all user-facing operations.  The implementation is split
 across four mixins (in ``lucis.mixins``) and a synchronization layer
 (in ``lucis.sync``) to keep each file focused and maintainable:
 
-- ``LoaderMixin``: factory class methods (``from_dict``, ``from_alchemy_table``, …)
+- ``LoaderMixin``: factory class methods (``from_dict``, ``from_table``, …)
 - ``SearchMixin``: search orchestration and shard preloading.
 - ``PersistenceMixin``: save, load, versioning, rollback, binary generation.
 - ``AutomationMixin``: indexing, reindex, incremental updates, worker creation,
@@ -20,6 +20,7 @@ import os
 import threading
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from .config import LucisOptions
 from .storage.base import BaseStorage
 from .storage.json_storage import JSONStorage
 from .storage.sqlite_storage import SQLiteStorage
@@ -64,33 +65,22 @@ class Lucis(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
     """
 
     def __init__(
-        self, 
+        self,
         name: str = "default",
-        storage_dir: str = "lucis_data",
-        storage_type: str = "json",
-        db_path: Optional[str] = None,
-        alchemy_url: Optional[str] = None,
-        storage: Optional[BaseStorage] = None,
         engine: str = "core",
         preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = None,
+        *,
         autoload: bool = True,
-        max_loaded_shards: int = 0,
-        memory_limit_mb: Optional[int] = None,
-        binary_dir: Optional[str] = "auto",
-    ):
+        storage: Optional[BaseStorage] = None,
+        options: Optional[LucisOptions] = None,
+    ) -> None:
         """
         Base constructor: sets up identity, storage, and engine.
         Does NOT ingest data — use .index(), .from_dict(), or .from_list() for that.
 
         Args:
             name: Identifier for the index. Used for persistence (filename/table).
-            storage_dir: Directory where the JSON index files are stored (only for storage_type="json").
-            storage_type: Backend to use for persistence — "json", "sqlite", or "alchemy".
-            db_path: Path to the SQLite database (required when storage_type="sqlite" and no *storage* is given).
-            alchemy_url: SQLAlchemy connection URL (required when storage_type="alchemy" and no *storage* is given).
-            Example: "mysql+pymysql://user:pass@localhost/mydb"
-            storage: A pre-built BaseStorage instance (overrides storage_type/db_path/storage_dir).
-            engine: Which engine to use. Currently supported: "core".
+            engine: Which engine to use. Supported: ``"core"`` and ``"lite"``.
             preprocessor: Text preprocessor function ``(str) → str | list[str]``. Defaults to word_tokenizer.
                 Can return ``list[str]`` (tokens used directly) or ``str`` (Lucis will apply
                 simple_tokenizer as a final tokenization step). The same preprocessor is used
@@ -106,30 +96,36 @@ class Lucis(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
                     # Text-only preprocessing — Lucis tokenizes the returned str automatically
                     Lucis(preprocessor=lambda t: t.lower().strip())
             autoload: If True and an index with this name exists on disk, load it automatically.
-            max_loaded_shards: Maximum number of shards to keep in RAM simultaneously.
-                ``0`` (default) loads all shards eagerly (original behaviour).
-                Set e.g. ``6`` to keep only the 6 most recently accessed shards loaded,
-                evicting older ones on demand.  Requires a sharded index.
-            memory_limit_mb: Maximum RAM budget (in megabytes) for loaded shards.
-                ``None`` (default) = no limit.  When set, the system loads the
-                newest shards first until the budget is ~90 % full, then stops.
-                Historical queries via ``search(since=..., until=...)`` temporarily
-                load extra shards that auto-expire after 30 seconds.
-            binary_dir: Directory for ``.lcs`` (Lucis Compact Shard) binary
-                files.  When set, shards are persisted as mmap-friendly
-                binaries alongside the regular storage, enabling near-zero
-                RAM loading via memory-mapped I/O.
-                ``"auto"`` (default) derives the directory automatically
-                from the storage configuration.  ``None`` disables binary
-                persistence entirely.
+            storage: A pre-built storage object.  It takes precedence over the
+                declarative storage fields in ``options``.
+            options: Advanced infrastructure configuration.  ``None`` is
+                equivalent to ``LucisOptions()`` and preserves the historical
+                defaults.  Its ``binary_dir`` field is tri-state: ``"auto"``
+                derives ``<storage_dir>/lcs``, ``None`` disables binary
+                persistence, and any other string is an explicit directory.
+
+        Storage precedence:
+            An explicit ``storage`` object always wins.  Otherwise
+            ``options.storage_type`` selects JSON, SQLite, or SQLAlchemy
+            persistence; SQLite requires ``options.db_path`` and SQLAlchemy
+            requires ``options.connection_url``.
         """
+        resolved_options = options or LucisOptions()
+        storage_dir = resolved_options.storage_dir
+        storage_type = resolved_options.storage_type
+        db_path = resolved_options.db_path
+        connection_url = resolved_options.connection_url
+        max_loaded_shards = resolved_options.max_loaded_shards
+        memory_limit_mb = resolved_options.memory_limit_mb
+        binary_dir = resolved_options.binary_dir
+
         self.name = name
         self._is_indexed = False
         self._source_info: Optional[SourceSpec] = None
         self._shard_manager: Optional[ShardManager] = None
         self._max_loaded_shards: int = max_loaded_shards
         self._memory_limit_mb: Optional[int] = memory_limit_mb
-        # Reader for source data (production DB). Set by from_alchemy_table().
+        # Reader for source data (production DB). Set by from_table().
         self._reader: Optional[Any] = None
         # If user provides a preprocessor, use it globally.
         # If None, the engine will use its own default:
@@ -153,19 +149,21 @@ class Lucis(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
             # Advanced users can inject their own storage instance
             self.storage = storage
         elif storage_type == "alchemy":
-            if alchemy_url is None:
+            if connection_url is None:
                 raise ValueError(
-                    "alchemy_url is required when storage_type='alchemy'. "
-                    "Example: Lucis(storage_type='alchemy', "
-                    "alchemy_url='mysql+pymysql://user:pass@localhost/mydb')"
+                    "connection_url is required when storage_type='alchemy'. "
+                    "Example: Lucis(options=LucisOptions("
+                    "storage_type='alchemy', "
+                    "connection_url='mysql+pymysql://user:pass@localhost/mydb'))"
                 )
             AlchemyStorage = _get_alchemy_storage_class()
-            self.storage = AlchemyStorage(url=alchemy_url)
+            self.storage = AlchemyStorage(url=connection_url)
         elif storage_type == "sqlite":
             if db_path is None:
                 raise ValueError(
                     "db_path is required when storage_type='sqlite'. "
-                    "Example: Lucis(storage_type='sqlite', db_path='my_data.db')"
+                    "Example: Lucis(options=LucisOptions("
+                    "storage_type='sqlite', db_path='my_data.db'))"
                 )
             self.storage = SQLiteStorage(db_path=db_path)
         else:
@@ -175,9 +173,9 @@ class Lucis(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
         # 1b. Auto-discover MetadataStorage
         # When no explicit storage was provided and binary_dir points to a
         # directory that already contains lucis_meta.db (written by
-        # from_alchemy_table / from_alchemy_query), transparently switch
+        # from_table / from_query), transparently switch
         # to MetadataStorage so the user can reload with just:
-        #     Lucis(name="my_idx", engine="lite", binary_dir="auto")
+        #     Lucis(name="my_idx", engine="lite")
         if storage is None and self._binary_dir:
             _meta_candidate = os.path.join(self._binary_dir, "lucis_meta.db")
             if os.path.isfile(_meta_candidate):
@@ -205,6 +203,11 @@ class Lucis(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
             self.load()
 
     # Shard support
+
+    @property
+    def is_indexed(self) -> bool:
+        """``True`` when the index has been built or loaded."""
+        return self._is_indexed
 
     @property
     def is_sharded(self) -> bool:

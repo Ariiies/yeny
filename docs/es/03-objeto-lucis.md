@@ -16,15 +16,10 @@ Hay tres formas de crear una instancia:
 from lucis import Lucis
 
 buscador = Lucis(
-    name="mi_indice",              # Identificador para persistencia
-    storage_dir="lucis_data",      # Directorio para archivos JSON
-    storage_type="json",           # "json", "sqlite" o "alchemy"
-    engine="core",                 # "core" o "lite"
-    preprocessor=None,             # Callable (str) → str | list[str]
-    autoload=True,                 # Cargar automáticamente si existe
-    max_loaded_shards=0,           # 0 = cargar todos los shards
-    memory_limit_mb=None,          # Límite de RAM para shards
-    binary_dir="auto",             # Directorio para archivos .lcs
+    name="mi_indice",
+    engine="core",
+    preprocessor=None,
+    autoload=True,
 )
 ```
 
@@ -33,22 +28,39 @@ buscador = Lucis(
 | Parámetro | Tipo | Default | Descripción |
 |---|---|---|---|
 | `name` | `str` | `"default"` | Nombre del índice, usado para persistencia |
-| `storage_type` | `str` | `"json"` | Backend: `"json"`, `"sqlite"` o `"alchemy"` |
 | `engine` | `str` | `"core"` | Motor: `"core"` (TF-IDF) o `"lite"` (TF) |
 | `preprocessor` | `Callable` | `None` | Preprocesador de texto personalizado |
 | `autoload` | `bool` | `True` | Auto-cargar índice existente al instanciar |
-| `storage_dir` | `str` | `"lucis_data"` | Carpeta para JSON storage |
-| `db_path` | `str` | `None` | Ruta DB SQLite (requerido si `storage_type="sqlite"`) |
-| `alchemy_url` | `str` | `None` | URL SQLAlchemy (requerido si `storage_type="alchemy"`) |
-| `max_loaded_shards` | `int` | `0` | Shards simultáneos en RAM (0 = todos) |
-| `memory_limit_mb` | `int` | `None` | Presupuesto máximo de RAM en MB |
-| `binary_dir` | `str` | `"auto"` | Directorio para `.lcs` binarios |
+| `storage` | `BaseStorage` | `None` | Storage inyectado; prevalece sobre las opciones declarativas |
+| `options` | `LucisOptions` | `None` | Configuración avanzada de storage, binarios y memoria |
+
+El camino simple no necesita objetos de configuración. Para infraestructura
+avanzada puedes reutilizar una instancia inmutable:
+
+```python
+from lucis import Lucis
+from lucis.config import LucisOptions
+
+options = LucisOptions(
+    storage_dir="datos_personalizados",
+    memory_limit_mb=512,
+    max_loaded_shards=6,
+)
+buscador = Lucis(name="mi_indice", engine="lite", options=options)
+```
+
+`binary_dir` tiene tres estados: `"auto"` deriva
+`<storage_dir>/lcs`, `None` desactiva la persistencia `.lcs` y cualquier otro
+string selecciona un directorio explícito.
+
+Las propiedades de estado de solo lectura incluyen `is_indexed`, `is_sharded`,
+`total_docs` y `loaded_memory_mb`.
 
 ---
 
 ## Factory methods
 
-### `from_dict(data, name, **kwargs)`
+### `from_dict(data, name, *, engine, preprocessor, options)`
 
 Crea una instancia desde un diccionario `{id: texto}`. Preserva las keys originales como IDs en los resultados.
 
@@ -64,7 +76,7 @@ resultados = buscador.search("python web")
 # resultados.results[0].doc_id → "art_001"
 ```
 
-### `from_list(data, name, **kwargs)`
+### `from_list(data, name, *, engine, preprocessor, options)`
 
 Crea una instancia desde una lista de textos. Los IDs son secuenciales (0, 1, 2...).
 
@@ -103,7 +115,7 @@ buscador = Lucis.from_sqlite_table(
 | `id_column` | `str` (opcional) | Columna para IDs |
 | `where_clause` | `str` (opcional) | Filtro SQL sin `WHERE` |
 
-### `from_sqlite_query(query, db_path, name, **kwargs)`
+### `from_sqlite_query(query, db_path, name, *, engine, preprocessor, options)`
 
 Crea una instancia desde un `SELECT` SQL arbitrario.
 
@@ -118,17 +130,21 @@ buscador = Lucis.from_sqlite_query(
 - Si el query retorna **1 columna**: se trata como lista de textos.
 - Si retorna **2+ columnas**: la primera es el ID, la segunda es el texto.
 
-### `from_alchemy_table(table_name, url, text_column, ...)`
+### `from_table(source, name, *, engine, preprocessor, config, options)`
 
 Crea una instancia leyendo filas de una tabla via SQLAlchemy. Funciona con MySQL, PostgreSQL, MariaDB, etc.
 
 ```python
-buscador = Lucis.from_alchemy_table(
-    table_name="articulos",
-    url="mysql+pymysql://usuario:clave@localhost/mi_bd",
-    text_column="contenido",
-    id_column="articulo_id",
-    date_column="created_at",  # Activa sharding temporal automático
+from lucis.config import TableSource
+
+buscador = Lucis.from_table(
+    TableSource(
+        table="articulos",
+        connection_url="mysql+pymysql://usuario:clave@localhost/mi_bd",
+        text_columns="contenido",
+        id_column="articulo_id",
+        date_column="created_at",
+    ),
     name="articulos_idx",
     engine="lite"
 )
@@ -138,31 +154,45 @@ buscador = Lucis.from_alchemy_table(
 
 | Parámetro | Tipo | Default | Descripción |
 |---|---|---|---|
-| `text_column` | `str \| list[str]` | — | Columna(s) de texto. Si es lista, se concatenan (**búsqueda cross-field**) |
-| `date_column` | `str` | `"auto"` | Columna para sharding temporal. `"auto"` detecta `created_at`, `updated_at`, `timestamp`. `None` desactiva sharding |
-| `where_clause` | `str` | `None` | Filtro SQL |
-| `schema` | `str` | `None` | Schema de BD (ej. `"public"` para PostgreSQL) |
+| `source` | `TableSource` | — | Tabla, URL de conexión, columnas de texto, ID y columna temporal |
+| `config` | `TableConfig` | `None` | Filtros, schema y streaming avanzados |
+| `options` | `LucisOptions` | `None` | Configuración avanzada de storage, binarios y memoria |
+
+Los controles de filtrado y streaming viven en `TableConfig`:
+
+```python
+from lucis.config import TableConfig
+
+config = TableConfig(
+    where_clause="publicado = 1",
+    schema="public",
+    shard_batch_size=10_000,
+    stream_ordered=False,
+)
+```
 
 **Búsqueda cross-field** — indexa múltiples columnas como un solo documento:
 
 ```python
-buscador = Lucis.from_alchemy_table(
-    table_name="articulos",
-    url="mysql+pymysql://usuario:clave@localhost/mi_bd",
-    text_column=["titulo", "contenido", "tags"],  # Cross-field
-    id_column="articulo_id",
+buscador = Lucis.from_table(
+    TableSource(
+        table="articulos",
+        connection_url="mysql+pymysql://usuario:clave@localhost/mi_bd",
+        text_columns=["titulo", "contenido", "tags"],
+        id_column="articulo_id",
+    ),
     name="articulos_idx"
 )
 ```
 
-### `from_alchemy_query(query, url, name, **kwargs)`
+### `from_query(query, connection_url, name, *, engine, preprocessor, options)`
 
 Crea una instancia desde un `SELECT` SQL via SQLAlchemy.
 
 ```python
-buscador = Lucis.from_alchemy_query(
+buscador = Lucis.from_query(
     query="SELECT id, titulo FROM posts WHERE publicado = 1",
-    url="mysql+pymysql://usuario:clave@localhost/mi_bd",
+    connection_url="mysql+pymysql://usuario:clave@localhost/mi_bd",
     name="posts_publicados"
 )
 ```
@@ -380,9 +410,9 @@ Consulta [Health Monitoring](10-salud.md) para documentación completa.
 
 ## Lifecycle
 
-### `connect_source(url)`
+### `connect_source(connection_url)`
 
-Conecta un `AlchemyReader` para que el worker pueda sincronizar con la BD de producción.
+Conecta un `DatabaseReader` para que el worker pueda sincronizar con la BD de producción.
 
 ```python
 buscador = Lucis(name="mi_idx", engine="lite")

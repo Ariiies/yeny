@@ -3,6 +3,7 @@
 import pytest
 
 from lucis import Lucis
+from lucis.config import LucisOptions
 from lucis.utils.nlp import word_tokenizer
 
 from benchmarks.config import load_profiles
@@ -36,16 +37,18 @@ def tiny_queries(tiny_dataset):
 
 
 def _indexed(tmp_path, dataset, name="scenario", **overrides):
-    options = {
-        "name": name,
-        "engine": "core",
+    option_values = {
         "storage_dir": str(tmp_path / name),
-        "preprocessor": word_tokenizer,
-        "autoload": False,
         "binary_dir": None,
     }
-    options.update(overrides)
-    lucis = Lucis(**options)
+    option_values.update(overrides)
+    lucis = Lucis(
+        name=name,
+        engine="core",
+        preprocessor=word_tokenizer,
+        autoload=False,
+        options=LucisOptions(**option_values),
+    )
     lucis.index(dataset.documents, persist=False)
     return lucis
 
@@ -231,10 +234,12 @@ def test_standard_load_roundtrip_preserves_ids(
         lambda: Lucis(
             name="loadable",
             engine="core",
-            storage_dir=str(tmp_path / "loadable"),
             preprocessor=word_tokenizer,
             autoload=True,
-            binary_dir=None,
+            options=LucisOptions(
+                storage_dir=str(tmp_path / "loadable"),
+                binary_dir=None,
+            ),
         ),
         engine="core",
         queries=tiny_queries,
@@ -273,10 +278,12 @@ def test_standard_load_detects_changed_results(
             lambda: Lucis(
                 name="tampered",
                 engine="core",
-                storage_dir=str(tmp_path / "tampered"),
                 preprocessor=word_tokenizer,
                 autoload=True,
-                binary_dir=None,
+                options=LucisOptions(
+                    storage_dir=str(tmp_path / "tampered"),
+                    binary_dir=None,
+                ),
             ),
             engine="core",
             queries=tiny_queries,
@@ -304,10 +311,12 @@ def test_mmap_load_roundtrip_preserves_ids_and_closes_handle(
         instance = Lucis(
             name="mmap_fresh",
             engine="core",
-            storage_dir=str(tmp_path / "fresh"),
             preprocessor=word_tokenizer,
             autoload=False,
-            binary_dir=None,
+            options=LucisOptions(
+                storage_dir=str(tmp_path / "fresh"),
+                binary_dir=None,
+            ),
         )
         holder.append(instance)
         return instance

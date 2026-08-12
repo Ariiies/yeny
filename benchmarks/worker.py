@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
 from lucis import Lucis
+from lucis.config import LucisOptions
 from lucis.utils.nlp import word_tokenizer
 
 from .config import (
@@ -215,10 +216,12 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
     build_instance = Lucis(
         name=f"benchmark_{engine}_build",
         engine=engine,
-        storage_dir=str(context.workspace / "build"),
         preprocessor=word_tokenizer,
         autoload=False,
-        binary_dir=None,
+        options=LucisOptions(
+            storage_dir=str(context.workspace / "build"),
+            binary_dir=None,
+        ),
     )
     build_samples = measure_operation(
         lambda: build_instance.index(dataset.documents, persist=False)
@@ -235,9 +238,11 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
                 dataset.documents,
                 name=f"benchmark_{engine}_e2e",
                 engine=engine,
-                storage_dir=str(context.workspace / "e2e"),
                 preprocessor=word_tokenizer,
-                binary_dir=None,
+                options=LucisOptions(
+                    storage_dir=str(context.workspace / "e2e"),
+                    binary_dir=None,
+                ),
             )
         )
 
@@ -327,11 +332,13 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
     sqlite_instance = Lucis(
         name=f"benchmark_{engine}_sqlite",
         engine=engine,
-        storage_type="sqlite",
-        db_path=str(sqlite_dir / "benchmark.db"),
         preprocessor=word_tokenizer,
         autoload=False,
-        binary_dir=None,
+        options=LucisOptions(
+            storage_type="sqlite",
+            db_path=str(sqlite_dir / "benchmark.db"),
+            binary_dir=None,
+        ),
     )
     sqlite_instance.index(dataset.documents, persist=False)
     measurements.extend(measure_sqlite_save(sqlite_instance, engine=engine))
@@ -442,10 +449,12 @@ def _execute_backend_load_phase(
             lambda: Lucis(
                 name=f"benchmark_{engine}_mmap",
                 engine=engine,
-                storage_dir=str(context.workspace / "mmap"),
                 preprocessor=word_tokenizer,
                 autoload=False,
-                binary_dir=None,
+                options=LucisOptions(
+                    storage_dir=str(context.workspace / "mmap"),
+                    binary_dir=None,
+                ),
             ),
             context.workspace / "lcs" / f"benchmark_{engine}.lcs",
             engine=engine,
@@ -459,19 +468,23 @@ def _execute_backend_load_phase(
             "json": lambda: Lucis(
                 name=f"benchmark_{engine}_build",
                 engine=engine,
-                storage_dir=str(context.workspace / "build"),
                 preprocessor=word_tokenizer,
                 autoload=True,
-                binary_dir=None,
+                options=LucisOptions(
+                    storage_dir=str(context.workspace / "build"),
+                    binary_dir=None,
+                ),
             ),
             "sqlite": lambda: Lucis(
                 name=f"benchmark_{engine}_sqlite",
                 engine=engine,
-                storage_type="sqlite",
-                db_path=str(context.workspace / "sqlite" / "benchmark.db"),
                 preprocessor=word_tokenizer,
                 autoload=True,
-                binary_dir=None,
+                options=LucisOptions(
+                    storage_type="sqlite",
+                    db_path=str(context.workspace / "sqlite" / "benchmark.db"),
+                    binary_dir=None,
+                ),
             ),
         }
         measurements = measure_standard_load(

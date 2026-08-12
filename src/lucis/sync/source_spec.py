@@ -12,15 +12,15 @@ from typing import List, Optional, Union
 class SourceSpec:
     """Describes the origin of indexed data for auto-sync operations.
 
-    Every factory method (``from_sqlite_table``, ``from_alchemy_table``,
+    Every factory method (``from_sqlite_table``, ``from_table``,
     etc.) creates a SourceSpec that is persisted alongside the index.
     The ``sync`` layer reads it to auto-generate ``data_fn``, ``delta_fn``,
     and ``change_detector`` callables for the ``IndexWorker``.
 
     Attributes:
         type: Source kind — ``"table"`` or ``"query"``.
-        table_name: Name of the source table (``"table"`` type only).
-        text_column: Column(s) containing document text.
+        table: Name of the source table (``"table"`` type only).
+        text_columns: Column(s) containing document text.
         id_column: Column used as document ID (optional).
         date_column: Column used for temporal sharding (optional).
         where_clause: Optional SQL ``WHERE`` filter (without keyword).
@@ -28,8 +28,8 @@ class SourceSpec:
         schema: Database schema (e.g. ``"public"`` for PostgreSQL).
     """
     type: str
-    table_name: Optional[str] = None
-    text_column: Optional[Union[str, List[str]]] = None
+    table: Optional[str] = None
+    text_columns: Optional[Union[str, List[str]]] = None
     id_column: Optional[str] = None
     date_column: Optional[str] = None
     where_clause: Optional[str] = None
@@ -39,14 +39,12 @@ class SourceSpec:
     def to_dict(self) -> dict:
         """Serialize to a plain dict for storage persistence.
 
-        The output is backward-compatible with the raw dicts used
-        by ``save_source_info`` / ``load_source_info`` before the
-        SourceSpec refactoring.
+        The names follow the public database-source vocabulary.
         """
         return {
             "type": self.type,
-            "table_name": self.table_name,
-            "text_column": self.text_column,
+            "table": self.table,
+            "text_columns": self.text_columns,
             "id_column": self.id_column,
             "date_column": self.date_column,
             "where_clause": self.where_clause,
@@ -64,8 +62,8 @@ class SourceSpec:
             return None
         return cls(
             type=d["type"],
-            table_name=d.get("table_name"),
-            text_column=d.get("text_column"),
+            table=d.get("table"),
+            text_columns=d.get("text_columns"),
             id_column=d.get("id_column"),
             date_column=d.get("date_column"),
             where_clause=d.get("where_clause"),

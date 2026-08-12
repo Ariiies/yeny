@@ -2,6 +2,7 @@
 import pytest
 
 from lucis import Lucis
+from lucis.config import LucisOptions
 from lucis.utils.nlp import word_tokenizer
 
 def _set_version_name(storage, version_name):
@@ -14,8 +15,7 @@ def test_save_and_reload_with_sqlite(sample_corpus, tmp_path):
 	lucis = Lucis(
 		name="articles",
 		engine="core",
-		storage_type="sqlite",
-		db_path=str(db_path),
+		options=LucisOptions(storage_type="sqlite", db_path=str(db_path)),
 		preprocessor=word_tokenizer,
 		autoload=False,
 	)
@@ -31,8 +31,7 @@ def test_save_and_reload_with_sqlite(sample_corpus, tmp_path):
 	reloaded = Lucis(
 		name="articles",
 		engine="core",
-		storage_type="sqlite",
-		db_path=str(db_path),
+		options=LucisOptions(storage_type="sqlite", db_path=str(db_path)),
 		preprocessor=word_tokenizer,
 	)
 
@@ -48,8 +47,7 @@ def test_reindex_creates_new_version_and_updates_alias(sample_corpus, tmp_path):
 	lucis = Lucis(
 		name="articles",
 		engine="core",
-		storage_type="sqlite",
-		db_path=str(db_path),
+		options=LucisOptions(storage_type="sqlite", db_path=str(db_path)),
 		preprocessor=word_tokenizer,
 		autoload=False,
 	)

@@ -209,7 +209,7 @@ class MetadataStorage(BaseStorage):
 
     def save_source_info(self, name: str, info: Dict[str, Any]) -> None:
         import json as _json
-        text_col = info.get("text_column")
+        text_col = info.get("text_columns")
         source_column = _json.dumps(text_col) if isinstance(text_col, list) else text_col
         cur = self.conn.cursor()
         cur.execute(
@@ -218,7 +218,7 @@ class MetadataStorage(BaseStorage):
             "source_date_column = ?, source_query = ?, source_where = ? "
             "WHERE index_name = ?",
             (
-                info.get("table_name"),
+                info.get("table"),
                 source_column,
                 info.get("id_column"),
                 info.get("date_column"),
@@ -254,8 +254,8 @@ class MetadataStorage(BaseStorage):
         if source_query is not None:
             return {
                 "type": "query",
-                "table_name": None,
-                "text_column": None,
+                "table": None,
+                "text_columns": None,
                 "id_column": None,
                 "date_column": None,
                 "where_clause": None,
@@ -265,8 +265,8 @@ class MetadataStorage(BaseStorage):
         if source_table is not None:
             return {
                 "type": "table",
-                "table_name": source_table,
-                "text_column": text_column,
+                "table": source_table,
+                "text_columns": text_column,
                 "id_column": source_id_column,
                 "date_column": source_date_column,
                 "where_clause": source_where,

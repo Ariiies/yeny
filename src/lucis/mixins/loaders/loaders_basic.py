@@ -5,7 +5,9 @@ Contains the ``from_dict`` and ``from_list`` class methods that create
 a ready-to-search Lucis instance from a plain ``dict`` or ``list``
 already held in memory (no external database involved).
 """
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
+from ...config import LucisOptions
 
 if TYPE_CHECKING:
     from ...main import Lucis
@@ -24,7 +26,10 @@ class BasicLoadersMixin:
         cls,
         data: Dict[Any, str],
         name: str = "default",
-        **kwargs
+        *,
+        engine: str = "core",
+        preprocessor: Optional[Callable] = None,
+        options: Optional[LucisOptions] = None,
     ) -> "Lucis":
         """
         Creates a Lucis instance from a dictionary {id: text}.
@@ -36,7 +41,9 @@ class BasicLoadersMixin:
         Args:
             data: Dictionary mapping document IDs to their text content.
             name: Identifier for persistence.
-            **kwargs: Additional arguments passed to __init__ (storage_dir, engine, etc.)
+            engine: Search engine implementation: ``"core"`` or ``"lite"``.
+            preprocessor: Optional shared indexing/search preprocessing function.
+            options: Advanced storage, binary, and memory configuration.
 
         Returns:
             A ready-to-search Lucis instance.
@@ -49,7 +56,13 @@ class BasicLoadersMixin:
             results = lu.search("programación python")
         """
         # autoload=False to avoid loading stale data before indexing fresh data
-        instance = cls(name=name, autoload=False, **kwargs)
+        instance = cls(
+            name=name,
+            engine=engine,
+            preprocessor=preprocessor,
+            autoload=False,
+            options=options,
+        )
         instance.index(data)
         return instance
 
@@ -58,7 +71,10 @@ class BasicLoadersMixin:
         cls,
         data: List[str],
         name: str = "default",
-        **kwargs
+        *,
+        engine: str = "core",
+        preprocessor: Optional[Callable] = None,
+        options: Optional[LucisOptions] = None,
     ) -> "Lucis":
         """
         Creates a Lucis instance from a list of text documents.
@@ -69,7 +85,9 @@ class BasicLoadersMixin:
         Args:
             data: List of text documents.
             name: Identifier for persistence.
-            **kwargs: Additional arguments passed to __init__ (storage_dir, engine, etc.)
+            engine: Search engine implementation: ``"core"`` or ``"lite"``.
+            preprocessor: Optional shared indexing/search preprocessing function.
+            options: Advanced storage, binary, and memory configuration.
 
         Returns:
             A ready-to-search Lucis instance.
@@ -81,6 +99,12 @@ class BasicLoadersMixin:
             ])
             results = lu.search("programación")
         """
-        instance = cls(name=name, autoload=False, **kwargs)
+        instance = cls(
+            name=name,
+            engine=engine,
+            preprocessor=preprocessor,
+            autoload=False,
+            options=options,
+        )
         instance.index(data)
         return instance

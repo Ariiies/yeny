@@ -8,67 +8,98 @@ Lucis v0.1.0 Public API Comprehensive Reference. For narrative guides, see previ
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions, TableConfig, TableSource
 ```
 
-### Builder
+### Constructor
 
 ```python
 Lucis(
     name: str = "default",
-    storage_dir: str = "lucis_data",
-    storage_type: str = "json",          # "json" | "sqlite" | "alchemy"
-    db_path: Optional[str] = None,
-    alchemy_url: Optional[str] = None,
-    storage: Optional[BaseStorage] = None,
-    engine: str = "core",                # "core" | "lite"
+    engine: str = "core",
     preprocessor: Optional[Callable] = None,
+    *,
     autoload: bool = True,
-    max_loaded_shards: int = 0,
-    memory_limit_mb: Optional[int] = None,
-    binary_dir: Optional[str] = "auto",
+    storage: Optional[BaseStorage] = None,
+    options: Optional[LucisOptions] = None,
 )
 ```
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `name` | `str` | `"default"` | Logical index name (used for persistence) |
-| `storage_dir` | `str` | `"lucis_data"` | Directory for JSON files |
-| `storage_type` | `str` | `"json"` | Storage Backend |
-| `db_path` | `str \| None` | `None` | Path to SQLite (required if `storage_type="sqlite"`) |
-| `alchemy_url` | `str \| None` | `None` | SQLAlchemy URL (required if `storage_type="alchemy"`) |
-| `storage` | `BaseStorage \| None` | `None` | Custom storage instance (overrides `storage_type`) |
 | `engine` | `str` | `"core"` | Search engine |
 | `preprocessor` | `Callable \| None` | `None` | Custom preprocessor. `None` uses the engine default |
 | `autoload` | `bool` | `True` | If a saved index exists, load it automatically |
-| `max_loaded_shards` | `int` | `0` | Maximum RAM shards (0 = no limit) |
-| `memory_limit_mb` | `int \| None` | `None` | RAM budget for shards in MB |
-| `binary_dir` | `str \| None` | `"auto"` | Directory for `.lcs` files. `"auto"` is derived from storage |
+| `storage` | `BaseStorage \| None` | `None` | Injected storage; overrides declarative storage options |
+| `options` | `LucisOptions \| None` | `None` | Advanced infrastructure; `None` uses the defaults below |
+
+```python
+@dataclass(frozen=True)
+class LucisOptions:
+    storage_dir: str = "lucis_data"
+    storage_type: str = "json"
+    db_path: Optional[str] = None
+    connection_url: Optional[str] = None
+    max_loaded_shards: int = 0
+    memory_limit_mb: Optional[int] = None
+    binary_dir: Optional[str] = "auto"
+
+@dataclass(frozen=True)
+class TableSource:
+    table: str
+    connection_url: str
+    text_columns: Union[str, List[str]]
+    id_column: Optional[str] = None
+    date_column: Optional[str] = "auto"
+
+@dataclass(frozen=True)
+class TableConfig:
+    where_clause: Optional[str] = None
+    schema: Optional[str] = None
+    shard_batch_size: int = 20_000
+    stream_ordered: bool = False
+```
+
+`binary_dir="auto"` derives `<storage_dir>/lcs`; `None` disables `.lcs`
+persistence; any other string is an explicit directory. An injected `storage`
+always takes precedence over `LucisOptions.storage_type`, `db_path`, and
+`connection_url`.
+
+Read-only properties: `is_indexed`, `is_sharded`, `total_docs`,
+`loaded_memory_mb`.
 
 ---
 
 ### Factory methods
 
-#### `Lucis.from_dict(data, name, **kwargs)`
+#### `Lucis.from_dict(...)`
 
 ```python
 @classmethod
 def from_dict(
     data: Dict[Any, str],
     name: str = "default",
-    **kwargs,
+    *,
+    engine: str = "core",
+    preprocessor: Optional[Callable] = None,
+    options: Optional[LucisOptions] = None,
 ) -> Lucis
 ```
 
 Instantiate from a `{id: texto}` dictionary. Preserve the original IDs.
 
-#### `Lucis.from_list(data, name, **kwargs)`
+#### `Lucis.from_list(...)`
 
 ```python
 @classmethod
 def from_list(
     data: List[str],
     name: str = "default",
-    **kwargs,
+    *,
+    engine: str = "core",
+    preprocessor: Optional[Callable] = None,
+    options: Optional[LucisOptions] = None,
 ) -> Lucis
 ```
 
@@ -85,7 +116,10 @@ def from_sqlite_table(
     id_column: Optional[str] = None,
     where_clause: Optional[str] = None,
     name: str = "default",
-    **kwargs,
+    *,
+    engine: str = "core",
+    preprocessor: Optional[Callable] = None,
+    options: Optional[LucisOptions] = None,
 ) -> Lucis
 ```
 
@@ -98,44 +132,45 @@ Reads rows from an SQLite table and builds the index.
 def from_sqlite_query(
     query: str,
     db_path: str,
-    text_column: Union[str, List[str]],
-    id_column: Optional[str] = None,
     name: str = "default",
-    **kwargs,
+    *,
+    engine: str = "core",
+    preprocessor: Optional[Callable] = None,
+    options: Optional[LucisOptions] = None,
 ) -> Lucis
 ```
 
 Run a SQL query against SQLite and build the index.
 
-#### `Lucis.from_alchemy_table(...)`
+#### `Lucis.from_table(...)`
 
 ```python
 @classmethod
-def from_alchemy_table(
-    alchemy_url: str,
-    table_name: str,
-    text_column: Union[str, List[str]],
-    id_column: Optional[str] = None,
-    date_column: Optional[str] = None,   # "auto" para auto-detección
+def from_table(
+    source: TableSource,
     name: str = "default",
-    **kwargs,
+    *,
+    engine: str = "core",
+    preprocessor: Optional[Callable] = None,
+    config: Optional[TableConfig] = None,
+    options: Optional[LucisOptions] = None,
 ) -> Lucis
 ```
 
 Read from any database supported by SQLAlchemy (MySQL, PostgreSQL, etc.).
 
-#### `Lucis.from_alchemy_query(...)`
+#### `Lucis.from_query(...)`
 
 ```python
 @classmethod
-def from_alchemy_query(
-    alchemy_url: str,
+def from_query(
     query: str,
-    text_column: Union[str, List[str]],
-    id_column: Optional[str] = None,
-    date_column: Optional[str] = None,
+    connection_url: str,
     name: str = "default",
-    **kwargs,
+    *,
+    engine: str = "core",
+    preprocessor: Optional[Callable] = None,
+    options: Optional[LucisOptions] = None,
 ) -> Lucis
 ```
 
@@ -277,7 +312,7 @@ def create_worker(
     on_error: Optional[Callable] = None,
     on_cycle: Optional[Callable] = None,
     streaming: bool = True,
-    source_url: Optional[str] = None,
+    connection_url: Optional[str] = None,
 ) -> IndexWorker
 ```
 
@@ -301,10 +336,10 @@ def health_monitor(interval: float = 30) -> HealthMonitor
 
 Create a periodic monitor. Call `.start()` / `.stop()`.
 
-#### `connect_source(url)`
+#### `connect_source(connection_url)`
 
 ```python
-def connect_source(self, url: str) -> None
+def connect_source(self, connection_url: str) -> None
 ```
 
 Connects to the source database to auto-generate `data_fn` of the worker.
@@ -473,7 +508,7 @@ from lucis.storage.json_storage import JSONStorage
 from lucis.storage.sqlite_storage import SQLiteStorage
 from lucis.storage.alchemy_storage import AlchemyStorage      # requiere sqlalchemy
 from lucis.storage.metadata_storage import MetadataStorage
-from lucis.storage.alchemy_reader import AlchemyReader         # requiere sqlalchemy
+from lucis.storage import DatabaseReader                       # requires sqlalchemy
 ```
 
 They all implement `BaseStorage`:

@@ -8,17 +8,17 @@ Lucis supports multiple storage backends, all implementing the same interface (`
 
 | Backend | Index data | Metadata | Use case |
 |---|---|---|---|
-| **MetadataStorage** | `.lcs` binaries (mmap) | SQLite (WAL) | **Production default.** Used automatically by `from_alchemy_table` and when reloading an existing index. |
+| **MetadataStorage** | `.lcs` binaries (mmap) | SQLite (WAL) | **Production default.** Used automatically by `from_table` and when reloading an existing index. |
 | **JSONStorage** | `.json` files | `.json` files | Simple / debugging / small datasets. |
 | **SQLiteStorage** | `lucis_*` tables in your DB | `lucis_*` tables | Full SQLite persistence, with versioning and rollback. |
 | **AlchemyStorage** | `lucis_*` tables via SQLAlchemy | `lucis_*` tables | Full remote-DB persistence (MySQL, PostgreSQL, etc.). |
-| **AlchemyReader** | *Read-only* (no writes) | *None* | Ingest data from your DB without creating any `lucis_*` tables. |
+| **DatabaseReader** | *Read-only* (no writes) | *None* | Ingest data from your DB without creating any `lucis_*` tables. |
 
 ---
 
 ## MetadataStorage + `.lcs` (recommended)
 
-This is the storage architecture used when ingesting from a database via `from_alchemy_table()` or `from_alchemy_query()`. It is also auto-discovered when reloading an index that was previously created this way.
+This is the storage architecture used when ingesting from a database via `from_table()` or `from_query()`. It is also auto-discovered when reloading an index that was previously created this way.
 
 ### How it works
 
@@ -43,19 +43,22 @@ This is the storage architecture used when ingesting from a database via `from_a
 
 - `.lcs` files contain the **actual index data** (inverted index, doc lengths, ID mapping). They are loaded via memory-mapped I/O: the OS maps the file without copying it into Python's heap, giving you near-zero RAM overhead.
 - `lucis_meta.db` stores **only lightweight metadata**: document counts, aliases, shard registry, and source table information (so the worker knows what to monitor). It uses WAL mode for concurrent reads/writes.
-- **Your production database is never touched** beyond the initial ingestion. `AlchemyReader` is read-only — it connects, reads rows, and disconnects. Zero `lucis_*` tables are created in your DB.
+- **Your production database is never touched** beyond the initial ingestion. `DatabaseReader` is read-only — it connects, reads rows, and disconnects. Zero `lucis_*` tables are created in your DB.
 
 ### When it's used automatically
 
 ```python
 # Case 1: Ingestion from a database table
-luc = Lucis.from_alchemy_table(
-    table_name="articles",
-    url="mysql+pymysql://user:pass@host/db",
-    text_column="content",
-    id_column="id",
+from lucis.config import TableSource
+
+luc = Lucis.from_table(
+    TableSource(
+        table="articles",
+        connection_url="mysql+pymysql://user:pass@host/db",
+        text_columns="content",
+        id_column="id",
+    ),
     name="articles_idx",
-    binary_dir="auto",        # ← default, creates lucis_data/lcs/
 )
 # → MetadataStorage is created automatically
 # → Index data goes to .lcs files
@@ -63,7 +66,7 @@ luc = Lucis.from_alchemy_table(
 # → Your MySQL DB is untouched
 
 # Case 2: Reloading an existing index (no explicit storage)
-luc = Lucis(name="articles_idx", engine="lite", binary_dir="auto")
+luc = Lucis(name="articles_idx", engine="lite")
 # → Lucis auto-discovers lucis_data/lcs/lucis_meta.db
 # → MetadataStorage is used transparently
 # → .lcs files are loaded via mmap
@@ -72,10 +75,15 @@ luc = Lucis(name="articles_idx", engine="lite", binary_dir="auto")
 ### Manual creation
 
 ```python
-from lucis.storage.metadata_storage import MetadataStorage
+from lucis import Lucis, MetadataStorage
+from lucis.config import LucisOptions
 
 storage = MetadataStorage(db_path="lucis_data/lcs/lucis_meta.db")
-luc = Lucis(name="my_idx", storage=storage, binary_dir="lucis_data/lcs")
+luc = Lucis(
+    name="my_idx",
+    storage=storage,
+    options=LucisOptions(binary_dir="lucis_data/lcs"),
+)
 ```
 
 ---
@@ -88,13 +96,18 @@ Stores each index as a readable `.json` file. **This is the default when no othe
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions
 
 luc = Lucis.from_dict(data, name="my_index")
 # → JSONStorage is used by default
 # → File is saved automatically at lucis_data/my_index.json
 
 # Custom directory
-luc = Lucis.from_dict(data, name="my_index", storage_dir="my_data")
+luc = Lucis.from_dict(
+    data,
+    name="my_index",
+    options=LucisOptions(storage_dir="my_data"),
+)
 ```
 
 **Advantages:**
@@ -115,12 +128,12 @@ Full-featured persistence backend using SQLite. Stores the complete index (inver
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions
 
 luc = Lucis.from_dict(
     data,
     name="my_index",
-    storage_type="sqlite",
-    db_path="my_app.db",
+    options=LucisOptions(storage_type="sqlite", db_path="my_app.db"),
 )
 ```
 
@@ -174,8 +187,10 @@ pip install lucis[postgresql]
 ```python
 luc = Lucis(
     name="my_index",
-    storage_type="alchemy",
-    alchemy_url="mysql+pymysql://user:pass@localhost/mydb",
+    options=LucisOptions(
+        storage_type="alchemy",
+        connection_url="mysql+pymysql://user:pass@localhost/mydb",
+    ),
 )
 luc.index(data)
 luc.save()
@@ -191,23 +206,25 @@ luc.save()
 | MariaDB | `mariadb+pymysql://user:pass@host/db` |
 | SQLite (via Alchemy) | `sqlite:///path/to/db.sqlite` |
 
-> **Note:** `AlchemyStorage` is lazy-loaded — it does not require `sqlalchemy` unless you explicitly use `storage_type="alchemy"`.
+> **Note:** `AlchemyStorage` is lazy-loaded — it does not require `sqlalchemy` unless you explicitly use `LucisOptions(storage_type="alchemy", ...)`.
 
 ---
 
-## AlchemyReader (read-only adapter)
+## DatabaseReader (read-only adapter)
 
 **Read-only** adapter that connects to your production database to **ingest data**. It **never** creates or modifies any `lucis_*` tables — it only reads from your existing tables.
 
 ```python
-from lucis.storage.alchemy_reader import AlchemyReader
+from lucis.storage import DatabaseReader
 
-reader = AlchemyReader(url="mysql+pymysql://user:pass@host/db")
-data = reader.read_table("articles", text_column="content", id_column="id")
+reader = DatabaseReader(
+    connection_url="mysql+pymysql://user:pass@host/db"
+)
+data = reader.read_table("articles", text_columns="content", id_column="id")
 ```
 
 **When it's used:**
-- Internally by `from_alchemy_table()` and `from_alchemy_query()` during the initial ingestion.
+- Internally by `from_table()` and `from_query()` during the initial ingestion.
 - By the `IndexWorker` when it needs to re-read fresh data from the production database to detect changes and trigger reindexing.
 - **Safe for production** — it only executes `SELECT` queries.
 
@@ -218,21 +235,28 @@ data = reader.read_table("articles", text_column="content", id_column="id")
 When you create a `Lucis` instance without explicitly providing a `storage` parameter, the constructor follows this logic:
 
 ```
-1. storage_type="alchemy" → AlchemyStorage (requires alchemy_url)
-2. storage_type="sqlite"  → SQLiteStorage (requires db_path)
-3. storage_type="json"    → JSONStorage (default)
+1. `options.storage_type="alchemy"` → AlchemyStorage (requires `connection_url`)
+2. `options.storage_type="sqlite"` → SQLiteStorage (requires `db_path`)
+3. `options.storage_type="json"` → JSONStorage (default)
 
 BUT — after choosing the "default" storage, it checks:
 4. If lucis_data/lcs/lucis_meta.db exists → auto-switch to MetadataStorage
 ```
 
-This means you can reload an index created by `from_alchemy_table()` with just:
+This means you can reload an index created by `from_table()` with just:
 
 ```python
 # No need to specify storage — auto-discovery handles it
-luc = Lucis(name="articles_idx", engine="lite", binary_dir="auto")
+luc = Lucis(name="articles_idx", engine="lite")
 response = luc.search("python")
 ```
+
+`LucisOptions.binary_dir` is tri-state: `"auto"` (the default) derives
+`<storage_dir>/lcs`, `None` disables binary persistence, and an explicit path
+stores `.lcs` and metadata there. SQLAlchemy factories use metadata-only
+storage, so their indexes need `"auto"` or an explicit binary directory to be
+reloadable; `None` is appropriate only when persistence is intentionally
+disabled for that run.
 
 ---
 

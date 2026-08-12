@@ -8,8 +8,13 @@ Lucis includes diagnostic tools to monitor RAM, seek latency and shard status in
 
 ```python
 from lucis import Lucis
+from lucis.config import LucisOptions
 
-luc = Lucis(name="mi_idx", engine="lite", storage_type="sqlite", db_path="app.db")
+luc = Lucis(
+    name="mi_idx",
+    engine="lite",
+    options=LucisOptions(storage_type="sqlite", db_path="app.db"),
+)
 luc.index(datos)
 
 report = luc.health_check()
