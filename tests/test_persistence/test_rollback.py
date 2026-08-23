@@ -17,7 +17,7 @@ def test_rollback_restores_previous_version(sample_corpus, tmp_path):
 		engine="core",
 		storage_type="sqlite",
 		db_path=str(db_path),
-		preprocessor=WordTokenizer,
+		preprocessor=WordTokenizer(),
 		autoload=False,
 	)
 	lucis.index(sample_corpus, persist=False)
@@ -55,7 +55,7 @@ def test_rollback_without_previous_version_raises(tmp_path):
 		engine="core",
 		storage_type="sqlite",
 		db_path=str(db_path),
-		preprocessor=WordTokenizer,
+		preprocessor=WordTokenizer(),
 		autoload=False,
 	)
 	lucis.index({"doc1": "Python is a language"}, persist=False)

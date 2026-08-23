@@ -72,7 +72,7 @@ class SearchMixin:
         if isinstance(query, str):
             processed = self.preprocessor(query)
             # Fallback: if preprocessor returned str instead of list[str], apply SimpleTokenizer
-            tokens = SimpleTokenizer(processed) if isinstance(processed, str) else processed
+            tokens = SimpleTokenizer()(processed) if isinstance(processed, str) else processed
         else:
             tokens = list(query)
 

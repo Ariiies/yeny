@@ -16,7 +16,7 @@ def test_save_and_reload_with_sqlite(sample_corpus, tmp_path):
 		engine="core",
 		storage_type="sqlite",
 		db_path=str(db_path),
-		preprocessor=WordTokenizer,
+		preprocessor=WordTokenizer(),
 		autoload=False,
 	)
 	lucis.index(sample_corpus, persist=False)
@@ -33,7 +33,7 @@ def test_save_and_reload_with_sqlite(sample_corpus, tmp_path):
 		engine="core",
 		storage_type="sqlite",
 		db_path=str(db_path),
-		preprocessor=WordTokenizer,
+		preprocessor=WordTokenizer(),
 	)
 
 	reloaded_response = reloaded.search("frontend", top_k=1)
@@ -50,7 +50,7 @@ def test_reindex_creates_new_version_and_updates_alias(sample_corpus, tmp_path):
 		engine="core",
 		storage_type="sqlite",
 		db_path=str(db_path),
-		preprocessor=WordTokenizer,
+		preprocessor=WordTokenizer(),
 		autoload=False,
 	)
 	lucis.index(sample_corpus, persist=False)

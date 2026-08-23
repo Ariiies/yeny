@@ -37,7 +37,7 @@ class BaseEngine(ABC):
         # Can return str (engine will tokenize with simple_tokenizer as fallback)
         # or list[str] (used directly as tokens).
         self.preprocessor: Callable[[str], Union[str, List[str]]] = (
-            preprocessor or self._default_preprocessor or WordTokenizer
+            preprocessor or self._default_preprocessor or WordTokenizer()
         )
 
     @property

@@ -78,7 +78,7 @@ class LiteEngine(BaseEngine):
 
         # 1. Preprocess with the configured preprocessor.
         tokenized = parallel_preprocess(
-            texts, self.preprocessor, SimpleTokenizer,
+            texts, self.preprocessor, SimpleTokenizer(),
         )
 
         # 2. Build compact inverted index directly
@@ -102,7 +102,7 @@ class LiteEngine(BaseEngine):
         if isinstance(query, str):
             query = self.preprocessor(query)
             if isinstance(query, str):
-                query = SimpleTokenizer(query)
+                query = SimpleTokenizer()(query)
 
         if not query or not self.index:
             return []
@@ -315,7 +315,7 @@ class LiteEngine(BaseEngine):
 
         # Preprocess new documents (parallel when large enough)
         tokenized_new = parallel_preprocess(
-            new_texts, self.preprocessor, SimpleTokenizer,
+            new_texts, self.preprocessor, SimpleTokenizer(),
         )
 
         # Build a small delta index (regular dicts — fast for mutation)

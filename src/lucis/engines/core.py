@@ -63,7 +63,7 @@ class CoreEngine(BaseEngine):
 
         # 1. Preprocess with the configured preprocessor.
         tokenized = parallel_preprocess(
-            texts, self.preprocessor, SimpleTokenizer,
+            texts, self.preprocessor, SimpleTokenizer(),
         )
 
         # 2. Build compact inverted index directly
@@ -124,7 +124,7 @@ class CoreEngine(BaseEngine):
             query = self.preprocessor(query)
             # Fallback: if preprocessor returned str instead of list[str], apply SimpleTokenizer
             if isinstance(query, str):
-                query = SimpleTokenizer(query)
+                query = SimpleTokenizer()(query)
 
         if not query or not self.index:
             return []
@@ -348,7 +348,7 @@ class CoreEngine(BaseEngine):
             return
 
         tokenized_new = parallel_preprocess(
-            new_texts, self.preprocessor, SimpleTokenizer,
+            new_texts, self.preprocessor, SimpleTokenizer(),
         )
 
         # Build delta index

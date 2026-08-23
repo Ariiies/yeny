@@ -7,7 +7,7 @@ from ..compact import CompactPostings
 
 
 # Build index function, pure Python implementation
-@corpus_input(WordTokenizer)
+@corpus_input(WordTokenizer())
 def build_index(tokenized_corpus: List[List[str]]) -> Dict[str, CompactPostings]:
         """
         Builds a compact inverted index in a single pass O(n).
@@ -36,7 +36,7 @@ def build_index(tokenized_corpus: List[List[str]]) -> Dict[str, CompactPostings]
         return {word: CompactPostings(docs[word], frequency[word]) for word in docs}
 
 
-@doc_input(WordTokenizer)
+@doc_input(WordTokenizer())
 def get_bow(tokens: List[str]) -> Dict[str, int]:
     """
     generates a Bag of Words for a single document.
@@ -45,14 +45,14 @@ def get_bow(tokens: List[str]) -> Dict[str, int]:
     for token in tokens: bow[token] = bow.get(token, 0) + 1
     return bow
 
-@corpus_input(WordTokenizer)
+@corpus_input(WordTokenizer())
 def get_corpus_bows(corpus: List[List[str]]) -> List[Dict[str, int]]:
     """
     generates Bag of Words for an entire corpus.
     """
     return [get_bow(doc) for doc in corpus]
 
-@corpus_input(WordTokenizer)
+@corpus_input(WordTokenizer())
 def get_vocabulary(corpus: List[List[str]]) -> List[str]:
     """
     extracts the unique and sorted vocabulary from the entire corpus.

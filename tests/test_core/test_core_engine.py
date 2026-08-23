@@ -8,7 +8,7 @@ from lucis.utils.nlp import WordTokenizer
 class TestCoreEngine:
 
     def test_build_index_creates_inverted_index(self):
-        engine = CoreEngine(preprocessor=WordTokenizer)
+        engine = CoreEngine(preprocessor=WordTokenizer())
 
         engine.build_index([
             "Python Python is versatile",
@@ -22,7 +22,7 @@ class TestCoreEngine:
         assert engine.doc_norms[0] > 0
 
     def test_search_returns_ranked_results(self):
-        engine = CoreEngine(preprocessor=WordTokenizer)
+        engine = CoreEngine(preprocessor=WordTokenizer())
         engine.build_index([
             "Python for testing",
             "JavaScript for frontend",
@@ -35,7 +35,7 @@ class TestCoreEngine:
         assert results[0][1] > 0
 
     def test_search_emptand_querand_returns_emptand_list(self):
-        engine = CoreEngine(preprocessor=WordTokenizer)
+        engine = CoreEngine(preprocessor=WordTokenizer())
         engine.build_index(["Python for testing"])
 
         assert engine.search([], top_k=5) == []

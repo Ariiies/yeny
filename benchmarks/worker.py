@@ -216,7 +216,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
         name=f"benchmark_{engine}_build",
         engine=engine,
         storage_dir=str(context.workspace / "build"),
-        preprocessor=WordTokenizer,
+        preprocessor=WordTokenizer(),
         autoload=False,
         binary_dir=None,
     )
@@ -236,7 +236,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
                 name=f"benchmark_{engine}_e2e",
                 engine=engine,
                 storage_dir=str(context.workspace / "e2e"),
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 binary_dir=None,
             )
         )
@@ -329,7 +329,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
         engine=engine,
         storage_type="sqlite",
         db_path=str(sqlite_dir / "benchmark.db"),
-        preprocessor=WordTokenizer,
+        preprocessor=WordTokenizer(),
         autoload=False,
         binary_dir=None,
     )
@@ -443,7 +443,7 @@ def _execute_backend_load_phase(
                 name=f"benchmark_{engine}_mmap",
                 engine=engine,
                 storage_dir=str(context.workspace / "mmap"),
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 autoload=False,
                 binary_dir=None,
             ),
@@ -460,7 +460,7 @@ def _execute_backend_load_phase(
                 name=f"benchmark_{engine}_build",
                 engine=engine,
                 storage_dir=str(context.workspace / "build"),
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 autoload=True,
                 binary_dir=None,
             ),
@@ -469,7 +469,7 @@ def _execute_backend_load_phase(
                 engine=engine,
                 storage_type="sqlite",
                 db_path=str(context.workspace / "sqlite" / "benchmark.db"),
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 autoload=True,
                 binary_dir=None,
             ),
