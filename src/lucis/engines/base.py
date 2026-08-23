@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Callable, List, Dict, Optional, Union, Tuple
 from ..exceptions import LucisInvalidDocumentError
-from ..utils.nlp import word_tokenizer
+from ..utils.nlp import WordTokenizer
 
 # Type alias for document IDs - can be int, str, or any hashable type
 DocId = Any
@@ -19,7 +19,7 @@ class BaseEngine(ABC):
     """
 
     # Subclasses can override this to change the default preprocessor.
-    # CoreEngine uses word_tokenizer; LiteEngine uses char n-grams.
+    # CoreEngine uses WordTokenizer; LiteEngine uses char n-grams.
     _default_preprocessor: Optional[Callable] = None
 
     def __init__(self, storage: Optional[Any] = None, preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = None):
@@ -37,7 +37,7 @@ class BaseEngine(ABC):
         # Can return str (engine will tokenize with simple_tokenizer as fallback)
         # or list[str] (used directly as tokens).
         self.preprocessor: Callable[[str], Union[str, List[str]]] = (
-            preprocessor or self._default_preprocessor or word_tokenizer
+            preprocessor or self._default_preprocessor or WordTokenizer
         )
 
     @property

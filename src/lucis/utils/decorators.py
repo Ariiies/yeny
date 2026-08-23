@@ -3,7 +3,7 @@ from typing import Callable, List, Union, Any
 from ..exceptions import LucisInvalidDocumentError
 
 # input corpus tokenizer helper decorator
-def corpus_input(tokenizer_func: Callable[[str], List[str]]):
+def corpus_input(tokenizer: Callable[[str], List[str]]):
     """
     Decorator that manages the index creation lifecycle.
     
@@ -22,7 +22,7 @@ def corpus_input(tokenizer_func: Callable[[str], List[str]]):
             # Using corpus[0] check is O(1) - we assume homogeneous input
             if corpus and isinstance(corpus[0], str):
                 # Apply injected tokenizer - this decouples tokenization strategy from indexing logic
-                corpus = [tokenizer_func(doc) for doc in corpus]
+                corpus = [tokenizer(doc) for doc in corpus]
 
             # Call the wrapped function with processed corpus
             return func(corpus, *args, **kwargs)
@@ -31,7 +31,7 @@ def corpus_input(tokenizer_func: Callable[[str], List[str]]):
 
 
 ## input document/query tokenizer helper decorator
-def doc_input(tokenizer_func: Callable[[str], List[str]]):
+def doc_input(tokenizer: Callable[[str], List[str]]):
     """
     Decorator that manages the input query/docs for a search or bow creating.
     
@@ -67,7 +67,7 @@ def doc_input(tokenizer_func: Callable[[str], List[str]]):
             # Tokenize if needed
             if isinstance(query, str):
                 # Single string - tokenize it
-                args_list[query_index] = tokenizer_func(query)
+                args_list[query_index] = tokenizer(query)
             elif isinstance(query, list) and query and isinstance(query[0], str):
                 # Already a list of strings (tokens) - no action needed
                 pass

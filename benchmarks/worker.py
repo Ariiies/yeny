@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
 from lucis import Lucis
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
 from .config import (
     BenchmarkProfile,
@@ -216,7 +216,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
         name=f"benchmark_{engine}_build",
         engine=engine,
         storage_dir=str(context.workspace / "build"),
-        preprocessor=word_tokenizer,
+        preprocessor=WordTokenizer,
         autoload=False,
         binary_dir=None,
     )
@@ -236,7 +236,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
                 name=f"benchmark_{engine}_e2e",
                 engine=engine,
                 storage_dir=str(context.workspace / "e2e"),
-                preprocessor=word_tokenizer,
+                preprocessor=WordTokenizer,
                 binary_dir=None,
             )
         )
@@ -329,7 +329,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
         engine=engine,
         storage_type="sqlite",
         db_path=str(sqlite_dir / "benchmark.db"),
-        preprocessor=word_tokenizer,
+        preprocessor=WordTokenizer,
         autoload=False,
         binary_dir=None,
     )
@@ -443,7 +443,7 @@ def _execute_backend_load_phase(
                 name=f"benchmark_{engine}_mmap",
                 engine=engine,
                 storage_dir=str(context.workspace / "mmap"),
-                preprocessor=word_tokenizer,
+                preprocessor=WordTokenizer,
                 autoload=False,
                 binary_dir=None,
             ),
@@ -460,7 +460,7 @@ def _execute_backend_load_phase(
                 name=f"benchmark_{engine}_build",
                 engine=engine,
                 storage_dir=str(context.workspace / "build"),
-                preprocessor=word_tokenizer,
+                preprocessor=WordTokenizer,
                 autoload=True,
                 binary_dir=None,
             ),
@@ -469,7 +469,7 @@ def _execute_backend_load_phase(
                 engine=engine,
                 storage_type="sqlite",
                 db_path=str(context.workspace / "sqlite" / "benchmark.db"),
-                preprocessor=word_tokenizer,
+                preprocessor=WordTokenizer,
                 autoload=True,
                 binary_dir=None,
             ),

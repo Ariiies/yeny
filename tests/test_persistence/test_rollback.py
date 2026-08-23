@@ -3,7 +3,7 @@ import pytest
 
 from lucis import Lucis
 from lucis.exceptions import LucisEngineError
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
 def _set_version_name(storage, version_name):
 	storage._generate_versioned_name = lambda base_name: version_name
@@ -17,7 +17,7 @@ def test_rollback_restores_previous_version(sample_corpus, tmp_path):
 		engine="core",
 		storage_type="sqlite",
 		db_path=str(db_path),
-		preprocessor=word_tokenizer,
+		preprocessor=WordTokenizer,
 		autoload=False,
 	)
 	lucis.index(sample_corpus, persist=False)
@@ -55,7 +55,7 @@ def test_rollback_without_previous_version_raises(tmp_path):
 		engine="core",
 		storage_type="sqlite",
 		db_path=str(db_path),
-		preprocessor=word_tokenizer,
+		preprocessor=WordTokenizer,
 		autoload=False,
 	)
 	lucis.index({"doc1": "Python is a language"}, persist=False)

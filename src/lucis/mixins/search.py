@@ -9,7 +9,7 @@ import time
 from typing import List, Optional, Union
 
 from ..models.search import SearchResult, SearchResponse
-from ..utils.nlp import simple_tokenizer
+from ..utils.nlp import SimpleTokenizer
 from ..core.shard import normalize_to_shard_key, shard_key_in_range
 from ..exceptions import LucisEngineError
 
@@ -71,8 +71,8 @@ class SearchMixin:
         # Preprocess + tokenize to capture the tokens for the response
         if isinstance(query, str):
             processed = self.preprocessor(query)
-            # Fallback: if preprocessor returned str instead of list[str], apply simple_tokenizer
-            tokens = simple_tokenizer(processed) if isinstance(processed, str) else processed
+            # Fallback: if preprocessor returned str instead of list[str], apply SimpleTokenizer
+            tokens = SimpleTokenizer(processed) if isinstance(processed, str) else processed
         else:
             tokens = list(query)
 

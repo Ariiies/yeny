@@ -1,10 +1,10 @@
 
 import pytest
 from lucis.utils.nlp import (
-    simple_tokenizer,
-    word_tokenizer,
-    ngram_tokenizer,
-    char_ngram_tokenizer,
+    SimpleTokenizer,
+    WordTokenizer,
+    NgramTokenizer,
+    CharNgramTokenizer,
     lowercase,
     uppercase,
     strip_whitespace,
@@ -21,51 +21,51 @@ from lucis.utils.nlp import (
 class TestSimpleTokenizer:
 
     def test_split_basic(self):
-        assert simple_tokenizer("hello world") == ["hello", "world"]
+        assert SimpleTokenizer("hello world") == ["hello", "world"]
 
     def test_text_empty(self):
-        assert simple_tokenizer("") == []
+        assert SimpleTokenizer("") == []
 
     def test_withoutgle_token(self):
-        assert simple_tokenizer("python") == ["python"]
+        assert SimpleTokenizer("python") == ["python"]
 
     def test_multiple_spaces(self):
-        assert simple_tokenizer("hello   world") == ["hello", "world"]
+        assert SimpleTokenizer("hello   world") == ["hello", "world"]
 
     def test_tabs_and_newlines(self):
-        result = simple_tokenizer("hello\tworld\npython")
+        result = SimpleTokenizer("hello\tworld\npython")
         assert result == ["hello", "world", "python"]
 
 class TestWordTokenizer:
 
     def test_onland_words(self):
-        assert word_tokenizer("Python 3.9 is awesome!") == ["python", "is", "awesome"]
+        assert WordTokenizer("Python 3.9 is awesome!") == ["python", "is", "awesome"]
 
     def test_ignores_numbers(self):
-        assert word_tokenizer("version 3.9") == ["version"]
-        assert "3" not in word_tokenizer("i have 3 dogs")
-        assert "9" not in word_tokenizer("i have 3.9 dogs")
+        assert WordTokenizer("version 3.9") == ["version"]
+        assert "3" not in WordTokenizer("i have 3 dogs")
+        assert "9" not in WordTokenizer("i have 3.9 dogs")
 
     def test_withverts_a_lowercase(self):
-        assert word_tokenizer("PYTHON IS AWESOME") == ["python", "is", "awesome"]
+        assert WordTokenizer("PYTHON IS AWESOME") == ["python", "is", "awesome"]
 
     def test_special_characters(self):
-        assert word_tokenizer("hello!!! world???") == ["hello", "world"]
-        assert word_tokenizer("price: $100") == ["price"]
+        assert WordTokenizer("hello!!! world???") == ["hello", "world"]
+        assert WordTokenizer("price: $100") == ["price"]
 
     def test_spanish_accented_characters(self):
-        assert word_tokenizer("cancion nino") == ["cancion", "nino"]
-        assert word_tokenizer("penguin") == ["penguin"]
-        assert word_tokenizer("light year") == ["light", "year"]
+        assert WordTokenizer("cancion nino") == ["cancion", "nino"]
+        assert WordTokenizer("penguin") == ["penguin"]
+        assert WordTokenizer("light year") == ["light", "year"]
 
     def test_text_empty(self):
-        assert word_tokenizer("") == []
+        assert WordTokenizer("") == []
 
     def test_onland_punctuation(self):
-        assert word_tokenizer("!!! ??? ...") == []
+        assert WordTokenizer("!!! ??? ...") == []
 
     def test_mix_words_numbers_punctuation(self):
-        result = word_tokenizer("Python 3.9, JavaScript; TypeScript!")
+        result = WordTokenizer("Python 3.9, JavaScript; TypeScript!")
         assert result == ["python", "javascript", "typescript"]
         assert "3" not in result
         assert "9" not in result
@@ -73,78 +73,78 @@ class TestWordTokenizer:
 class TestNgramTokenizer:
 
     def test_factorand_nombre(self):
-        bigram = ngram_tokenizer(2)
+        bigram = NgramTokenizer(2)
         assert bigram.__name__ == "ngram_2_tokenizer"
 
     def test_bigrams(self):
-        bigram = ngram_tokenizer(2)
+        bigram = NgramTokenizer(2)
         result = bigram("hello world cruel")
         assert result == ["hello world", "world cruel"]
 
     def test_trigrams(self):
-        trigram = ngram_tokenizer(3)
+        trigram = NgramTokenizer(3)
         result = trigram("hello world cruel python")
         assert result == ["hello world cruel", "world cruel python"]
 
     def test_less_words_que_n(self):
-        bigram = ngram_tokenizer(2)
+        bigram = NgramTokenizer(2)
         assert bigram("hello") == ["hello"]
         assert bigram("") == []
 
     def test_text_empty(self):
-        bigram = ngram_tokenizer(2)
+        bigram = NgramTokenizer(2)
         assert bigram("") == []
 
     def test_spaces_multiple(self):
-        bigram = ngram_tokenizer(2)
+        bigram = NgramTokenizer(2)
         result = bigram("hello   world")
         assert result == ["hello world"]
 
     def test_withoutgle_token(self):
-        bigram = ngram_tokenizer(2)
+        bigram = NgramTokenizer(2)
         assert bigram("python") == ["python"]
 
 class TestCharNgramTokenizer:
 
     def test_factorand_nombre(self):
-        tokenizer = char_ngram_tokenizer(3)
+        tokenizer = CharNgramTokenizer(3)
         assert tokenizer.__name__ == "char_3gram_tokenizer"
 
     def test_default_trigrams(self):
-        tokenizer = char_ngram_tokenizer()
+        tokenizer = CharNgramTokenizer()
         result = tokenizer("python")
         assert result == ["pyt", "yth", "tho", "hon"]
 
     def test_bigrams(self):
-        tokenizer = char_ngram_tokenizer(2)
+        tokenizer = CharNgramTokenizer(2)
         result = tokenizer("hello")
         assert result == ["he", "el", "ll", "lo"]
 
     def test_replaces_spaces(self):
-        tokenizer = char_ngram_tokenizer(3)
+        tokenizer = CharNgramTokenizer(3)
         result = tokenizer("hello world")
         assert " " not in result
         assert any("_" in ngram for ngram in result)
 
     def test_withverts_a_lowercase(self):
-        tokenizer = char_ngram_tokenizer(2)
+        tokenizer = CharNgramTokenizer(2)
         result = tokenizer("PYTHON")
         assert result == ["py", "yt", "th", "ho", "on"]
 
     def test_text_short_menor_que_n(self):
-        tokenizer = char_ngram_tokenizer(5)
+        tokenizer = CharNgramTokenizer(5)
         assert tokenizer("hello") == ["hello"]
 
     def test_text_empty(self):
-        tokenizer = char_ngram_tokenizer(3)
+        tokenizer = CharNgramTokenizer(3)
         assert tokenizer("") == []
 
     def test_length_exacta_n(self):
-        tokenizer = char_ngram_tokenizer(3)
+        tokenizer = CharNgramTokenizer(3)
         assert tokenizer("abc") == ["abc"]
 
     def test_special_characters(self):
-        tokenizer = char_ngram_tokenizer(2)
+        tokenizer = CharNgramTokenizer(2)
         result = tokenizer("a!b")
         assert result == ["a!", "!b"]
 

@@ -1,7 +1,7 @@
 
 import pytest
 from lucis import Lucis
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
 @pytest.fixture
 def sample_corpus():

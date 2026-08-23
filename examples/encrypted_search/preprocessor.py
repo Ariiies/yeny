@@ -41,7 +41,7 @@ import hmac
 import os
 
 from cryptography.fernet import Fernet
-from lucis.utils.nlp import char_ngram_tokenizer
+from lucis.utils.nlp import CharNgramTokenizer
 
 TRIGRAM_N = 3
 
@@ -138,7 +138,7 @@ def blind_token(token: str) -> str:
 
 # ── The Lucis preprocessor ───────────────────────────────────────────────────
 
-_trigram_tokenizer = char_ngram_tokenizer(n=TRIGRAM_N)
+_trigram_tokenizer = CharNgramTokenizer(n=TRIGRAM_N)
 
 
 def normalize(value: str) -> str:

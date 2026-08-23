@@ -4,7 +4,7 @@ from .base import BaseEngine, DocId
 from ..utils.index.core import build_index as build_idx_func
 from ..utils.index.stats import get_doc_len
 from ..utils.math.core import sort_results
-from ..utils.nlp import simple_tokenizer, char_ngram_tokenizer
+from ..utils.nlp import SimpleTokenizer, CharNgramTokenizer
 from ..utils.compact import (
     CompactPostings,
     CompactDocLengths,
@@ -22,7 +22,7 @@ from ..exceptions import LucisEmptyCorpusError
 
 def _default_lite_preprocessor(text: str) -> list[str]:
     """Default preprocessor for LiteEngine: lowercase + char 3-grams."""
-    return char_ngram_tokenizer(3)(text.lower())
+    return CharNgramTokenizer(3)(text.lower())
 
 
 class LiteEngine(BaseEngine):
@@ -78,7 +78,7 @@ class LiteEngine(BaseEngine):
 
         # 1. Preprocess with the configured preprocessor.
         tokenized = parallel_preprocess(
-            texts, self.preprocessor, simple_tokenizer,
+            texts, self.preprocessor, SimpleTokenizer,
         )
 
         # 2. Build compact inverted index directly
@@ -102,7 +102,7 @@ class LiteEngine(BaseEngine):
         if isinstance(query, str):
             query = self.preprocessor(query)
             if isinstance(query, str):
-                query = simple_tokenizer(query)
+                query = SimpleTokenizer(query)
 
         if not query or not self.index:
             return []
@@ -315,7 +315,7 @@ class LiteEngine(BaseEngine):
 
         # Preprocess new documents (parallel when large enough)
         tokenized_new = parallel_preprocess(
-            new_texts, self.preprocessor, simple_tokenizer,
+            new_texts, self.preprocessor, SimpleTokenizer,
         )
 
         # Build a small delta index (regular dicts — fast for mutation)

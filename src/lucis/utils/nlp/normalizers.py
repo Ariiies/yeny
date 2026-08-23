@@ -1,46 +1,4 @@
-from typing import Callable
 import re
-
-"""
-Basic tokenizers for text processing.
-"""
-
-def simple_tokenizer(text: str) -> list[str]:
-    """Simple tokenizer: splits by spaces."""
-    return text.split()
-
-def word_tokenizer(text: str) -> list[str]:
-    """Tokenizer that extracts only words (ignores standalone numbers)."""
-    return re.findall(r'\b[a-záéíóúüñ]+\b', text.lower())
-
-def ngram_tokenizer(n: int = 2) -> Callable[[str], list[str]]:
-    """
-    Factory for word n-gram tokenizer.
-    
-    Example:
-        bigram = ngram_tokenizer(2)
-        bigram("Hello world cruel")  # ["Hello world", "world cruel"]
-    """
-    def tokenizer(text: str) -> list[str]:
-        words = text.split()
-        return ([text] if text.strip() else []) if len(words) < n else [' '.join(words[i:i+n]) for i in range(len(words) - n + 1)]
-    
-    tokenizer.__name__ = f"ngram_{n}_tokenizer"
-    return tokenizer
-
-
-def char_ngram_tokenizer(n: int = 3) -> Callable[[str], list[str]]:
-    """
-    Factory for character n-gram tokenizer.
-    
-    Useful for fuzzy search and language detection.
-    """
-    def tokenizer(text: str) -> list[str]:
-
-        return ([text] if text else []) if len(text) < n else [text[i:i+n].replace(" ", "_").lower() for i in range(len(text)-(n-1))]
-    
-    tokenizer.__name__ = f"char_{n}gram_tokenizer"
-    return tokenizer
 
 """
 Basic text cleaners.

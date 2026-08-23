@@ -4,7 +4,7 @@ import pytest
 from lucis import Lucis, SearchResponse
 from lucis.engines.core import CoreEngine
 from lucis.engines.lite import LiteEngine
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
 @pytest.fixture
 def sample_corpus():
@@ -23,7 +23,7 @@ class TestLucisPublicApi:
             name="integration_core",
             engine="core",
             storage_dir=str(tmp_path),
-            preprocessor=word_tokenizer,
+            preprocessor=WordTokenizer,
         )
 
         response = lucis.search("versatile", top_k=3)
@@ -41,7 +41,7 @@ class TestLucisPublicApi:
             name="integration_list",
             engine="core",
             storage_dir=str(tmp_path),
-            preprocessor=word_tokenizer,
+            preprocessor=WordTokenizer,
         )
 
         response = lucis.search("Python", top_k=3)
@@ -55,7 +55,7 @@ class TestLucisPublicApi:
             name="engine_core",
             engine="core",
             storage_dir=str(tmp_path / "core"),
-            preprocessor=word_tokenizer,
+            preprocessor=WordTokenizer,
         )
         lucis_lite = Lucis.from_dict(
             sample_corpus,
@@ -73,7 +73,7 @@ class TestLucisPublicApi:
             name="persistent_index",
             engine="core",
             storage_dir=str(tmp_path),
-            preprocessor=word_tokenizer,
+            preprocessor=WordTokenizer,
         )
 
         lucis.save()
@@ -82,7 +82,7 @@ class TestLucisPublicApi:
             name="persistent_index",
             engine="core",
             storage_dir=str(tmp_path),
-            preprocessor=word_tokenizer,
+            preprocessor=WordTokenizer,
         )
 
         response = reloaded.search("frontend", top_k=3)

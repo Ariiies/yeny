@@ -3,7 +3,7 @@
 import pytest
 
 from lucis import Lucis
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
 from benchmarks.config import load_profiles
 from benchmarks.datasets import generate_dataset
@@ -40,7 +40,7 @@ def _indexed(tmp_path, dataset, name="scenario", **overrides):
         "name": name,
         "engine": "core",
         "storage_dir": str(tmp_path / name),
-        "preprocessor": word_tokenizer,
+        "preprocessor": WordTokenizer,
         "autoload": False,
         "binary_dir": None,
     }
@@ -232,7 +232,7 @@ def test_standard_load_roundtrip_preserves_ids(
             name="loadable",
             engine="core",
             storage_dir=str(tmp_path / "loadable"),
-            preprocessor=word_tokenizer,
+            preprocessor=WordTokenizer,
             autoload=True,
             binary_dir=None,
         ),
@@ -274,7 +274,7 @@ def test_standard_load_detects_changed_results(
                 name="tampered",
                 engine="core",
                 storage_dir=str(tmp_path / "tampered"),
-                preprocessor=word_tokenizer,
+                preprocessor=WordTokenizer,
                 autoload=True,
                 binary_dir=None,
             ),
@@ -305,7 +305,7 @@ def test_mmap_load_roundtrip_preserves_ids_and_closes_handle(
             name="mmap_fresh",
             engine="core",
             storage_dir=str(tmp_path / "fresh"),
-            preprocessor=word_tokenizer,
+            preprocessor=WordTokenizer,
             autoload=False,
             binary_dir=None,
         )
