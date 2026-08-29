@@ -10,21 +10,16 @@ There are three ways to create an instance:
 
 ---
 
-## Builder
+## Constructor
 
 ```python
 from lucis import Lucis
 
 buscador = Lucis(
-    name="mi_indice",              # Identificador para persistencia
-    storage_dir="lucis_data",      # Directorio para archivos JSON
-    storage_type="json",           # "json", "sqlite" o "alchemy"
-    engine="core",                 # "core" o "lite"
-    preprocessor=None,             # Callable (str) → str | list[str]
-    autoload=True,                 # Cargar automáticamente si existe
-    max_loaded_shards=0,           # 0 = cargar todos los shards
-    memory_limit_mb=None,          # Límite de RAM para shards
-    binary_dir="auto",             # Directorio para archivos .lcs
+    name="my_index",
+    engine="core",
+    preprocessor=None,
+    autoload=True,
 )
 ```
 
@@ -33,22 +28,39 @@ buscador = Lucis(
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `name` | `str` | `"default"` | Index name, used for persistence |
-| `storage_type` | `str` | `"json"` | Backend: `"json"`, `"sqlite"` or `"alchemy"` |
 | `engine` | `str` | `"core"` | Engine: `"core"` (TF-IDF) or `"lite"` (TF) |
 | `preprocessor` | `Callable` | `None` | Custom text preprocessor |
 | `autoload` | `bool` | `True` | Auto-load existing index when instantiating |
-| `storage_dir` | `str` | `"lucis_data"` | Folder for JSON storage |
-| `db_path` | `str` | `None` | SQLite DB Path (required if `storage_type="sqlite"`) |
-| `alchemy_url` | `str` | `None` | SQLAlchemy URL (required if `storage_type="alchemy"`) |
-| `max_loaded_shards` | `int` | `0` | Simultaneous Shards in RAM (0 = all) |
-| `memory_limit_mb` | `int` | `None` | Maximum RAM budget in MB |
-| `binary_dir` | `str` | `"auto"` | Directory for `.lcs` binaries |
+| `storage` | `BaseStorage` | `None` | Injected storage; takes precedence over declarative options |
+| `options` | `LucisOptions` | `None` | Advanced storage, binary and memory configuration |
+
+The simple path needs no configuration object. For advanced infrastructure,
+reuse one immutable `LucisOptions` instance:
+
+```python
+from lucis import Lucis
+from lucis.config import LucisOptions
+
+options = LucisOptions(
+    storage_dir="custom_data",
+    memory_limit_mb=512,
+    max_loaded_shards=6,
+)
+buscador = Lucis(name="my_index", engine="lite", options=options)
+```
+
+`binary_dir` has three states: `"auto"` derives
+`<storage_dir>/lcs`, `None` disables `.lcs` persistence, and any other string
+selects an explicit directory.
+
+Read-only state properties include `is_indexed`, `is_sharded`, `total_docs`
+and `loaded_memory_mb`.
 
 ---
 
-##Factory methods
+## Factory methods
 
-### `from_dict(data, name, **kwargs)`
+### `from_dict(data, name, *, engine, preprocessor, options)`
 
 Create an instance from a `{id: texto}` dictionary. Preserve the original keys as IDs in the results.
 
@@ -64,7 +76,7 @@ resultados = buscador.search("python web")
 # resultados.results[0].doc_id → "art_001"
 ```
 
-### `from_list(data, name, **kwargs)`
+### `from_list(data, name, *, engine, preprocessor, options)`
 
 Create an instance from a list of texts. The IDs are sequential (0, 1, 2...).
 
@@ -103,7 +115,7 @@ buscador = Lucis.from_sqlite_table(
 | `id_column` | `str` (optional) | Column for IDs |
 | `where_clause` | `str` (optional) | SQL filter without `WHERE` |
 
-### `from_sqlite_query(query, db_path, name, **kwargs)`
+### `from_sqlite_query(query, db_path, name, *, engine, preprocessor, options)`
 
 Create an instance from an arbitrary `SELECT` SQL.
 
@@ -118,17 +130,21 @@ buscador = Lucis.from_sqlite_query(
 - If the query returns **1 column**: it is treated as a list of texts.
 - If it returns **2+ columns**: the first is the ID, the second is the text.
 
-### `from_alchemy_table(table_name, url, text_column, ...)`
+### `from_table(source, name, *, engine, preprocessor, config, options)`
 
 Create an instance by reading rows from a table via SQLAlchemy. Works with MySQL, PostgreSQL, MariaDB, etc.
 
 ```python
-buscador = Lucis.from_alchemy_table(
-    table_name="articulos",
-    url="mysql+pymysql://usuario:clave@localhost/mi_bd",
-    text_column="contenido",
-    id_column="articulo_id",
-    date_column="created_at",  # Activa sharding temporal automático
+from lucis.config import TableSource
+
+buscador = Lucis.from_table(
+    TableSource(
+        table="articulos",
+        connection_url="mysql+pymysql://usuario:clave@localhost/mi_bd",
+        text_columns="contenido",
+        id_column="articulo_id",
+        date_column="created_at",
+    ),
     name="articulos_idx",
     engine="lite"
 )
@@ -138,31 +154,45 @@ buscador = Lucis.from_alchemy_table(
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `text_column` | `str \| list[str]` | — | Column(s) of text. If it is list, they are concatenated (**cross-field search**) |
-| `date_column` | `str` | `"auto"` | Column for temporary sharding. `"auto"` detects `created_at`, `updated_at`, `timestamp`. `None` disables sharding |
-| `where_clause` | `str` | `None` | SQL Filter |
-| `schema` | `str` | `None` | DB Schema (e.g. `"public"` for PostgreSQL) |
+| `source` | `TableSource` | — | Table, connection URL, text columns, ID column and temporal column |
+| `config` | `TableConfig` | `None` | Advanced filtering, schema and streaming configuration |
+| `options` | `LucisOptions` | `None` | Advanced storage, binary and memory configuration |
+
+Filtering and streaming controls live in `TableConfig`:
+
+```python
+from lucis.config import TableConfig
+
+config = TableConfig(
+    where_clause="published = 1",
+    schema="public",
+    shard_batch_size=10_000,
+    stream_ordered=False,
+)
+```
 
 **Cross-field search** — indexes multiple columns as a single document:
 
 ```python
-buscador = Lucis.from_alchemy_table(
-    table_name="articulos",
-    url="mysql+pymysql://usuario:clave@localhost/mi_bd",
-    text_column=["titulo", "contenido", "tags"],  # Cross-field
-    id_column="articulo_id",
+buscador = Lucis.from_table(
+    TableSource(
+        table="articulos",
+        connection_url="mysql+pymysql://usuario:clave@localhost/mi_bd",
+        text_columns=["titulo", "contenido", "tags"],
+        id_column="articulo_id",
+    ),
     name="articulos_idx"
 )
 ```
 
-### `from_alchemy_query(query, url, name, **kwargs)`
+### `from_query(query, connection_url, name, *, engine, preprocessor, options)`
 
 Create an instance from a `SELECT` SQL via SQLAlchemy.
 
 ```python
-buscador = Lucis.from_alchemy_query(
+buscador = Lucis.from_query(
     query="SELECT id, titulo FROM posts WHERE publicado = 1",
-    url="mysql+pymysql://usuario:clave@localhost/mi_bd",
+    connection_url="mysql+pymysql://usuario:clave@localhost/mi_bd",
     name="posts_publicados"
 )
 ```
@@ -380,9 +410,9 @@ See [Health Monitoring](10-health.md) for complete documentation.
 
 ##Lifecycle
 
-### `connect_source(url)`
+### `connect_source(connection_url)`
 
-Connect an `AlchemyReader` so that the worker can synchronize with the production DB.
+Connect a `DatabaseReader` so that the worker can synchronize with the production DB.
 
 ```python
 buscador = Lucis(name="mi_idx", engine="lite")

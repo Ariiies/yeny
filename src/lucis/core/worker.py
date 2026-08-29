@@ -8,9 +8,14 @@ This is the Phase 4 component of the Shadow Indexing system.
 
 Example — periodic rebuild every 60 seconds::
 
-    from lucis import Lucis, IndexWorker
+    from lucis import IndexWorker, Lucis
+    from lucis.config import LucisOptions
 
-    luc = Lucis.from_dict(data, name="articles", storage_type="sqlite", db_path="app.db")
+    luc = Lucis.from_dict(
+        data,
+        name="articles",
+        options=LucisOptions(storage_type="sqlite", db_path="app.db"),
+    )
 
     def fetch_fresh_data():
         return storage.read_table("articles", text_column="content", id_column="id")

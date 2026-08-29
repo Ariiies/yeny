@@ -16,7 +16,7 @@ _ENGINE_REGISTRY = {
 
 # ── Lazy import flags ──
 _AlchemyStorage = None
-_AlchemyReader = None
+_DatabaseReader = None
 
 
 def _get_alchemy_storage_class():
@@ -33,13 +33,13 @@ def _get_alchemy_storage_class():
     return _AlchemyStorage
 
 
-def _get_alchemy_reader_class():
-    """Lazy-load ``AlchemyReader`` to avoid a hard dependency on SQLAlchemy."""
-    global _AlchemyReader
-    if _AlchemyReader is None:
-        from .storage.alchemy_reader import AlchemyReader
-        _AlchemyReader = AlchemyReader
-    return _AlchemyReader
+def _get_database_reader_class():
+    """Lazy-load ``DatabaseReader`` without requiring SQLAlchemy at import."""
+    global _DatabaseReader
+    if _DatabaseReader is None:
+        from .storage.db_reader import DatabaseReader
+        _DatabaseReader = DatabaseReader
+    return _DatabaseReader
 
 
 def _build_sql_text_expr(text_column):

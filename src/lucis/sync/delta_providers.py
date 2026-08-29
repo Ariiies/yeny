@@ -104,7 +104,7 @@ def _build_delta_fn_by_id(
     When a ``date_column`` is present, the returned callable
     produces ``(data, dates)`` tuples for shard routing.
 
-    Uses *reader* for Alchemy sources, falls back to *storage*.
+    Uses *reader* for database sources, then falls back to *storage*.
 
     The ``last_max_id`` watermark is seeded from the **index** (see
     :func:`_index_max_id`) so rows inserted while the worker was down are
@@ -112,8 +112,8 @@ def _build_delta_fn_by_id(
     it falls back to the live ``MAX(id)`` — the historical behaviour.
     """
     id_col = spec.id_column
-    table_name = spec.table_name
-    text_col = spec.text_column
+    table_name = spec.table
+    text_col = spec.text_columns
     date_col = spec.date_column
     where = spec.where_clause
 
@@ -123,7 +123,7 @@ def _build_delta_fn_by_id(
     seed = _index_max_id(shard_manager, engine)
 
     if hasattr(source, "_engine"):
-        # AlchemyReader / AlchemyStorage
+        # DatabaseReader / AlchemyStorage
         from sqlalchemy import text as _sa_text
 
         if seed is not None:

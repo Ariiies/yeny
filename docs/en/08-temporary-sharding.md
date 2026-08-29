@@ -29,31 +29,32 @@ Each shard is a separate instance of the engine (CoreEngine or LiteEngine) with 
 
 ## Enable sharding
 
-Sharding is automatically enabled when you provide dates in your data:
+Sharding is automatically enabled when `from_table` resolves a date
+column:
 
 ```python
 from lucis import Lucis
+from lucis.config import TableSource
 
-data = {
-    "doc_1": "Lanzamiento del producto alfa",
-    "doc_2": "Actualización de seguridad crítica",
-    "doc_3": "Informe trimestral Q3",
-}
-dates = {
-    "doc_1": "2024-01-15",
-    "doc_2": "2024-03-22",
-    "doc_3": "2024-03-28",
-}
-
-luc = Lucis(name="noticias", engine="lite")
-luc.index(data, dates=dates)
+luc = Lucis.from_table(
+    TableSource(
+        table="news",
+        connection_url=DB_URL,
+        text_columns="content",
+        id_column="id",
+        date_column="published_at",
+    ),
+    name="news",
+    engine="lite",
+)
 ```
 
-This will create three shards: `2024_01`, `2024_03`, and `9999_99` (empty in this case).
+Rows are routed to monthly shards; rows with null or unparseable dates use the
+global `9999_99` shard.
 
 ### Date column auto-detection
 
-When you use the `from_sqlite_table`, `from_alchemy_table`, or `from_*_query` methods, Lucis tries to detect the date column automatically by looking for columns named:
+`from_table` detects a date column automatically by looking for:
 
 1. `created_at`
 2. `updated_at`
@@ -61,22 +62,18 @@ When you use the `from_sqlite_table`, `from_alchemy_table`, or `from_*_query` me
 
 ```python
 # Auto-detección: busca "created_at", "updated_at", "timestamp"
-luc = Lucis.from_sqlite_table(
-    db_path="app.db",
-    table_name="articulos",
-    text_column="contenido",
-    date_column="auto",       # ← activa auto-detección
+luc = Lucis.from_table(
+    TableSource("articulos", DB_URL, "contenido", date_column="auto")
 )
 ```
 
 If you prefer to specify the column:
 
 ```python
-luc = Lucis.from_sqlite_table(
-    db_path="app.db",
-    table_name="articulos",
-    text_column="contenido",
-    date_column="fecha_publicacion",    # ← columna explícita
+luc = Lucis.from_table(
+    TableSource(
+        "articulos", DB_URL, "contenido", date_column="fecha_publicacion"
+    )
 )
 ```
 
@@ -115,10 +112,13 @@ For very large datasets, you can limit how many shards are kept loaded simultane
 ### Quantity limit
 
 ```python
+from lucis import Lucis
+from lucis.config import LucisOptions
+
 luc = Lucis(
     name="logs_idx",
     engine="lite",
-    max_loaded_shards=6,    # ← máximo 6 shards en RAM
+    options=LucisOptions(max_loaded_shards=6),
 )
 ```
 
@@ -130,7 +130,7 @@ When a new shard is needed and there are already 6 loaded, the oldest one (LRU) 
 luc = Lucis(
     name="logs_idx",
     engine="lite",
-    memory_limit_mb=2048,   # ← máximo 2 GB para shards
+    options=LucisOptions(memory_limit_mb=2048),
 )
 ```
 
@@ -144,23 +144,14 @@ You can use both limits — whichever is reached first triggers the eviction:
 luc = Lucis(
     name="logs_idx",
     engine="lite",
-    max_loaded_shards=12,
-    memory_limit_mb=4096,
+    options=LucisOptions(max_loaded_shards=12, memory_limit_mb=4096),
 )
 ```
 
 ### TTL of temporary shards
 
-Shards loaded by a `since`/`until` filter receive a TTL (default 30 seconds). After that time, they are automatically evicted:
-
-```python
-luc = Lucis(
-    name="logs_idx",
-    engine="lite",
-    max_loaded_shards=6,
-    temp_ttl_seconds=60,    # ← mantener shards filtrados 60s
-)
-```
+Shards loaded by a `since`/`until` filter receive a fixed 30-second TTL. They
+are automatically evicted after it expires.
 
 ---
 
@@ -169,14 +160,18 @@ luc = Lucis(
 For datasets larger than 100K rows, use `reindex_streaming` to avoid loading everything into RAM:
 
 ```python
-luc = Lucis.from_alchemy_table(
-    alchemy_url="mysql+pymysql://user:pass@host/db",
-    table_name="articulos",
-    text_column="contenido",
-    date_column="fecha",
+from lucis import Lucis
+from lucis.config import LucisOptions, TableConfig, TableSource
+
+luc = Lucis.from_table(
+    TableSource(
+        "articulos",
+        "mysql+pymysql://user:pass@host/db",
+        "contenido",
+        date_column="fecha",
+    ),
     engine="lite",
-    max_loaded_shards=6,
-    memory_limit_mb=2048,
+    options=LucisOptions(max_loaded_shards=6, memory_limit_mb=2048),
 )
 
 # Streaming: consume filas en lotes, indexa shard por shard
@@ -188,10 +183,21 @@ def row_stream():
 luc.reindex_streaming(row_stream())
 ```
 
-If your data arrives **in chronological order**, enable `stream_ordered=True` to evict completed shards during ingestion:
+If the initial table read is guaranteed to arrive **in chronological order**,
+enable ordered streaming in the factory configuration:
 
 ```python
-luc.reindex_streaming(row_stream(), stream_ordered=True)
+luc = Lucis.from_table(
+    TableSource(
+        "articulos",
+        "mysql+pymysql://user:pass@host/db",
+        "contenido",
+        date_column="fecha",
+    ),
+    engine="lite",
+    config=TableConfig(stream_ordered=True),
+    options=LucisOptions(memory_limit_mb=2048),
+)
 ```
 
 > **⚠️ Caution**: Only use `stream_ordered=True` if you are sure that the data arrives ordered by date. With messy data, shards will close prematurely and lose documents.

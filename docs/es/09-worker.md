@@ -7,19 +7,23 @@ El `IndexWorker` es un daemon thread que monitorea tu fuente de datos y reconstr
 ## Inicio rápido
 
 ```python
+import sqlite3
 from lucis import Lucis, IndexWorker
 
 luc = Lucis.from_sqlite_table(
     db_path="app.db",
     table_name="articulos",
     text_column="contenido",
+    id_column="id",
     name="mi_idx",
-    storage_type="sqlite",
 )
 
 def obtener_datos():
     """Función que retorna los datos frescos."""
-    return luc.storage.read_table("articulos", text_column="contenido", id_column="id")
+    with sqlite3.connect("app.db") as conn:
+        return {str(row[0]): row[1] for row in conn.execute(
+            "SELECT id, contenido FROM articulos"
+        )}
 
 worker = IndexWorker(
     lucis=luc,

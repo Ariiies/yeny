@@ -156,7 +156,8 @@ class SearchMixin:
 
         Example::
 
-            luc = Lucis(name="email_idx", ..., max_loaded_shards=6)
+            luc = Lucis(name="email_idx", ...,
+                        options=LucisOptions(max_loaded_shards=6))
             # After load(), only 6 most recent shards are in RAM.
             # To also query 2024 data:
             luc.preload_shards(since="2024_01", until="2024_12")

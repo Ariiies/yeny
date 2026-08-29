@@ -23,13 +23,13 @@ def build_data_fn(
     callable produces ``(data, dates)`` tuples.  For non-sharded
     indices, it returns ``Dict`` or ``List`` as before.
 
-    Uses *reader* for Alchemy sources (read-only access to
+    Uses *reader* for database sources (read-only access to
     the production DB) and falls back to *storage* for other
     backends.
 
     Args:
         spec: Source description.
-        reader: Optional AlchemyReader instance.
+        reader: Optional DatabaseReader instance.
         storage: Storage backend.
         engine_name: Engine name (for error messages).
 
@@ -44,8 +44,8 @@ def build_data_fn(
     date_col = spec.date_column
 
     if spec.type == "table":
-        table_name = spec.table_name
-        text_col = spec.text_column
+        table_name = spec.table
+        text_col = spec.text_columns
         id_col = spec.id_column
         where = spec.where_clause
 
@@ -162,13 +162,13 @@ def build_streaming_fn(
     if not spec.date_column:
         return None  # Streaming rebuild only meaningful for sharded mode
 
-    # Prefer the reader (Alchemy read-only); fall back to storage
+    # Prefer the read-only database reader; fall back to storage.
     source = reader if reader else storage
     if not hasattr(source, "stream_table_with_dates"):
         return None
 
-    table_name = spec.table_name
-    text_col = spec.text_column
+    table_name = spec.table
+    text_col = spec.text_columns
     id_col = spec.id_column
     date_col = spec.date_column
     where = spec.where_clause

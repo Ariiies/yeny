@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-logger = logging.getLogger("lucis.storage.alchemy_reader")
+logger = logging.getLogger("lucis.storage.db_reader")
 
 try:
     from sqlalchemy import (
@@ -37,20 +37,20 @@ except ImportError:  # pragma: no cover
 def _require_sqlalchemy() -> None:
     if not HAS_SQLALCHEMY:
         raise ImportError(
-            "AlchemyReader requires SQLAlchemy. "
+            "DatabaseReader requires SQLAlchemy. "
             "Install it with:  pip install lucis[alchemy]\n"
             "For MySQL add:    pip install pymysql"
         )
 
 
-class AlchemyReader:
+class DatabaseReader:
     """Read-only adapter for fetching user data from a SQL database.
 
     Unlike :class:`AlchemyStorage`, this class **never** creates or
     writes to ``lucis_*`` tables.  It only reads from user tables.
 
     Args:
-        url: SQLAlchemy connection URL.
+        connection_url: SQLAlchemy connection URL.
         engine: An existing ``sqlalchemy.engine.Engine`` instance.
         connect_args: Extra keyword arguments forwarded to
             ``create_engine``.
@@ -58,7 +58,7 @@ class AlchemyReader:
 
     def __init__(
         self,
-        url: Optional[str] = None,
+        connection_url: Optional[str] = None,
         engine: Optional[Any] = None,
         connect_args: Optional[Dict[str, Any]] = None,
     ):
@@ -67,65 +67,69 @@ class AlchemyReader:
         if engine is not None:
             self._engine: Engine = engine
             self._owns_engine = False
-        elif url is not None:
+        elif connection_url is not None:
             kwargs: Dict[str, Any] = {}
             if connect_args:
                 kwargs["connect_args"] = dict(connect_args)
-            if "pymysql" in url:
+            if "pymysql" in connection_url:
                 ca = kwargs.setdefault("connect_args", {})
                 ca.setdefault("local_infile", True)
-            self._engine = create_engine(url, pool_pre_ping=True, **kwargs)
+            self._engine = create_engine(
+                connection_url, pool_pre_ping=True, **kwargs
+            )
             self._owns_engine = True
         else:
             raise ValueError(
-                "AlchemyReader requires either a 'url' or an 'engine'."
+                "DatabaseReader requires either 'connection_url' or 'engine'."
             )
 
-        self.url = url or str(self._engine.url)
+        self.connection_url = connection_url or str(self._engine.url)
 
     # Text expression helpers 
 
-    def _build_text_expr(self, table: Any, text_column: Union[str, List[str]]) -> Any:
+    def _build_text_expr(
+        self, table: Any, text_columns: Union[str, List[str]]
+    ) -> Any:
         """Build a SQLAlchemy expression for one or more text columns."""
-        if isinstance(text_column, str):
-            return table.c[text_column]
-        if len(text_column) == 1:
-            return table.c[text_column[0]]
+        if isinstance(text_columns, str):
+            return table.c[text_columns]
+        if len(text_columns) == 1:
+            return table.c[text_columns[0]]
 
         dialect = self._engine.dialect.name
         if dialect in ("mysql", "mariadb"):
             return sa_func.concat_ws(
-                ' ', *[table.c[col] for col in text_column]
+                ' ', *[table.c[col] for col in text_columns]
             )
         else:
             parts = [
                 sa_func.coalesce(table.c[col], sa_literal(''))
-                for col in text_column
+                for col in text_columns
             ]
             expr = parts[0]
             for part in parts[1:]:
                 expr = expr.concat(sa_literal(' ')).concat(part)
             return expr
 
-    def _sql_concat_columns(self, text_column: Union[str, List[str]]) -> str:
+    def _sql_concat_columns(self, text_columns: Union[str, List[str]]) -> str:
         """Return a raw SQL fragment for concatenating text columns."""
-        if isinstance(text_column, str):
-            return text_column
-        if len(text_column) == 1:
-            return text_column[0]
+        if isinstance(text_columns, str):
+            return text_columns
+        if len(text_columns) == 1:
+            return text_columns[0]
 
         dialect = self._engine.dialect.name
         if dialect in ("mysql", "mariadb"):
-            return f"CONCAT_WS(' ', {', '.join(text_column)})"
+            return f"CONCAT_WS(' ', {', '.join(text_columns)})"
         else:
-            coalesced = [f"COALESCE({col}, '')" for col in text_column]
+            coalesced = [f"COALESCE({col}, '')" for col in text_columns]
             return " || ' ' || ".join(coalesced)
 
     # Date column detection
 
     def detect_date_column(
         self,
-        table_name: str,
+        table: str,
         schema: Optional[str] = None,
     ) -> Optional[str]:
         """Auto-detect a date column in the user table."""
@@ -133,7 +137,7 @@ class AlchemyReader:
 
         user_meta = MetaData()
         user_table = Table(
-            table_name, user_meta, autoload_with=self._engine, schema=schema
+            table, user_meta, autoload_with=self._engine, schema=schema
         )
         table_columns = {col.name for col in user_table.columns}
         for candidate in LUCIS_DEFAULT_DATE_COLUMNS:
@@ -145,8 +149,8 @@ class AlchemyReader:
 
     def read_table(
         self,
-        table_name: str,
-        text_column: Union[str, List[str]],
+        table: str,
+        text_columns: Union[str, List[str]],
         id_column: Optional[str] = None,
         where_clause: Optional[str] = None,
         schema: Optional[str] = None,
@@ -154,9 +158,9 @@ class AlchemyReader:
         """Read rows from a user table (no date routing)."""
         user_meta = MetaData()
         user_table = Table(
-            table_name, user_meta, autoload_with=self._engine, schema=schema
+            table, user_meta, autoload_with=self._engine, schema=schema
         )
-        text_expr = self._build_text_expr(user_table, text_column)
+        text_expr = self._build_text_expr(user_table, text_columns)
         if id_column:
             cols = [user_table.c[id_column], text_expr]
         else:
@@ -176,8 +180,8 @@ class AlchemyReader:
 
     def read_table_with_dates(
         self,
-        table_name: str,
-        text_column: Union[str, List[str]],
+        table: str,
+        text_columns: Union[str, List[str]],
         id_column: Optional[str] = None,
         date_column: Optional[str] = None,
         where_clause: Optional[str] = None,
@@ -186,9 +190,9 @@ class AlchemyReader:
         """Read rows with dates for shard routing."""
         user_meta = MetaData()
         user_table = Table(
-            table_name, user_meta, autoload_with=self._engine, schema=schema
+            table, user_meta, autoload_with=self._engine, schema=schema
         )
-        text_expr = self._build_text_expr(user_table, text_column)
+        text_expr = self._build_text_expr(user_table, text_columns)
         cols = []
         if id_column:
             cols.append(user_table.c[id_column])
@@ -231,8 +235,8 @@ class AlchemyReader:
 
     def stream_table_with_dates(
         self,
-        table_name: str,
-        text_column: Union[str, List[str]],
+        table: str,
+        text_columns: Union[str, List[str]],
         id_column: Optional[str] = None,
         date_column: Optional[str] = None,
         where_clause: Optional[str] = None,
@@ -258,9 +262,9 @@ class AlchemyReader:
         """
         user_meta = MetaData()
         user_table = Table(
-            table_name, user_meta, autoload_with=self._engine, schema=schema
+            table, user_meta, autoload_with=self._engine, schema=schema
         )
-        text_expr = self._build_text_expr(user_table, text_column)
+        text_expr = self._build_text_expr(user_table, text_columns)
 
         if id_column:
             yield from self._stream_keyset(
@@ -372,11 +376,11 @@ class AlchemyReader:
 
     # Metadata queries (read-only)
 
-    def count_rows(self, table_name: str) -> Optional[int]:
-        """Return ``SELECT COUNT(*) FROM <table_name>``."""
+    def count_rows(self, table: str) -> Optional[int]:
+        """Return ``SELECT COUNT(*) FROM <table>``."""
         with self._engine.connect() as conn:
             result = conn.execute(
-                sa_text(f"SELECT COUNT(*) FROM {table_name}")
+                sa_text(f"SELECT COUNT(*) FROM {table}")
             )
             return result.scalar()
 
@@ -394,5 +398,5 @@ class AlchemyReader:
             pass
 
     def __repr__(self) -> str:
-        url = str(self._engine.url)
-        return f"AlchemyReader(url='{url}')"
+        connection_url = str(self._engine.url)
+        return f"DatabaseReader(connection_url='{connection_url}')"

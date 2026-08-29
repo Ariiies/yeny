@@ -238,7 +238,7 @@ class PersistenceMixin:
 
         Example::
 
-            luc = Lucis(name="email_idx", ..., binary_dir="auto")
+            luc = Lucis(name="email_idx", ...)
             n = luc.generate_lcs()
             print(f"Generated {n} .lcs files")
             luc.close()
@@ -257,7 +257,7 @@ class PersistenceMixin:
         if self._shard_manager._binary_dir is None:
             raise RuntimeError(
                 "generate_lcs() requires binary_dir to be set. "
-                "Pass binary_dir='auto' when creating Lucis."
+                "Pass options=LucisOptions(binary_dir='auto') when creating Lucis."
             )
         base_name = self._shard_manager._lazy_base_name or self.name
         return self._shard_manager.write_lcs_files(base_name)
@@ -265,7 +265,7 @@ class PersistenceMixin:
     def close(self) -> None:
         """Release all mmap handles held by loaded shard engines.
 
-        Also closes the AlchemyReader if one is attached.
+        Also closes the DatabaseReader if one is attached.
 
         Call this before deleting ``.lcs`` files on Windows, or when
         the ``Lucis`` instance is no longer needed and you want to

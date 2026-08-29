@@ -4,7 +4,7 @@
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github)](https://github.com/sponsors/Ariiies)
 [![PyPI](https://img.shields.io/pypi/v/lucis)](https://pypi.org/project/lucis/)
-[![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10+-blue)](https://www.python.org/)
 
 > A lightweight toolkit for building custom search systems in Python.
 
@@ -38,7 +38,7 @@ It follows a progressive-power philosophy:
 - Pure Python engines (`core` and `lite`)
 - Built-in NLP preprocessors and tokenizers
 - Ranked retrieval with structured response models
-- **Binary persistence (`.lcs`)** — memory-mapped index files for near-zero RAM loading, plus lightweight SQLite metadata (WAL mode). Persistence is **automatic** — `from_dict()`, `from_list()`, and `from_alchemy_table()` all save without calling `.save()`.
+- **Binary persistence (`.lcs`)** — memory-mapped index files for near-zero RAM loading, plus lightweight SQLite metadata (WAL mode). Persistence is **automatic** — `from_dict()`, `from_list()`, and `from_table()` all save without calling `.save()`.
 - **Direct DB ingestion** — read from SQLite, MySQL, or PostgreSQL tables without polluting your database (read-only adapters, zero `lucis_*` tables on your DB)
 - Versioned index persistence with rollback support
 - Temporal sharding for large time-series corpora
@@ -105,15 +105,36 @@ print(response)
 # )
 ```
 
-Persist and reload:
+Factories persist automatically. Reload later with the same logical name:
 
 ```python
-searcher.save()
-
-# Later...
 loaded = Lucis(name="demo_index")
 response = loaded.search("python")
 ```
+
+Advanced infrastructure stays optional and typed:
+
+```python
+from lucis import Lucis
+from lucis.config import LucisOptions, TableConfig, TableSource
+
+options = LucisOptions(storage_dir="search_data", memory_limit_mb=512)
+searcher = Lucis.from_table(
+    TableSource(
+        table="articles",
+        connection_url=DB_URL,
+        text_columns=["title", "body"],
+        id_column="id",
+        date_column="created_at",
+    ),
+    engine="lite",
+    config=TableConfig(where_clause="published = 1"),
+    options=options,
+)
+```
+
+`LucisOptions.binary_dir` accepts `"auto"` (derive `<storage_dir>/lcs`),
+`None` (disable `.lcs` persistence), or an explicit directory.
 
 ## Examples
 
@@ -138,7 +159,7 @@ for setup, security model and adaptation guide.
 
 ```
                   ┌──────────────────┐
-                  │   AlchemyReader  │  ← read-only (your DB)
+                  │  DatabaseReader  │  ← read-only (your DB)
                   │ SQLite / MySQL / │
                   │   PostgreSQL     │
                   └────────┬─────────┘
@@ -162,7 +183,7 @@ Documents → Preprocessors → Engine → Storage
     - `JSONStorage`: plain `.json` files (simple / debugging)
     - `SQLiteStorage`: full index serialized in SQLite tables
     - `AlchemyStorage`: full index serialized via SQLAlchemy (MySQL, PostgreSQL, etc.)
-- `lucis.storage.AlchemyReader`: **read-only** adapter for ingesting from your DB without creating any `lucis_*` tables
+- `lucis.storage.DatabaseReader`: **read-only** adapter for ingesting from your DB without creating any `lucis_*` tables
 - `lucis.worker`: async/periodic reindex worker (zero-downtime)
 - `lucis.health`: system and index health reporting
 - `lucis.utils`: NLP, indexing helpers, math, serialization, mmap helpers

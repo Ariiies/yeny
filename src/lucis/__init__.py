@@ -34,14 +34,11 @@ from .core.shard import LUCIS_GLOBAL_SHARD, LUCIS_DEFAULT_DATE_COLUMNS
 # Parallel preprocessing (Phase 9 — Multiprocessing)
 from .utils.parallel import get_cpu_count, get_optimal_workers
 
-# AlchemyStorage and AlchemyReader are lazy-loaded (requires sqlalchemy)
+# AlchemyStorage is lazy-loaded because it requires SQLAlchemy.
 def __getattr__(name):
     if name == "AlchemyStorage":
         from .storage.alchemy_storage import AlchemyStorage
         return AlchemyStorage
-    if name == "AlchemyReader":
-        from .storage.alchemy_reader import AlchemyReader
-        return AlchemyReader
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # for better engine exportations
@@ -59,7 +56,6 @@ __all__ = [
     "SQLiteStorage",
     "MetadataStorage",
     "AlchemyStorage",
-    "AlchemyReader",
     
     # Exceptions
     "LucisError",

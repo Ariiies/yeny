@@ -16,7 +16,7 @@ from ..sync.data_providers import build_data_fn, build_streaming_fn
 from ..sync.delta_providers import build_delta_fn
 from ..sync.change_detectors import build_change_detector
 from ..core.health import health_check as _health_check, HealthMonitor
-from .._internals import _get_alchemy_reader_class, _ENGINE_REGISTRY
+from .._internals import _get_database_reader_class, _ENGINE_REGISTRY
 
 if TYPE_CHECKING:
     from ..core.worker import IndexWorker
@@ -176,7 +176,7 @@ class AutomationMixin:
             self.save()
             # Reload from mmap to shed the materialized in-memory dicts
             # created by _ensure_mutable(). Same cleanup path used by
-            # from_alchemy_table() and reindex().
+            # from_table() and reindex().
             if self._shard_manager is not None:
                 self._post_index_cleanup(self.name)
 
@@ -405,7 +405,7 @@ class AutomationMixin:
         on_error: Optional[Callable[[Exception], None]] = None,
         on_cycle: Optional[Callable[[int, bool], None]] = None,
         streaming: bool = True,
-        source_url: Optional[str] = None,
+        connection_url: Optional[str] = None,
     ) -> "IndexWorker":
         """
         Create an ``IndexWorker`` bound to this Lucis instance.
@@ -415,7 +415,7 @@ class AutomationMixin:
         purges old versions — all with **zero downtime** for searches.
 
         If the index was created from a database table/query (via
-        ``from_alchemy_table``, ``from_sqlite_table``, etc.), both
+        ``from_table``, ``from_sqlite_table``, etc.), both
         ``data_fn`` and ``change_detector`` are **auto-generated**
         when not provided — the worker just works out of the box.
 
@@ -452,13 +452,13 @@ class AutomationMixin:
             on_error: Callback ``fn(exception)`` on failure.
             on_cycle: Callback ``fn(cycle_number, skipped)`` every cycle.
             streaming: Enable streaming full-rebuild mode (default ``True``).
-                When ``True`` and the source is a sharded Alchemy table, the
+                When ``True`` and the source is a sharded database table, the
                 worker calls :meth:`reindex_streaming` instead of loading the
                 entire corpus into RAM via ``data_fn``.  This keeps peak RAM
                 at ≈ steady-state index RAM rather than doubling it during each
                 rebuild cycle.  Set to ``False`` to force the classic
                 ``fetchall`` path.
-            source_url: SQLAlchemy connection URL for the source database.
+            connection_url: Connection URL for the source database.
                 When provided, calls :meth:`connect_source` internally so the
                 worker can auto-generate ``data_fn`` / ``delta_fn`` from the
                 source.  This avoids a separate ``connect_source()`` call.
@@ -469,18 +469,24 @@ class AutomationMixin:
 
         Example — zero config (auto data_fn + auto incremental)::
 
-            luc = Lucis.from_alchemy_table("articles", url=URL,
-                                           text_column="content",
-                                           id_column="article_id",
-                                           name="articles_idx",
-                                           engine="lite")
+            from lucis.config import TableSource
+
+            source = TableSource(
+                table="articles",
+                connection_url=URL,
+                text_columns="content",
+                id_column="article_id",
+            )
+            luc = Lucis.from_table(
+                source, name="articles_idx", engine="lite"
+            )
             worker = luc.create_worker(interval=60)
             worker.start()
 
-        Example — reload with source_url (auto-discovery)::
+        Example — reload with a connection URL (auto-discovery)::
 
-            luc = Lucis(name="articles_idx", engine="lite", binary_dir="auto")
-            worker = luc.create_worker(interval=60, source_url=URL)
+            luc = Lucis(name="articles_idx", engine="lite")
+            worker = luc.create_worker(interval=60, connection_url=URL)
             worker.start()
 
         Example — explicit incremental with custom delta_fn::
@@ -498,8 +504,8 @@ class AutomationMixin:
             worker.start()
         """
         # Connect to source DB if URL provided
-        if source_url is not None:
-            self.connect_source(source_url)
+        if connection_url is not None:
+            self.connect_source(connection_url)
 
         # Auto-detect incremental mode based on engine scoring model:
         # LiteEngine (registry key "lite"): TF scoring, exact incremental — no precision loss
@@ -533,7 +539,7 @@ class AutomationMixin:
                         engine_name=self.engine.name,
                         detail=(
                             "Cannot auto-generate data_fn: no source info available. "
-                            "Either create the index with from_alchemy_table / "
+                            "Either create the index with from_table / "
                             "from_sqlite_table, or provide data_fn explicitly."
                         ),
                     )
@@ -654,25 +660,27 @@ class AutomationMixin:
 
     # ── Lifecycle Management ──
 
-    def connect_source(self, url: str) -> None:
-        """Attach an :class:`AlchemyReader` so the worker can sync with
+    def connect_source(self, connection_url: str) -> None:
+        """Attach a :class:`DatabaseReader` so the worker can sync with
         the production database.
 
         This is the **only** step needed after a simple autoload reload::
 
-            luc = Lucis(name="my_idx", engine="lite", binary_dir="auto")
-            luc.connect_source(url="mysql+pymysql://user:pass@host/db")
+            luc = Lucis(name="my_idx", engine="lite")
+            luc.connect_source(
+                connection_url="mysql+pymysql://user:pass@host/db"
+            )
             worker = luc.create_worker(interval=60)
 
         The URL is intentionally **not** persisted (security) — so the
         caller must supply it each time the worker is needed.
 
         Args:
-            url: SQLAlchemy connection URL for the source database.
+            connection_url: Connection URL for the source database.
         """
-        AlchemyReader = _get_alchemy_reader_class()
+        DatabaseReader = _get_database_reader_class()
         if self._reader is not None:
             close_fn = getattr(self._reader, "close", None)
             if close_fn is not None:
                 close_fn()
-        self._reader = AlchemyReader(url=url)
+        self._reader = DatabaseReader(connection_url=connection_url)

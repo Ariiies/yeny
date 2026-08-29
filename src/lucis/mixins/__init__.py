@@ -3,7 +3,7 @@ lucis.mixins — Modular components of the Lucis facade.
 
 Each mixin isolates a distinct responsibility:
 
-- ``LoaderMixin``: factory class methods (``from_dict``, ``from_alchemy_table``, …)
+- ``LoaderMixin``: factory class methods (``from_dict``, ``from_table``, …)
 - ``SearchMixin``: search orchestration and shard preloading.
 - ``PersistenceMixin``: save, load, versioning, rollback, binary generation.
 - ``AutomationMixin``: indexing, reindex, incremental updates, worker creation,
