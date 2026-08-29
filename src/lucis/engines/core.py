@@ -27,8 +27,8 @@ class CoreEngine(BaseEngine):
     Uses pure Python dictionaries and math for reliable, dependency-free searching.
     """
 
-    # CoreEngine defaults to word_tokenizer (inherited from BaseEngine fallback)
-    _default_preprocessor = None  # → falls through to word_tokenizer in BaseEngine
+    # CoreEngine defaults to WordTokenizer (inherited from BaseEngine fallback)
+    _default_preprocessor = None  # → falls through to WordTokenizer in BaseEngine
 
     def __init__(self, storage: Optional[Any] = None, preprocessor: Optional[Any] = None):
         super().__init__(storage=storage, preprocessor=preprocessor)

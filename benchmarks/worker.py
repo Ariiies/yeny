@@ -216,7 +216,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
     build_instance = Lucis(
         name=f"benchmark_{engine}_build",
         engine=engine,
-        preprocessor=WordTokenizer,
+        preprocessor=WordTokenizer(),
         autoload=False,
         options=LucisOptions(
             storage_dir=str(context.workspace / "build"),
@@ -238,7 +238,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
                 dataset.documents,
                 name=f"benchmark_{engine}_e2e",
                 engine=engine,
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 options=LucisOptions(
                     storage_dir=str(context.workspace / "e2e"),
                     binary_dir=None,
@@ -332,7 +332,7 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
     sqlite_instance = Lucis(
         name=f"benchmark_{engine}_sqlite",
         engine=engine,
-        preprocessor=WordTokenizer,
+        preprocessor=WordTokenizer(),
         autoload=False,
         options=LucisOptions(
             storage_type="sqlite",
@@ -449,7 +449,7 @@ def _execute_backend_load_phase(
             lambda: Lucis(
                 name=f"benchmark_{engine}_mmap",
                 engine=engine,
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 autoload=False,
                 options=LucisOptions(
                     storage_dir=str(context.workspace / "mmap"),
@@ -468,7 +468,7 @@ def _execute_backend_load_phase(
             "json": lambda: Lucis(
                 name=f"benchmark_{engine}_build",
                 engine=engine,
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 autoload=True,
                 options=LucisOptions(
                     storage_dir=str(context.workspace / "build"),
@@ -478,7 +478,7 @@ def _execute_backend_load_phase(
             "sqlite": lambda: Lucis(
                 name=f"benchmark_{engine}_sqlite",
                 engine=engine,
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 autoload=True,
                 options=LucisOptions(
                     storage_type="sqlite",

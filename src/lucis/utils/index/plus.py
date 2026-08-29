@@ -1,10 +1,10 @@
 import polars as pl
 from ..decorators import corpus_input
-from ..nlp import word_tokenizer
+from ..nlp import WordTokenizer
 
 # Build index functions, optimized with Polars for large corpora
 
-@corpus_input(word_tokenizer)
+@corpus_input(WordTokenizer())
 def build_index_plus(tokenized_corpus: list[list[str]], as_pure_dict: bool = False) -> dict[str, dict[int, int]]:
         """
         Builds index (inverted ways) using Polars for parallel processing.

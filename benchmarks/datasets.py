@@ -85,7 +85,7 @@ def build_vocabulary(size: int) -> List[str]:
         size: Number of unique terms to create.
 
     Returns:
-        Lowercase alphabetic terms accepted by ``word_tokenizer``.
+        Lowercase alphabetic terms accepted by ``WordTokenizer``.
 
     Raises:
         ValueError: If ``size`` is not greater than zero.

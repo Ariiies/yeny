@@ -81,17 +81,17 @@ class Lucis(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
         Args:
             name: Identifier for the index. Used for persistence (filename/table).
             engine: Which engine to use. Supported: ``"core"`` and ``"lite"``.
-            preprocessor: Text preprocessor function ``(str) → str | list[str]``. Defaults to word_tokenizer.
+            preprocessor: Text preprocessor callable ``(str) → str | list[str]``. Defaults to WordTokenizer().
                 Can return ``list[str]`` (tokens used directly) or ``str`` (Lucis will apply
-                simple_tokenizer as a final tokenization step). The same preprocessor is used
+                SimpleTokenizer as a final tokenization step). The same preprocessor is used
                 for both indexing and searching to ensure a consistent vector space.
                 Examples::
 
                     # Custom pipeline: clean + tokenize
-                    Lucis(preprocessor=lambda t: word_tokenizer(remove_stopwords(t)))
+                    Lucis(preprocessor=lambda t: WordTokenizer()(remove_stopwords(t)))
 
                     # Char n-gram search (e.g. for emails or encrypted data)
-                    Lucis(preprocessor=char_ngram_tokenizer(3))
+                    Lucis(preprocessor=CharNgramTokenizer(3))
 
                     # Text-only preprocessing — Lucis tokenizes the returned str automatically
                     Lucis(preprocessor=lambda t: t.lower().strip())
@@ -129,8 +129,8 @@ class Lucis(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
         self._reader: Optional[Any] = None
         # If user provides a preprocessor, use it globally.
         # If None, the engine will use its own default:
-        #   CoreEngine → word_tokenizer
-        #   LiteEngine → char_ngram_tokenizer(3) + lowercase
+        #   CoreEngine → WordTokenizer()
+        #   LiteEngine → CharNgramTokenizer(3) + lowercase
         self._user_preprocessor = preprocessor
         self.preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = preprocessor
 

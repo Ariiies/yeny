@@ -34,7 +34,7 @@ class BaseEngine(ABC):
         self.id_type: str = "none"  # "sequential", "custom" o "none"
         # Configurable preprocessor — injected from Lucis or uses the engine's default.
         # Each engine subclass defines its own _default_preprocessor.
-        # Can return str (engine will tokenize with simple_tokenizer as fallback)
+        # Can return str (engine will tokenize with SimpleTokenizer as fallback)
         # or list[str] (used directly as tokens).
         self.preprocessor: Callable[[str], Union[str, List[str]]] = (
             preprocessor or self._default_preprocessor or WordTokenizer()

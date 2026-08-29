@@ -45,7 +45,7 @@ def _indexed(tmp_path, dataset, name="scenario", **overrides):
     lucis = Lucis(
         name=name,
         engine="core",
-        preprocessor=WordTokenizer,
+        preprocessor=WordTokenizer(),
         autoload=False,
         options=LucisOptions(**option_values),
     )
@@ -234,7 +234,7 @@ def test_standard_load_roundtrip_preserves_ids(
         lambda: Lucis(
             name="loadable",
             engine="core",
-            preprocessor=WordTokenizer,
+            preprocessor=WordTokenizer(),
             autoload=True,
             options=LucisOptions(
                 storage_dir=str(tmp_path / "loadable"),
@@ -278,7 +278,7 @@ def test_standard_load_detects_changed_results(
             lambda: Lucis(
                 name="tampered",
                 engine="core",
-                preprocessor=WordTokenizer,
+                preprocessor=WordTokenizer(),
                 autoload=True,
                 options=LucisOptions(
                     storage_dir=str(tmp_path / "tampered"),
@@ -311,7 +311,7 @@ def test_mmap_load_roundtrip_preserves_ids_and_closes_handle(
         instance = Lucis(
             name="mmap_fresh",
             engine="core",
-            preprocessor=WordTokenizer,
+            preprocessor=WordTokenizer(),
             autoload=False,
             options=LucisOptions(
                 storage_dir=str(tmp_path / "fresh"),

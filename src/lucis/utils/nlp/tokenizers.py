@@ -15,7 +15,7 @@ class WordTokenizer:
 """
 Class for word n-gram tokenizer.
 Example:
-    bigram = ngram_tokenizer(2)
+    bigram = NgramTokenizer(2)
     bigram("Hello world cruel")  # ["Hello world", "world cruel"]
 """
 class NgramTokenizer:
