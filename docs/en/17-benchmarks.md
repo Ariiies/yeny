@@ -226,6 +226,27 @@ python -m benchmarks report benchmarks/results/<run>.json
 
 Neither command overwrites an existing result or report.
 
+## Published Lucis 0.1.0 campaign
+
+The repository includes a complete campaign run on Fedora, Ubuntu, Windows
+11, and macOS. It covers the `tiny`, `small`, `medium`, and `large` profiles
+for Core and Lite: 16 result JSON files, all validated against schema 1.0 and
+with round-trip fidelity confirmed for all 17 queries through JSON, SQLite,
+and `mmap`.
+
+The campaign is archived with its original data, individual reports,
+editorial summaries, and presentation under
+[`docs/benchmarks`](../benchmarks/README.md). Read the
+[English summary](../benchmarks/reports/summary.en.md) and its
+caveats before quoting a number.
+
+The results were collected at Lucis 0.1.0 commit `a6ac3de8`. Each profile has
+one run per machine, while CPU, Python version, and operating system differ.
+Core and Lite can therefore be compared within one run, but values across
+machines are not an operating-system ranking. The macOS run is explicitly
+marked exploratory because it recorded `git_dirty: true` and had no
+`psutil` support.
+
 ## Aggregating several runs
 
 Combine compatible official runs without transcribing numbers:

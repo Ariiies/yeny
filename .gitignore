@@ -53,6 +53,7 @@ test_data/
 /playground2.py
 /dataset.py
 /lucis_data/
+/legacy/
 *.mp4
 *.avi
 *.mov

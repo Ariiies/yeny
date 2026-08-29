@@ -225,7 +225,9 @@ These benchmarks measure speed, resource use, and persistence fidelity—not
 search relevance or performance against other projects. See the
 [English guide](docs/en/17-benchmarks.md), the
 [guía en español](docs/es/17-benchmarks.md), or the
-[runner quick reference](benchmarks/README.md).
+[runner quick reference](benchmarks/README.md). The published cross-platform
+campaign, raw results, generated reports, and presentation are available in
+the [benchmark documentation package](docs/benchmarks/README.md).
 
 ## Testing
 

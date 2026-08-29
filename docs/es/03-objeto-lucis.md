@@ -193,7 +193,7 @@ print(resultados.results[0].score)    # 0.4512
 | `since` | `str` | `None` | Inicio del rango temporal (inclusive) |
 | `until` | `str` | `None` | Fin del rango temporal (inclusive) |
 
-**Búsqueda con filtro temporal** (solo para índices con [sharding](sharding-temporal.md)):
+**Búsqueda con filtro temporal** (solo para índices con [sharding](08-sharding-temporal.md)):
 
 ```python
 # Solo buscar en enero-marzo 2026
