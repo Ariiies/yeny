@@ -31,7 +31,7 @@ print(indice["mundo"].get(1))   # 1
 print(indice["python"].get(0))  # 0 (no existe)
 ```
 
-Also accepts raw strings (they are automatically tokenized with `word_tokenizer`):
+Also accepts raw strings (they are automatically tokenized with `WordTokenizer`):
 
 ```python
 indice = build_index([
@@ -261,9 +261,9 @@ Auto-tokenizes the corpus if it receives raw strings:
 
 ```python
 from lucis.utils.decorators import corpus_input
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
-@corpus_input(word_tokenizer)
+@corpus_input(WordTokenizer())
 def mi_funcion(corpus):
     """corpus será List[List[str]] — ya tokenizado."""
     for doc_tokens in corpus:
@@ -280,9 +280,9 @@ Auto-tokenize an individual document or query:
 
 ```python
 from lucis.utils.decorators import doc_input
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
-@doc_input(word_tokenizer)
+@doc_input(WordTokenizer())
 def procesar(tokens):
     """tokens será List[str] — ya tokenizado."""
     return tokens

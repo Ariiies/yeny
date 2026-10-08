@@ -387,7 +387,7 @@ from lucis.core.worker import IndexWorker
 
 ### `CoreEngine`
 
-TF-IDF engine with cosine similarity. Default tokenizer: `word_tokenizer`.
+TF-IDF engine with cosine similarity. Default tokenizer: `WordTokenizer`.
 
 ```python
 from lucis.engines.core import CoreEngine
@@ -395,7 +395,7 @@ from lucis.engines.core import CoreEngine
 
 ### `LiteEngine`
 
-Standardized TF engine. Default tokenizer: `char_ngram_tokenizer(3)`.
+Standardized TF engine. Default tokenizer: `CharNgramTokenizer(3)`.
 
 ```python
 from lucis.engines.lite import LiteEngine
@@ -418,20 +418,23 @@ Both engines exhibit:
 
 ```python
 from lucis.utils.nlp import (
-    simple_tokenizer,       # split por espacios
-    word_tokenizer,         # regex \w+, lowercase
-    ngram_tokenizer,        # n-gramas de palabras
-    char_ngram_tokenizer,   # n-gramas de caracteres
-    clean_whitespace,       # normalizar espacios
-    clean_html,             # eliminar tags HTML
-    clean_urls,             # eliminar URLs
-    clean_emails,           # eliminar emails
-    clean_numbers,          # eliminar números
-    clean_special_chars,    # eliminar caracteres especiales
-    clean_accents,          # eliminar acentos
-    clean_repeated_chars,   # eliminar chars repetidos
-    lowercase,              # convertir a minúsculas
-    truncate,               # truncar a N caracteres
+    # Tokenizer classes (callable)
+    SimpleTokenizer,        # split by spaces
+    WordTokenizer,          # regex words, lowercase
+    NgramTokenizer,         # word n-grams: NgramTokenizer(n)
+    CharNgramTokenizer,     # character n-grams: CharNgramTokenizer(n)
+    # Text cleaners
+    lowercase,              # convert to lowercase
+    uppercase,              # convert to uppercase
+    strip_whitespace,       # trim and normalize spaces
+    remove_extra_spaces,    # collapse repeated whitespace
+    remove_punctuation,     # remove punctuation marks
+    remove_numbers,         # remove digits
+    remove_urls,            # remove URLs
+    remove_emails,          # remove email addresses
+    remove_html_tags,       # remove HTML tags
+    normalize_unicode,      # strip diacritics
+    remove_accents,         # alias of normalize_unicode
 )
 ```
 

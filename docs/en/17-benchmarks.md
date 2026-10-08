@@ -78,7 +78,7 @@ term frequency. Their ranking behavior is different, but both are pure-Python
 engines exposed by the same `Lucis` facade.
 
 For timing fairness, the benchmark gives both engines the exact same corpus,
-query set, `top_k=10`, and `word_tokenizer`. This is important because
+query set, `top_k=10`, and `WordTokenizer`. This is important because
 `LiteEngine` normally uses character trigrams by default. Comparing each
 engine with a different tokenizer would mix engine cost with tokenization and
 index-size differences.

@@ -79,7 +79,7 @@ término normalizada. Su comportamiento de ranking es distinto, pero ambos son
 motores Python puro expuestos por la misma fachada `Lucis`.
 
 Para comparar tiempos justamente, el benchmark entrega a ambos el mismo
-corpus, consultas, `top_k=10` y `word_tokenizer`. Esto es importante porque
+corpus, consultas, `top_k=10` y `WordTokenizer`. Esto es importante porque
 `LiteEngine` utiliza trigramas de caracteres de forma predeterminada. Usar un
 tokenizer diferente por motor mezclaría el costo del motor con diferencias de
 tokenización y tamaño del índice.

@@ -159,7 +159,7 @@ Puedes usar las funciones de Lucis sin la clase principal:
 from lucis.utils.index import build_index, get_doc_len
 from lucis.utils.index import compute_tfidf
 from lucis.utils.math.core import sparse_cosine_similarity
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
 # Corpus
 corpus = [
@@ -169,7 +169,7 @@ corpus = [
 ]
 
 # Tokenizar y construir índice
-tokenized = [word_tokenizer(doc) for doc in corpus]
+tokenized = [WordTokenizer()(doc) for doc in corpus]
 index = build_index(tokenized)
 doc_lengths = get_doc_len(index, len(corpus))
 
@@ -181,7 +181,7 @@ for token in tokenized[0]:
         vector_doc0[token] = score
 
 # Calcular vector de query
-query_tokens = word_tokenizer("python programación")
+query_tokens = WordTokenizer()("python programación")
 query_vector = {}
 for token in query_tokens:
     score = compute_tfidf(token, 0, index, doc_lengths, len(corpus))
@@ -268,22 +268,22 @@ monitor.print_summary()
 ```python
 from lucis import Lucis
 from lucis.utils.nlp import (
-    word_tokenizer,
-    clean_whitespace,
-    clean_html,
-    clean_urls,
-    clean_emails,
+    WordTokenizer,
+    remove_html_tags,
+    remove_urls,
+    remove_emails,
+    strip_whitespace,
     lowercase,
 )
 
 def mi_preprocesador(text):
     """Pipeline personalizado: limpia HTML, URLs, emails, luego tokeniza."""
-    text = clean_html(text)
-    text = clean_urls(text)
-    text = clean_emails(text)
-    text = clean_whitespace(text)
+    text = remove_html_tags(text)
+    text = remove_urls(text)
+    text = remove_emails(text)
+    text = strip_whitespace(text)
     text = lowercase(text)
-    return word_tokenizer(text)
+    return WordTokenizer()(text)
 
 luc = Lucis(
     name="web_scraping",

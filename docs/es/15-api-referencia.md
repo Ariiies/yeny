@@ -387,7 +387,7 @@ from lucis.core.worker import IndexWorker
 
 ### `CoreEngine`
 
-Motor TF-IDF con similitud coseno. Tokenizador default: `word_tokenizer`.
+Motor TF-IDF con similitud coseno. Tokenizador default: `WordTokenizer`.
 
 ```python
 from lucis.engines.core import CoreEngine
@@ -395,7 +395,7 @@ from lucis.engines.core import CoreEngine
 
 ### `LiteEngine`
 
-Motor TF normalizado. Tokenizador default: `char_ngram_tokenizer(3)`.
+Motor TF normalizado. Tokenizador default: `CharNgramTokenizer(3)`.
 
 ```python
 from lucis.engines.lite import LiteEngine
@@ -418,20 +418,23 @@ Ambos motores exponen:
 
 ```python
 from lucis.utils.nlp import (
-    simple_tokenizer,       # split por espacios
-    word_tokenizer,         # regex \w+, lowercase
-    ngram_tokenizer,        # n-gramas de palabras
-    char_ngram_tokenizer,   # n-gramas de caracteres
-    clean_whitespace,       # normalizar espacios
-    clean_html,             # eliminar tags HTML
-    clean_urls,             # eliminar URLs
-    clean_emails,           # eliminar emails
-    clean_numbers,          # eliminar números
-    clean_special_chars,    # eliminar caracteres especiales
-    clean_accents,          # eliminar acentos
-    clean_repeated_chars,   # eliminar chars repetidos
+    # Clases tokenizadoras (invocables)
+    SimpleTokenizer,        # split por espacios
+    WordTokenizer,          # regex de palabras, lowercase
+    NgramTokenizer,         # n-gramas de palabras: NgramTokenizer(n)
+    CharNgramTokenizer,     # n-gramas de caracteres: CharNgramTokenizer(n)
+    # Limpiadores de texto
     lowercase,              # convertir a minúsculas
-    truncate,               # truncar a N caracteres
+    uppercase,              # convertir a mayúsculas
+    strip_whitespace,       # recortar y normalizar espacios
+    remove_extra_spaces,    # colapsar espacios repetidos
+    remove_punctuation,     # eliminar signos de puntuación
+    remove_numbers,         # eliminar dígitos
+    remove_urls,            # eliminar URLs
+    remove_emails,          # eliminar emails
+    remove_html_tags,       # eliminar tags HTML
+    normalize_unicode,      # eliminar diacríticos
+    remove_accents,         # alias de normalize_unicode
 )
 ```
 

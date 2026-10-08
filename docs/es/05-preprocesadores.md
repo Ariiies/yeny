@@ -23,7 +23,7 @@ buscador = Lucis.from_dict(datos, name="custom", preprocessor=mi_preprocesador)
 Un preprocesador es cualquier callable con firma `(str) → str | list[str]`:
 
 - Si retorna **`list[str]`**: Los tokens se usan directamente.
-- Si retorna **`str`**: Lucis aplica `simple_tokenizer` (split por espacios) como paso final.
+- Si retorna **`str`**: Lucis aplica `SimpleTokenizer` (split por espacios) como paso final.
 
 ```python
 # Opción 1: retornar tokens directamente
@@ -39,56 +39,56 @@ def prep_texto(texto):
 
 ## Tokenizadores incluidos
 
-Lucis incluye cuatro tokenizadores en `lucis.utils.nlp`:
+Lucis incluye cuatro clases tokenizadoras en `lucis.utils.nlp`:
 
-### `simple_tokenizer(text)`
+### `SimpleTokenizer()`
 
 Divide por espacios. El más básico.
 
 ```python
-from lucis.utils.nlp import simple_tokenizer
+from lucis.utils.nlp import SimpleTokenizer
 
-simple_tokenizer("Hola mundo cruel")
+SimpleTokenizer()("Hola mundo cruel")
 # → ["Hola", "mundo", "cruel"]
 ```
 
-### `word_tokenizer(text)`
+### `WordTokenizer()`
 
 Extrae solo palabras (regex), ignora números, convierte a minúsculas. Soporta caracteres españoles (áéíóúüñ).
 
 ```python
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
-word_tokenizer("Python 3.11 es increíble para IA!")
-# → ["python", "es", "increíble", "para"]
+WordTokenizer()("Python 3.11 es increíble para IA!")
+# → ["python", "es", "increíble", "para", "ia"]
 ```
 
 Este es el tokenizador por defecto de `CoreEngine`.
 
-### `ngram_tokenizer(n)`
+### `NgramTokenizer(n)`
 
-Factory que crea un tokenizador de n-gramas de **palabras**:
+Clase invocable que crea un tokenizador de n-gramas de **palabras**:
 
 ```python
-from lucis.utils.nlp import ngram_tokenizer
+from lucis.utils.nlp import NgramTokenizer
 
-bigram = ngram_tokenizer(2)
+bigram = NgramTokenizer(2)
 bigram("hola mundo cruel")
 # → ["hola mundo", "mundo cruel"]
 
-trigram = ngram_tokenizer(3)
+trigram = NgramTokenizer(3)
 trigram("uno dos tres cuatro")
 # → ["uno dos tres", "dos tres cuatro"]
 ```
 
-### `char_ngram_tokenizer(n)`
+### `CharNgramTokenizer(n)`
 
-Factory que crea un tokenizador de n-gramas de **caracteres**. Ideal para búsqueda fuzzy y tolerancia a errores tipográficos:
+Clase invocable que crea un tokenizador de n-gramas de **caracteres**. Ideal para búsqueda fuzzy y tolerancia a errores tipográficos:
 
 ```python
-from lucis.utils.nlp import char_ngram_tokenizer
+from lucis.utils.nlp import CharNgramTokenizer
 
-trigram = char_ngram_tokenizer(3)
+trigram = CharNgramTokenizer(3)
 trigram("python")
 # → ["pyt", "yth", "tho", "hon"]
 
@@ -97,7 +97,7 @@ trigram("pythn")  # con typo
 # Aún comparte "pyt" y "yth" con "python" → match parcial
 ```
 
-Los espacios se reemplazan con `_` y el texto se convierte a minúsculas.
+El texto se convierte a minúsculas carácter a carácter (los espacios se conservan).
 
 Este es el tokenizador por defecto de `LiteEngine`.
 
@@ -207,7 +207,7 @@ Encadena funciones para crear tu pipeline:
 ```python
 from lucis import Lucis
 from lucis.utils.nlp import (
-    word_tokenizer,
+    WordTokenizer,
     remove_accents,
     remove_punctuation,
     remove_html_tags,
@@ -218,7 +218,7 @@ def preprocesador_blog(texto):
     texto = remove_html_tags(texto)
     texto = remove_accents(texto)
     texto = remove_punctuation(texto)
-    return word_tokenizer(texto)
+    return WordTokenizer()(texto)
 
 buscador = Lucis.from_dict(articulos, name="blog", preprocessor=preprocesador_blog)
 ```
@@ -227,7 +227,7 @@ buscador = Lucis.from_dict(articulos, name="blog", preprocessor=preprocesador_bl
 
 ```python
 from lucis.utils.nlp import (
-    word_tokenizer,
+    WordTokenizer,
     remove_accents,
     remove_punctuation,
     remove_urls,
@@ -245,18 +245,18 @@ def preprocesador_emails(texto):
     texto = remove_accents(texto)
     texto = remove_punctuation(texto)
     texto = strip_whitespace(texto)
-    return word_tokenizer(texto)
+    return WordTokenizer()(texto)
 
 buscador = Lucis.from_dict(emails, name="email_search", preprocessor=preprocesador_emails)
 ```
 
 ### Preprocesador que retorna string
 
-Si tu preprocesador retorna `str` en lugar de `list[str]`, Lucis aplica `simple_tokenizer` automáticamente:
+Si tu preprocesador retorna `str` en lugar de `list[str]`, Lucis aplica `SimpleTokenizer` automáticamente:
 
 ```python
 def solo_limpiar(texto):
-    """Solo limpia, no tokeniza. Lucis tokenizará con simple_tokenizer."""
+    """Solo limpia, no tokeniza. Lucis tokenizará con SimpleTokenizer."""
     return texto.lower().strip()
 
 buscador = Lucis.from_dict(datos, name="limpio", preprocessor=solo_limpiar)

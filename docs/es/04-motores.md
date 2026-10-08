@@ -21,12 +21,12 @@ buscador = Lucis.from_dict(datos, name="preciso", engine="core")
 
 ### Tokenizer por defecto
 
-`word_tokenizer` — Extrae solo palabras (ignora números, convierte a minúsculas).
+`WordTokenizer` — Extrae solo palabras (ignora números, convierte a minúsculas).
 
 ```python
-from lucis.utils.nlp import word_tokenizer
+from lucis.utils.nlp import WordTokenizer
 
-word_tokenizer("Python 3.11 es increíble!")
+WordTokenizer()("Python 3.11 es increíble!")
 # → ["python", "es", "increíble"]
 ```
 
@@ -85,12 +85,12 @@ No hay vectores, no hay IDF. Solo cuenta cuántas veces aparecen los términos d
 
 ### Tokenizer por defecto
 
-`char_ngram_tokenizer(3)` con lowercase — Genera trigramas de caracteres, ideal para búsqueda fuzzy.
+`CharNgramTokenizer(3)` con lowercase — Genera trigramas de caracteres, ideal para búsqueda fuzzy.
 
 ```python
-from lucis.utils.nlp import char_ngram_tokenizer
+from lucis.utils.nlp import CharNgramTokenizer
 
-tokenizer = char_ngram_tokenizer(3)
+tokenizer = CharNgramTokenizer(3)
 tokenizer("python")
 # → ["pyt", "yth", "tho", "hon"]
 ```
@@ -126,7 +126,7 @@ Esto significa que LiteEngine funciona bien con errores tipográficos y coincide
 | **Uso de RAM** | Moderado | Bajo |
 | **Velocidad** | Rápida | Muy rápida |
 | **Dependencias** | Ninguna | Ninguna |
-| **Tokenizer default** | `word_tokenizer` | `char_ngram(3)` |
+| **Tokenizador default** | `WordTokenizer` | `CharNgramTokenizer(3)` |
 | **`add_documents()`** | No | Sí |
 | **`remove_documents()`** | No | Sí |
 | **Mejor para** | Precisión | Volumen + Fuzzy |

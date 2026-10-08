@@ -105,7 +105,7 @@ Lucis incluye dos motores de búsqueda con diferentes perfiles:
 | **RAM** | Moderada | Baja |
 | **Velocidad** | Rápida | Muy rápida |
 | **Dependencias** | Ninguna | Ninguna |
-| **Tokenizer default** | `word_tokenizer` | `char_ngram(3)` |
+| **Tokenizador default** | `WordTokenizer` | `CharNgramTokenizer(3)` |
 | **Mejor para** | Búsqueda precisa | Alto volumen, búsqueda fuzzy |
 | **Indexación incremental** | No | Sí |
 
@@ -127,13 +127,13 @@ Lucis permite inyectar tu propio preprocesador de texto. Esto te da control tota
 
 ```python
 from lucis import Lucis
-from lucis.utils.nlp import word_tokenizer, remove_punctuation, remove_accents
+from lucis.utils.nlp import WordTokenizer, remove_punctuation, remove_accents
 
 # Pipeline personalizado
 def mi_preprocesador(texto):
     texto = remove_accents(texto)
     texto = remove_punctuation(texto)
-    return word_tokenizer(texto)
+    return WordTokenizer()(texto)
 
 buscador = Lucis.from_dict(datos, name="custom", preprocessor=mi_preprocesador)
 ```
