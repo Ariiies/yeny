@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Ariiies/lucis/benchmarks/result.schema.json",
+  "$id": "https://github.com/Ariiies/yeny/benchmarks/result.schema.json",
   "title": "Yeny benchmark result",
   "description": "Documentation schema for the benchmark result contract. Runtime validation is performed by benchmarks.results.validate_result without external dependencies; this file mirrors that contract for readers and tooling.",
   "type": "object",

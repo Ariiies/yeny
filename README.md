@@ -71,7 +71,7 @@ pip install yeny[postgresql]
 Alternatively, install from source:
 
 ```bash
-git clone https://github.com/Ariiies/lucis.git
+git clone https://github.com/Ariiies/yeny.git
 cd yeny
 pip install .
 ```

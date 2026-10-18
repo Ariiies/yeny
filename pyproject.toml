@@ -38,8 +38,8 @@ examples = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Ariiies/lucis"
-Repository = "https://github.com/Ariiies/lucis"
+Homepage = "https://github.com/Ariiies/yeny"
+Repository = "https://github.com/Ariiies/yeny"
 
 [tool.setuptools.packages.find]
 where = ["src"]
