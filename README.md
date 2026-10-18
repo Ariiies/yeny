@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/yeny_lockup.svg" height="120" align="middle" alt="Yeny Logo">
+  <img src="assets/yeny_lockup3.png" height="120" align="middle" alt="Yeny Logo">
 </p>
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github)](https://github.com/sponsors/Ariiies)
