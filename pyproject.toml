@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "yeny"
 version = "0.1.0"
-description = "A minimalist NLP toolkit and search engine generator for Python."
+description = "A lightweight toolkit for building custom search systems in Python."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -13,6 +13,34 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = []
+keywords = [
+    "search",
+    "search-engine",
+    "full-text-search",
+    "fts",
+    "nlp",
+    "tf-idf",
+    "tokenizer",
+    "indexing",
+    "mmap",
+    "sqlite",
+    "inverted-index",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Indexing",
+    "Topic :: Database :: Database Engines/Servers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 
 [project.optional-dependencies]
 alchemy = ["sqlalchemy"]
@@ -36,10 +64,22 @@ examples = [
     "python-dotenv>=1.0",
     "psutil>=5.9",
 ]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "psutil>=5.9",
+]
 
 [project.urls]
 Homepage = "https://github.com/Ariiies/yeny"
 Repository = "https://github.com/Ariiies/yeny"
+Documentation = "https://github.com/Ariiies/yeny/blob/main/docs/en/01-index.md"
+Issues = "https://github.com/Ariiies/yeny/issues"
+Funding = "https://github.com/sponsors/Ariiies"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -49,6 +89,7 @@ yeny = ["data/*.json", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
