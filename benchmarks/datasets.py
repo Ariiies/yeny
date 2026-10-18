@@ -1,4 +1,4 @@
-"""Deterministic synthetic corpora used by the Lucis benchmarks.
+"""Deterministic synthetic corpora used by the Yeny benchmarks.
 
 Corpora are generated entirely in memory from validated profiles. The module
 does not use network access, global random state, or persisted input files.

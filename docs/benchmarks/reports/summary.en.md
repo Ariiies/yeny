@@ -1,4 +1,4 @@
-# Lucis 0.1.0 benchmark results
+# Yeny 0.1.0 benchmark results
 
 Status: complete campaign, 16/16 results validated  
 Measured commit: `a6ac3de8cf7ca5fdc1e1a07ec539e67660fea61f`  
@@ -7,7 +7,7 @@ Configuration: 3 warm-ups, 10 repetitions, Core and Lite
 
 ## Executive summary
 
-Lucis completed the planned matrix on Fedora, Ubuntu, Windows 11, and macOS.
+Yeny completed the planned matrix on Fedora, Ubuntu, Windows 11, and macOS.
 All 16 files satisfy schema 1.0, and every engine/backend combination
 preserved the 17 expected results, their order, and their scores: 1,632
 successful backend-query checks in total.
@@ -18,7 +18,7 @@ median by 35.1% to 50.3%. This is a speed comparison under the shared
 `word_tokenizer`; it is not a relevance measurement or a comparison of both
 engines' native defaults.
 
-The `.lcs` format remained near 20 MiB on every platform and was about 66–68%
+The `.yny` format remained near 20 MiB on every platform and was about 66–68%
 smaller than JSON. Loading through `mmap` was 36 to 453 times faster than JSON
 loading in these runs. That ratio describes loading only, does not guarantee
 that every mapped search is faster, and the operating-system page cache was
@@ -39,7 +39,7 @@ ranking.
 
 ## Large profile: 100,000 documents
 
-| Platform | Engine | Build | Warm common median / p95 | JSON load | `mmap` load | `.lcs` |
+| Platform | Engine | Build | Warm common median / p95 | JSON load | `mmap` load | `.yny` |
 |---|---|---:|---:|---:|---:|---:|
 | Fedora | Core | 4.15 s | 127.09 / 149.50 ms | 1.20 s | 13.48 ms | 20.78 MiB |
 | Fedora | Lite | 1.50 s | 72.32 / 87.81 ms | 1.11 s | 2.44 ms | 20.01 MiB |
@@ -58,7 +58,7 @@ ranking.
    system families.
 2. Lite has the lower time cost under this controlled lexical setup; Core
    retains its TF-IDF/cosine model and should not be judged on speed alone.
-3. `.lcs` + `mmap` is the preferred path when startup time and artifact size
+3. `.yny` + `mmap` is the preferred path when startup time and artifact size
    matter, while mapped search can have different runtime costs.
 4. Persistence fidelity holds throughout the measured matrix.
 
@@ -71,7 +71,7 @@ ranking.
 - The corpus is synthetic and does not measure quality, recall, or concurrency.
 - macOS used a dirty tree and had no `psutil`; its timings are exploratory and
   it is not an official memory control.
-- Cite the measured commit `a6ac3de8` and Lucis 0.1.0 with these results.
+- Cite the measured commit `a6ac3de8` and Yeny 0.1.0 with these results.
 
 ## Evidence
 

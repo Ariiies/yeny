@@ -1,6 +1,6 @@
-# Lucis 0.1.0 benchmark documentation
+# Yeny 0.1.0 benchmark documentation
 
-This package is the publication record for the Lucis 0.1.0 cross-platform
+This package is the publication record for the Yeny 0.1.0 cross-platform
 benchmark campaign. It keeps raw evidence separate from generated reports and
 editorial material.
 
@@ -44,12 +44,12 @@ so it is archived as `raw/windows/large.json`.
 
 - 4 operating systems and 4 profiles: 16 runs.
 - Both public engines (`core`, `lite`) in every run.
-- JSON, SQLite, and `.lcs`/`mmap` persistence paths in every run.
+- JSON, SQLite, and `.yny`/`mmap` persistence paths in every run.
 - 16/16 JSON files pass `python -m benchmarks validate`.
 - Publication copies contain no local user paths.
 - 17/17 round-trip queries pass for each engine and backend.
 - Dataset and query hashes match across operating systems for each profile.
-- All runs target Lucis 0.1.0 commit `a6ac3de8`.
+- All runs target Yeny 0.1.0 commit `a6ac3de8`.
 
 The macOS records are valid but exploratory: their environment reports a
 dirty Git tree and no `psutil`. Memory values unavailable on that host remain
@@ -67,8 +67,8 @@ Regenerate an individual report in a temporary directory, because the report
 command deliberately refuses to overwrite an existing file:
 
 ```bash
-cp docs/benchmarks/raw/fedora/large.json /tmp/lucis-fedora-large.json
-python -m benchmarks report /tmp/lucis-fedora-large.json
+cp docs/benchmarks/raw/fedora/large.json /tmp/yeny-fedora-large.json
+python -m benchmarks report /tmp/yeny-fedora-large.json
 ```
 
 ## Publication checklist

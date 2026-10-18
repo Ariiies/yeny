@@ -1,7 +1,7 @@
 """Plain-text reporting for interactive benchmark runs.
 
 The formatter intentionally uses only the Python standard library so the
-benchmark command remains available after a normal Lucis development install.
+benchmark command remains available after a normal Yeny development install.
 """
 
 from __future__ import annotations
@@ -136,8 +136,8 @@ _MEASUREMENT_GROUPS: Sequence[Tuple[str, Sequence[str]]] = (
             "json_artifact_size",
             "sqlite_save",
             "sqlite_artifact_size",
-            "lcs_write",
-            "lcs_artifact_size",
+            "yny_write",
+            "yny_artifact_size",
         ),
     ),
     (
@@ -303,7 +303,7 @@ def _limitations_section(
         }
     )
     fixed = [
-        "Search latencies use the public `Lucis.search` boundary and "
+        "Search latencies use the public `Yeny.search` boundary and "
         "include query preprocessing and response wrapping.",
         "Every backend load (JSON, SQLite, mmap) starts in its own fresh "
         "interpreter, so Python state is process-cold; the OS page cache "
@@ -330,7 +330,7 @@ def _environment_rows(environment: Dict[str, Any]) -> List[Tuple[str, Any]]:
             "python_implementation",
             "platform",
             "machine",
-            "lucis_version",
+            "yeny_version",
         )
     ]
     cpu_model = environment.get("cpu_model")
@@ -364,7 +364,7 @@ def render_markdown_report(result: Dict[str, Any]) -> str:
 
     Args:
         result: Valid result dictionary, typically loaded from a
-            ``lucis-benchmark-*.json`` file.
+            ``yeny-benchmark-*.json`` file.
 
     Returns:
         Markdown text with run identity, environment, dataset hashes,
@@ -376,7 +376,7 @@ def render_markdown_report(result: Dict[str, Any]) -> str:
     configuration = result.get("configuration", {})
 
     lines: List[str] = [
-        "# Lucis benchmark report",
+        "# Yeny benchmark report",
         "",
         "> These results describe one machine and one execution "
         "environment. They",

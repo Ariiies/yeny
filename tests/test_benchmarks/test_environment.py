@@ -25,7 +25,7 @@ def test_environment_reports_required_keys():
         "python_version",
         "python_implementation",
         "python_executable",
-        "lucis_version",
+        "yeny_version",
         "platform",
         "system",
         "release",

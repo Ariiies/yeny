@@ -8,9 +8,9 @@ The `IndexWorker` is a daemon thread that monitors your data source and rebuilds
 
 ```python
 import sqlite3
-from lucis import Lucis, IndexWorker
+from yeny import Yeny, IndexWorker
 
-luc = Lucis.from_sqlite_table(
+yn = Yeny.from_sqlite_table(
     db_path="app.db",
     table_name="articulos",
     text_column="contenido",
@@ -26,7 +26,7 @@ def obtener_datos():
         )}
 
 worker = IndexWorker(
-    lucis=luc,
+    yeny=yn,
     data_fn=obtener_datos,
     interval=60,          # cada 60 segundos
     auto_purge=True,      # limpieza de versiones antiguas
@@ -45,11 +45,11 @@ worker.stop()  # apagado limpio
 
 ### Full rebuild (default)
 
-Call `data_fn()` to get the entire corpus and do `lucis.reindex(data)`:
+Call `data_fn()` to get the entire corpus and do `yeny.reindex(data)`:
 
 ```python
 worker = IndexWorker(
-    lucis=luc,
+    yeny=yn,
     data_fn=obtener_datos,
     interval=120,
 )
@@ -68,7 +68,7 @@ def obtener_nuevos():
     return {"doc_nuevo_1": "texto...", "doc_nuevo_2": "texto..."}
 
 worker = IndexWorker(
-    lucis=luc,
+    yeny=yn,
     data_fn=obtener_datos,        # fallback para rebuild completo
     delta_fn=obtener_nuevos,      # documentos incrementales
     incremental=True,
@@ -89,7 +89,7 @@ def stream_filas():
     )
 
 worker = IndexWorker(
-    lucis=luc,
+    yeny=yn,
     data_fn=obtener_datos,
     streaming_fn=stream_filas,    # ← preferido sobre data_fn cuando existe
     interval=300,
@@ -115,7 +115,7 @@ def hay_cambios():
     return cambio
 
 worker = IndexWorker(
-    lucis=luc,
+    yeny=yn,
     data_fn=obtener_datos,
     change_detector=hay_cambios,    # ← solo rebuild cuando retorna True
     interval=30,
@@ -130,7 +130,7 @@ If `change_detector` returns `False`, the loop is skipped without rebuilding.
 
 ```python
 worker = IndexWorker(
-    lucis=luc,
+    yeny=yn,
     data_fn=obtener_datos,
     interval=60,
     on_rebuild=lambda name: print(f"Rebuild exitoso: {name}"),
@@ -155,7 +155,7 @@ Old versions are removed automatically:
 
 ```python
 worker = IndexWorker(
-    lucis=luc,
+    yeny=yn,
     data_fn=obtener_datos,
     auto_purge=True,      # activado por defecto
     keep_versions=3,      # mantener las 3 más recientes
@@ -202,11 +202,11 @@ print(worker.last_rebuild_time)   # 2.34 (segundos)
 
 ---
 
-## Quick access from Lucis
+## Quick access from Yeny
 
 ```python
-# Crear worker directamente desde la instancia Lucis
-worker = luc.create_worker(
+# Crear worker directamente desde la instancia Yeny
+worker = yn.create_worker(
     data_fn=obtener_datos,
     interval=60,
     auto_purge=True,

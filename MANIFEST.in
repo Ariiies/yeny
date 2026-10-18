@@ -3,7 +3,7 @@ include LICENSE
 include pyproject.toml
 
 # Include all JSON files in the data directory (stopwords, etc.)
-recursive-include src/lucis/data *.json
+recursive-include src/yeny/data *.json
 
 # Exclude test data and playground files
 exclude playground.py playground2.py dataset.py

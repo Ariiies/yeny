@@ -182,7 +182,7 @@ class TreeRssSampler:
         """Start the background sampling thread."""
         self._thread = threading.Thread(
             target=self._run,
-            name="lucis-rss-sampler",
+            name="yeny-rss-sampler",
             daemon=True,
         )
         self._thread.start()

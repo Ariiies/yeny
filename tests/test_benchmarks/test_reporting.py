@@ -79,7 +79,7 @@ def _sample_result():
             "total_ram_bytes": 16 * 1024**3,
             "psutil_version": "7.2.2",
             "memory_mechanisms": ["psutil", "resource", "proc"],
-            "lucis_version": "0.1.0",
+            "yeny_version": "0.1.0",
             "git_commit": "285320e",
             "git_dirty": False,
         },
@@ -179,7 +179,7 @@ def _sample_result():
 def test_markdown_report_contains_identity_context_and_warning():
     markdown = render_markdown_report(_sample_result())
 
-    assert "# Lucis benchmark report" in markdown
+    assert "# Yeny benchmark report" in markdown
     assert "20260729T120000Z-abc123" in markdown
     assert "not search-quality measurements" in markdown
     assert "deadbeef" in markdown

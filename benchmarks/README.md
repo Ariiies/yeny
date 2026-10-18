@@ -1,6 +1,6 @@
-# Lucis benchmarks
+# Yeny benchmarks
 
-Small, deterministic benchmarks for the two public Lucis engines.
+Small, deterministic benchmarks for the two public Yeny engines.
 
 For concepts and result interpretation, read the
 [English guide](../docs/en/17-benchmarks.md) or the
@@ -50,7 +50,7 @@ investigated, never silenced by editing the reference.
 - First search after building.
 - Warm searches grouped as common, rare, multi-token, no-result, and repeated.
 - JSON and SQLite save durations plus on-disk artifact sizes.
-- `.lcs` binary serialization duration and file size.
+- `.yny` binary serialization duration and file size.
 - Standard loads (JSON and SQLite), each in its own fresh interpreter, with
   first and warm searches.
 - Mmap loads in their own fresh interpreter, with first and warm searches
@@ -106,7 +106,7 @@ with null summaries — never as zero. Use `--require-memory` to abort with
 exit code 3 when no RSS mechanism exists on the host.
 
 Each result also records machine metadata: Python version/implementation/
-executable, Lucis version, OS fields, CPU model, logical CPUs, total RAM in
+executable, Yeny version, OS fields, CPU model, logical CPUs, total RAM in
 bytes, `psutil` version, usable memory mechanisms, `perf_counter` resolution,
 Git commit/dirty state, UTC timestamps, the full configuration, and the
 dataset/query hashes. Absent capabilities are stored as `null`.
@@ -131,7 +131,7 @@ overwrite an existing report.
 Use a different output directory when needed:
 
 ```bash
-python -m benchmarks run --profile tiny --output /tmp/lucis-results
+python -m benchmarks run --profile tiny --output /tmp/yeny-results
 ```
 
 The runner refuses to write benchmark results inside `src/`.
@@ -146,7 +146,7 @@ python -m benchmarks aggregate benchmarks/results/*.json --output summary.md
 
 This writes `summary.md` and a traceable `summary.aggregate.json`; neither is
 overwritten. The aggregator deeply validates every input and rejects mixes
-that differ in schema version, Lucis version, commit, Python minor version,
+that differ in schema version, Yeny version, commit, Python minor version,
 profile, dataset or query hash, engines, warm-ups, repetitions, or memory
 requirement. Different operating systems or machines stay in separate groups.
 Each metric publishes the median of per-run medians, the min/max of those

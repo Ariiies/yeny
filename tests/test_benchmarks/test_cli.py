@@ -89,7 +89,7 @@ def test_cli_require_memory_without_mechanism_returns_three(
 
 def _saved_result(tmp_path):
     payload = build_valid_result()
-    path = tmp_path / f"lucis-benchmark-{payload['run_id']}.json"
+    path = tmp_path / f"yeny-benchmark-{payload['run_id']}.json"
     path.write_text(
         json.dumps(payload),
         encoding="utf-8",
@@ -141,7 +141,7 @@ def test_cli_report_writes_markdown_without_overwriting(capsys, tmp_path):
     report = path.with_suffix(".md")
     assert report.exists()
     content = report.read_text(encoding="utf-8")
-    assert "# Lucis benchmark report" in content
+    assert "# Yeny benchmark report" in content
     assert "20260729T120000Z-abc123" in content
     assert "Markdown report" in captured.out
 
@@ -169,7 +169,7 @@ def test_cli_report_rejects_invalid_result(capsys, tmp_path):
 def _saved_run(tmp_path, run_id):
     payload = build_valid_result()
     payload["run_id"] = run_id
-    path = tmp_path / f"lucis-benchmark-{run_id}.json"
+    path = tmp_path / f"yeny-benchmark-{run_id}.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
@@ -190,7 +190,7 @@ def test_cli_aggregate_writes_markdown_and_json(capsys, tmp_path):
     aggregate_json = tmp_path / "summary.aggregate.json"
     assert aggregate_json.exists()
     markdown = output.read_text(encoding="utf-8")
-    assert "# Lucis benchmark aggregate" in markdown
+    assert "# Yeny benchmark aggregate" in markdown
     assert "run-a" in markdown
     assert "run-b" in markdown
     assert "Markdown summary" in captured.out
@@ -202,7 +202,7 @@ def test_cli_aggregate_rejects_incompatible_runs(capsys, tmp_path):
     second_payload = build_valid_result()
     second_payload["run_id"] = "run-b"
     second_payload["configuration"]["repetitions"] = 99
-    second = tmp_path / "lucis-benchmark-run-b.json"
+    second = tmp_path / "yeny-benchmark-run-b.json"
     second.write_text(json.dumps(second_payload), encoding="utf-8")
 
     exit_code = main(

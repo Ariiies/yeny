@@ -25,7 +25,7 @@ class QuerySpec:
     Attributes:
         query_id: Stable identifier within the query set.
         category: Query category such as ``common`` or ``rare``.
-        text: Raw text passed to the public Lucis API.
+        text: Raw text passed to the public Yeny API.
         tokens: Controlled tokens represented by ``text``.
         expected_documents: Documents containing at least one query token.
         repetitions: Preferred repetitions for special repeated-query cases.

@@ -1,7 +1,7 @@
 
 import array
 import pytest
-from lucis.utils.compact import (
+from yeny.utils.compact import (
     CompactPostings,
     CompactDocLengths,
     freeze_index,

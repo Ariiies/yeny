@@ -2,17 +2,17 @@
 marp: true
 theme: default
 paginate: true
-title: Lucis 0.1.0 — Benchmarks multiplataforma
+title: Yeny 0.1.0 — Benchmarks multiplataforma
 description: Resultados reproducibles en Fedora, Ubuntu, Windows y macOS
 ---
 
 <!-- _class: lead -->
 
-# Lucis 0.1.0
+# Yeny 0.1.0
 
 ## Benchmarks multiplataforma
 
-Core · Lite · JSON · SQLite · `.lcs`/`mmap`
+Core · Lite · JSON · SQLite · `.yny`/`mmap`
 
 16 ejecuciones validadas · 4 sistemas · hasta 100,000 documentos
 
@@ -39,13 +39,13 @@ No medimos relevancia, recall, concurrencia ni productos externos.
 | Windows 11 | ✓ | ✓ | ✓ | ✓ |
 | macOS | ✓ | ✓ | ✓ | ✓ |
 
-Cada ejecución incluye Core, Lite, JSON, SQLite y `.lcs`/`mmap`.
+Cada ejecución incluye Core, Lite, JSON, SQLite y `.yny`/`mmap`.
 
 ---
 
 # Contrato reproducible
 
-- Lucis 0.1.0, commit `a6ac3de8`.
+- Yeny 0.1.0, commit `a6ac3de8`.
 - Seed `20260117` y hashes SHA-256 congelados.
 - 17 consultas deterministas.
 - 3 warm-ups y 10 repeticiones.
@@ -88,7 +88,7 @@ Lite redujo la mediana entre 35.1% y 50.3% dentro de cada máquina.
 
 Para 100,000 documentos:
 
-- `.lcs`: 20.78 MiB Core y 20.01 MiB Lite.
+- `.yny`: 20.78 MiB Core y 20.01 MiB Lite.
 - 66–68% menos espacio que JSON.
 - Carga `mmap`: 2.44–31.88 ms en la matriz.
 - Entre 36× y 453× menos tiempo de carga que JSON.
@@ -133,11 +133,11 @@ Los equipos no son equivalentes:
 
 # Conclusión
 
-Lucis 0.1.0 queda respaldado por una campaña reproducible y auditable en
+Yeny 0.1.0 queda respaldado por una campaña reproducible y auditable en
 cuatro sistemas.
 
 **Lite** prioriza costo temporal.  
 **Core** conserva TF-IDF/coseno.  
-**`.lcs` + `mmap`** es la ruta recomendada para arranque y tamaño.
+**`.yny` + `mmap`** es la ruta recomendada para arranque y tamaño.
 
 Datos, reportes y metodología: `docs/benchmarks/`

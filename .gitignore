@@ -52,7 +52,7 @@ test_data/
 /playground.py
 /playground2.py
 /dataset.py
-/lucis_data/
+/yeny_data/
 /legacy/
 *.mp4
 *.avi
@@ -88,6 +88,7 @@ benchmarks/scenarios/__pycache__/
 !examples/
 !examples/**
 examples/encrypted_search/.env
+examples/encrypted_search/yeny_data/
 examples/encrypted_search/lucis_data/
 examples/encrypted_search/output/
 examples/**/__pycache__/

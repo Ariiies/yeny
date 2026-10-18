@@ -2,15 +2,15 @@
 
 import pytest
 
-from lucis import Lucis
-from lucis.config import LucisOptions
-from lucis.utils.nlp import WordTokenizer
+from yeny import Yeny
+from yeny.config import YenyOptions
+from yeny.utils.nlp import WordTokenizer
 
 from benchmarks.config import load_profiles
 from benchmarks.datasets import generate_dataset
 from benchmarks.queries import build_queries
 from benchmarks.scenarios.mmap_load import (
-    measure_lcs_write,
+    measure_yny_write,
     measure_mmap_load,
 )
 from benchmarks.scenarios.persistence import (
@@ -42,15 +42,15 @@ def _indexed(tmp_path, dataset, name="scenario", **overrides):
         "binary_dir": None,
     }
     option_values.update(overrides)
-    lucis = Lucis(
+    yeny = Yeny(
         name=name,
         engine="core",
         preprocessor=WordTokenizer(),
         autoload=False,
-        options=LucisOptions(**option_values),
+        options=YenyOptions(**option_values),
     )
-    lucis.index(dataset.documents, persist=False)
-    return lucis
+    yeny.index(dataset.documents, persist=False)
+    return yeny
 
 
 def _entry(doc_id, score):
@@ -139,11 +139,11 @@ def test_collect_result_sequence_preserves_ranking_and_scores(
     tiny_dataset,
     tiny_queries,
 ):
-    lucis = _indexed(tmp_path, tiny_dataset)
+    yeny = _indexed(tmp_path, tiny_dataset)
     try:
-        collected = collect_result_sequence(lucis, tiny_queries)
+        collected = collect_result_sequence(yeny, tiny_queries)
     finally:
-        lucis.close()
+        yeny.close()
 
     assert set(collected) == {
         query.query_id for query in tiny_queries.items
@@ -163,11 +163,11 @@ def test_collect_result_sequence_preserves_ranking_and_scores(
 
 @pytest.mark.integration
 def test_json_save_reports_real_artifact_size(tmp_path, tiny_dataset):
-    lucis = _indexed(tmp_path, tiny_dataset)
+    yeny = _indexed(tmp_path, tiny_dataset)
     try:
-        measurements = measure_json_save(lucis, engine="core")
+        measurements = measure_json_save(yeny, engine="core")
     finally:
-        lucis.close()
+        yeny.close()
 
     by_name = {item["name"]: item for item in measurements}
     assert by_name["json_save"]["unit"] == "ns"
@@ -182,7 +182,7 @@ def test_json_save_reports_real_artifact_size(tmp_path, tiny_dataset):
 def test_sqlite_save_reports_real_artifact_size(tmp_path, tiny_dataset):
     db_dir = tmp_path / "sqlite"
     db_dir.mkdir()
-    lucis = _indexed(
+    yeny = _indexed(
         tmp_path,
         tiny_dataset,
         name="sqlite_case",
@@ -190,9 +190,9 @@ def test_sqlite_save_reports_real_artifact_size(tmp_path, tiny_dataset):
         db_path=str(db_dir / "benchmark.db"),
     )
     try:
-        measurements = measure_sqlite_save(lucis, engine="core")
+        measurements = measure_sqlite_save(yeny, engine="core")
     finally:
-        lucis.storage.close()
+        yeny.storage.close()
 
     by_name = {item["name"]: item for item in measurements}
     assert by_name["sqlite_save"]["unit"] == "ns"
@@ -202,20 +202,20 @@ def test_sqlite_save_reports_real_artifact_size(tmp_path, tiny_dataset):
 
 
 @pytest.mark.integration
-def test_lcs_write_reports_real_artifact_size(tmp_path, tiny_dataset):
-    lucis = _indexed(tmp_path, tiny_dataset)
-    lcs_path = tmp_path / "lcs" / "scenario.lcs"
+def test_yny_write_reports_real_artifact_size(tmp_path, tiny_dataset):
+    yeny = _indexed(tmp_path, tiny_dataset)
+    yny_path = tmp_path / "yny" / "scenario.yny"
     try:
-        measurements = measure_lcs_write(lucis, lcs_path, engine="core")
+        measurements = measure_yny_write(yeny, yny_path, engine="core")
     finally:
-        lucis.close()
+        yeny.close()
 
     by_name = {item["name"]: item for item in measurements}
-    assert by_name["lcs_write"]["unit"] == "ns"
-    assert lcs_path.exists()
-    size = by_name["lcs_artifact_size"]
+    assert by_name["yny_write"]["unit"] == "ns"
+    assert yny_path.exists()
+    size = by_name["yny_artifact_size"]
     assert size["unit"] == "bytes"
-    assert size["samples"] == [lcs_path.stat().st_size]
+    assert size["samples"] == [yny_path.stat().st_size]
 
 
 @pytest.mark.integration
@@ -231,12 +231,12 @@ def test_standard_load_roundtrip_preserves_ids(
 
     measurements = measure_standard_load(
         "json",
-        lambda: Lucis(
+        lambda: Yeny(
             name="loadable",
             engine="core",
             preprocessor=WordTokenizer(),
             autoload=True,
-            options=LucisOptions(
+            options=YenyOptions(
                 storage_dir=str(tmp_path / "loadable"),
                 binary_dir=None,
             ),
@@ -275,12 +275,12 @@ def test_standard_load_detects_changed_results(
     with pytest.raises(RuntimeError, match="json round-trip"):
         measure_standard_load(
             "json",
-            lambda: Lucis(
+            lambda: Yeny(
                 name="tampered",
                 engine="core",
                 preprocessor=WordTokenizer(),
                 autoload=True,
-                options=LucisOptions(
+                options=YenyOptions(
                     storage_dir=str(tmp_path / "tampered"),
                     binary_dir=None,
                 ),
@@ -300,20 +300,20 @@ def test_mmap_load_roundtrip_preserves_ids_and_closes_handle(
     tiny_queries,
 ):
     built = _indexed(tmp_path, tiny_dataset, name="mmap_case")
-    lcs_path = tmp_path / "lcs" / "case.lcs"
-    built.engine.save_binary(str(lcs_path))
+    yny_path = tmp_path / "yny" / "case.yny"
+    built.engine.save_binary(str(yny_path))
     expected = collect_result_sequence(built, tiny_queries)
     built.close()
 
     holder = []
 
     def constructor():
-        instance = Lucis(
+        instance = Yeny(
             name="mmap_fresh",
             engine="core",
             preprocessor=WordTokenizer(),
             autoload=False,
-            options=LucisOptions(
+            options=YenyOptions(
                 storage_dir=str(tmp_path / "fresh"),
                 binary_dir=None,
             ),
@@ -323,7 +323,7 @@ def test_mmap_load_roundtrip_preserves_ids_and_closes_handle(
 
     measurements = measure_mmap_load(
         constructor,
-        lcs_path,
+        yny_path,
         engine="core",
         queries=tiny_queries,
         expected_results=expected,
@@ -340,7 +340,7 @@ def test_mmap_load_roundtrip_preserves_ids_and_closes_handle(
     )
     assert roundtrip["backend"] == "mmap"
     assert roundtrip["samples"] == [len(tiny_queries.items)]
-    assert holder[0].engine._lcs_handle is None
+    assert holder[0].engine._yny_handle is None
 
-    lcs_path.unlink()
-    assert not lcs_path.exists()
+    yny_path.unlink()
+    assert not yny_path.exists()

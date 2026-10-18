@@ -1,23 +1,23 @@
 # Health monitoring
 
-Lucis includes diagnostic tools to monitor RAM, seek latency and shard status in real time, without modifying the indexing or search pipeline.
+Yeny includes diagnostic tools to monitor RAM, seek latency and shard status in real time, without modifying the indexing or search pipeline.
 
 ---
 
 ## Quick health check
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions
+from yeny import Yeny
+from yeny.config import YenyOptions
 
-luc = Lucis(
+yn = Yeny(
     name="mi_idx",
     engine="lite",
-    options=LucisOptions(storage_type="sqlite", db_path="app.db"),
+    options=YenyOptions(storage_type="sqlite", db_path="app.db"),
 )
-luc.index(datos)
+yn.index(datos)
 
-report = luc.health_check()
+report = yn.health_check()
 print(report)
 ```
 
@@ -25,7 +25,7 @@ Output:
 
 ```
 ==============================================================
-  LUCIS HEALTH REPORT
+  YENY HEALTH REPORT
 ==============================================================
   Timestamp     : 2024-03-15 14:30:22
   Index         : mi_idx
@@ -53,7 +53,7 @@ Output:
 ### With search benchmark
 
 ```python
-report = luc.health_check(benchmark_query="prueba de velocidad")
+report = yn.health_check(benchmark_query="prueba de velocidad")
 print(f"Latencia de búsqueda: {report.search_benchmark_ms:.1f} ms")
 ```
 
@@ -64,7 +64,7 @@ print(f"Latencia de búsqueda: {report.search_benchmark_ms:.1f} ms")
 The report is a dataclass with all the information:
 
 ```python
-report = luc.health_check()
+report = yn.health_check()
 
 # Información general
 report.timestamp            # "2024-03-15 14:30:22"
@@ -80,8 +80,8 @@ report.index_ram_human      # "128.4 MB"
 report.process_rss_bytes    # 536870912
 report.process_rss_human    # "512.0 MB"
 
-# Disco (archivos .lcs + metadata DB)
-report.disk_lcs_bytes       # 67108864
+# Disco (archivos .yny + metadata DB)
+report.disk_yny_bytes       # 67108864
 report.disk_meta_bytes      # 4194304
 report.disk_total_bytes     # 71303168
 report.disk_total_human     # "68.0 MB"
@@ -142,7 +142,7 @@ for shard in report.shards:
 For production monitoring, use the periodic monitor:
 
 ```python
-monitor = luc.health_monitor(interval=30)  # cada 30 segundos
+monitor = yn.health_monitor(interval=30)  # cada 30 segundos
 monitor.start()
 
 # ... tu aplicación sigue funcionando ...
@@ -161,7 +161,7 @@ The monitor collects periodic snapshots that you can analyze to detect RAM consu
 ```python
 import json
 
-report = luc.health_check(benchmark_query="test")
+report = yn.health_check(benchmark_query="test")
 data = report.to_dict()
 
 # Enviar a tu sistema de monitoreo
@@ -185,7 +185,7 @@ Dict structure:
         "process_rss_bytes": 536870912
     },
     "disk": {
-        "lcs_files": "64.0 MB",
+        "yny_files": "64.0 MB",
         "metadata_db": "4.0 MB",
         "total": "68.0 MB"
     },
@@ -208,5 +208,5 @@ Dict structure:
 
 ## Next step
 
-- [How Lucis works](11-how-it-works.md) — Inverted index internals
+- [How Yeny works](11-how-it-works.md) — Inverted index internals
 - [Practical recipes](14-recipes.md) — Production monitoring

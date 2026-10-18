@@ -1,4 +1,4 @@
-"""Tests that preserve Lucis-style documentation in benchmark modules."""
+"""Tests that preserve Yeny-style documentation in benchmark modules."""
 
 import ast
 from pathlib import Path

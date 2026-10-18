@@ -1,6 +1,6 @@
 # Data models
 
-Lucis uses immutable dataclasses (`frozen=True`) to represent search results. This ensures integrity after creation, autocompletion in the IDE, and direct JSON serialization.
+Yeny uses immutable dataclasses (`frozen=True`) to represent search results. This ensures integrity after creation, autocompletion in the IDE, and direct JSON serialization.
 
 ---
 
@@ -9,7 +9,7 @@ Lucis uses immutable dataclasses (`frozen=True`) to represent search results. Th
 Represents a single document found in a search.
 
 ```python
-from lucis.models.search import SearchResult
+from yeny.models.search import SearchResult
 ```
 
 | Field | Type | Description |
@@ -39,7 +39,7 @@ print(resultado.shard_key)   # "2024_03" o None
 Complete response to a search, with context about the query, the engine, times and results.
 
 ```python
-from lucis.models.search import SearchResponse
+from yeny.models.search import SearchResponse
 ```
 
 | Field | Type | Description |
@@ -56,12 +56,12 @@ from lucis.models.search import SearchResponse
 ### Example
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
-luc = Lucis(name="demo", engine="core")
-luc.index({"a": "python web framework", "b": "java enterprise"})
+yn = Yeny(name="demo", engine="core")
+yn.index({"a": "python web framework", "b": "java enterprise"})
 
-response = luc.search("python")
+response = yn.search("python")
 
 # Metadata
 print(response.query)            # "python"
@@ -89,10 +89,10 @@ data = response.to_dict()        # dict JSON-ready
 
 ## HealthReport
 
-Health snapshot of a Lucis instance. Documented in detail in [Health Monitoring](10-health.md).
+Health snapshot of a Yeny instance. Documented in detail in [Health Monitoring](10-health.md).
 
 ```python
-from lucis.core.health import HealthReport
+from yeny.core.health import HealthReport
 ```
 
 | Field | Type | Description |
@@ -105,7 +105,7 @@ from lucis.core.health import HealthReport
 | `total_docs` | `int` | Total documents |
 | `index_ram_bytes` | `int` | Index RAM in bytes |
 | `process_rss_bytes` | `Optional[int]` | Process RSS |
-| `disk_lcs_bytes` | `int` | .lcs file size |
+| `disk_yny_bytes` | `int` | .yny file size |
 | `disk_meta_bytes` | `int` | DB metadata size |
 | `shard_count` | `int` | Loaded Shards |
 | `shards` | `List[ShardHealth]` | Detail by shard |
@@ -125,7 +125,7 @@ Derived properties: `index_ram_human`, `process_rss_human`, `disk_total_bytes`, 
 RAM statistics for an individual shard. Documented in [Temporary Sharding](08-temporary-sharding.md).
 
 ```python
-from lucis.core.health import ShardHealth
+from yeny.core.health import ShardHealth
 ```
 
 | Field | Type | Description |

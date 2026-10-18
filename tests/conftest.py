@@ -1,7 +1,7 @@
 
 import pytest
-from lucis import Lucis
-from lucis.utils.nlp import WordTokenizer
+from yeny import Yeny
+from yeny.utils.nlp import WordTokenizer
 
 @pytest.fixture
 def sample_corpus():
@@ -21,12 +21,12 @@ def sample_list_corpus():
 
 @pytest.fixture
 def buscador_core(sample_corpus):
-    return Lucis.from_dict(sample_corpus, name="test_core", engine="core")
+    return Yeny.from_dict(sample_corpus, name="test_core", engine="core")
 
 @pytest.fixture
 def buscador_lite(sample_corpus):
-    return Lucis.from_dict(sample_corpus, name="test_lite", engine="lite")
+    return Yeny.from_dict(sample_corpus, name="test_lite", engine="lite")
 
 @pytest.fixture
 def temp_dir(tmp_path):
-    return tmp_path / "lucis_data"
+    return tmp_path / "yeny_data"

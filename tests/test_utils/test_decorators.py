@@ -1,7 +1,7 @@
 
 import pytest
-from lucis.utils.decorators import corpus_input, doc_input
-from lucis.exceptions import LucisInvalidDocumentError
+from yeny.utils.decorators import corpus_input, doc_input
+from yeny.exceptions import YenyInvalidDocumentError
 
 def simple_tokenizer(text):
     return text.lower().split()
@@ -159,7 +159,7 @@ class TestDocInput:
         def search_func(query):
             return query
         
-        with pytest.raises(LucisInvalidDocumentError):
+        with pytest.raises(YenyInvalidDocumentError):
             search_func(123)
 
     def test_list_with_elements_not_str(self):
@@ -167,7 +167,7 @@ class TestDocInput:
         def search_func(query):
             return query
         
-        with pytest.raises(LucisInvalidDocumentError):
+        with pytest.raises(YenyInvalidDocumentError):
             search_func([123])
 
     def test_querand_none_error(self):
@@ -175,7 +175,7 @@ class TestDocInput:
         def search_func(query):
             return query
         
-        with pytest.raises(LucisInvalidDocumentError):
+        with pytest.raises(YenyInvalidDocumentError):
             search_func(None)
 
     def test_querand_dict_error(self):
@@ -183,7 +183,7 @@ class TestDocInput:
         def search_func(query):
             return query
         
-        with pytest.raises(LucisInvalidDocumentError):
+        with pytest.raises(YenyInvalidDocumentError):
             search_func({"key": "value"})
 
 class TestDocInputIntegration:

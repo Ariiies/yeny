@@ -1,14 +1,14 @@
-# Encrypted Search with Lucis
+# Encrypted Search with Yeny
 
 > Full-text search over Fernet-encrypted MySQL columns — with ~15 lines
-> of Lucis-specific code.  *(Reproducible example: blind index of
+> of Yeny-specific code.  *(Reproducible example: blind index of
 > trigrams + HMAC, queried with plain text.)*
 
-This example demonstrates how Lucis can index and search a MySQL table
-containing encrypted fields.  **The complete Lucis integration lives in
+This example demonstrates how Yeny can index and search a MySQL table
+containing encrypted fields.  **The complete Yeny integration lives in
 `playground.py`.**  To understand the example, read only:
 
-1. **`playground.py`** — point Lucis at a table, pick columns, search.
+1. **`playground.py`** — point Yeny at a table, pick columns, search.
 2. **`preprocessor.py`** — the optional plug-in that makes *encrypted*
    fields searchable (blind index: trigrams → deterministic HMAC).
 
@@ -20,27 +20,27 @@ The remaining files only prepare or display data:
 | `seed_controlled_data.py` | inserts 10 easy-to-find leads (Aries Meza, Real Madrid, …) |
 | `generate_noise.py` | optional: deterministic bulk volume (`--records 100000`) |
 
-Prefer a visual overview? Jump to the [visual walkthrough: Lucis in 3
-steps](#10-visual-walkthrough-lucis-in-3-steps).
+Prefer a visual overview? Jump to the [visual walkthrough: Yeny in 3
+steps](#10-visual-walkthrough-yeny-in-3-steps).
 
 ---
 
-## 1. The complete Lucis integration
+## 1. The complete Yeny integration
 
 This is the whole thing — copied from `playground.py`:
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions, TableSource
+from yeny import Yeny
+from yeny.config import YenyOptions, TableSource
 from preprocessor import preprocessor   # only for encrypted fields
 
-OPTIONS = LucisOptions(
-    storage_dir="./lucis_data",
+OPTIONS = YenyOptions(
+    storage_dir="./yeny_data",
     memory_limit_mb=512,
 )
 
 # Path 1 — a saved index already exists → autoload (mmap, fast).
-luc = Lucis(
+yn = Yeny(
     name="encrypted_leads",
     engine="lite",
     preprocessor=preprocessor,
@@ -48,8 +48,8 @@ luc = Lucis(
 )
 
 # Path 2 — no saved index → build it straight from the table.
-if not luc.is_indexed:
-    luc = Lucis.from_table(
+if not yn.is_indexed:
+    yn = Yeny.from_table(
         TableSource(
             table="leads",
             connection_url=DB_URL,
@@ -63,10 +63,10 @@ if not luc.is_indexed:
         options=OPTIONS,
     )
 
-results = luc.search("aries hotmail 612")
+results = yn.search("aries hotmail 612")
 ```
 
-**That is all the Lucis-specific code there is.**  Everything else in the
+**That is all the Yeny-specific code there is.**  Everything else in the
 example encrypts seed data, generates volume, or prints results.
 
 ---
@@ -100,7 +100,7 @@ Copy-Item .env.example .env
 Create the database (once — the example never runs `CREATE DATABASE`):
 
 ```sql
-CREATE DATABASE lucis_encrypted_search
+CREATE DATABASE yeny_encrypted_search
 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
@@ -125,7 +125,7 @@ tables **without touching code** (real environment variables always win;
 only this folder's `.env` is read, never a repo-root one):
 
 ```dotenv
-DATABASE_URL=mysql+pymysql://lucis_user:change-me@localhost:3306/lucis_encrypted_search
+DATABASE_URL=mysql+pymysql://yeny_user:change-me@localhost:3306/yeny_encrypted_search
 
 # Table mapping — point these at YOUR table
 TABLE_NAME=leads
@@ -133,11 +133,11 @@ ID_COLUMN=id
 TEXT_COLUMNS=name,email,number,ip
 DATE_COLUMN=created_at        # leave empty to disable temporal sharding
 
-# Lucis
-LUCIS_INDEX_NAME=encrypted_leads    # change it per table! (autoload key)
-LUCIS_ENGINE=lite
-LUCIS_MEMORY_LIMIT_MB=512
-LUCIS_STORAGE_DIR=./lucis_data
+# Yeny
+YENY_INDEX_NAME=encrypted_leads    # change it per table! (autoload key)
+YENY_ENGINE=lite
+YENY_MEMORY_LIMIT_MB=512
+YENY_STORAGE_DIR=./yeny_data
 
 # Plain-text table? → no encrypted preprocessor needed
 USE_ENCRYPTED_PREPROCESSOR=true
@@ -151,9 +151,9 @@ ENABLE_WORKER=true
 ENABLE_HEALTH_MONITOR=true
 ```
 
-> **Important:** `LUCIS_INDEX_NAME` is the autoload key.  When you point
+> **Important:** `YENY_INDEX_NAME` is the autoload key.  When you point
 > the playground at a *different* table, give it a *different* index name
-> (and optionally a different storage dir), or Lucis will happily load
+> (and optionally a different storage dir), or Yeny will happily load
 > the previously saved index.
 
 ---
@@ -171,7 +171,7 @@ ID_COLUMN=id
 TEXT_COLUMNS=name,description,sku
 DATE_COLUMN=created_at
 USE_ENCRYPTED_PREPROCESSOR=false
-LUCIS_INDEX_NAME=products_idx
+YENY_INDEX_NAME=products_idx
 ```
 
 **Scenario C — table without a date column:**
@@ -181,7 +181,7 @@ TABLE_NAME=customers
 TEXT_COLUMNS=name,email,phone
 DATE_COLUMN=
 USE_ENCRYPTED_PREPROCESSOR=false
-LUCIS_INDEX_NAME=customers_idx
+YENY_INDEX_NAME=customers_idx
 ```
 
 **Scenario D — your own encrypted table:** keep
@@ -195,8 +195,8 @@ wipe and reseed when changing secrets.
 
 ## 5. How the blind index works
 
-Lucis does **not** search ciphertext (ciphertext is unsearchable).
-During indexing, Lucis concatenates the row's `TEXT_COLUMNS` with spaces
+Yeny does **not** search ciphertext (ciphertext is unsearchable).
+During indexing, Yeny concatenates the row's `TEXT_COLUMNS` with spaces
 and hands that string to `preprocessor()`:
 
 ```text
@@ -209,7 +209,7 @@ MySQL row:  name(Fernet) email(Fernet) number(Fernet) ip(plain) created_at
    4. HMAC-SHA256(token)[:16] — deterministic blind token
                 │
                 ▼
-Lucis inverted index  →  .lcs binaries + SQLite metadata (mmap loading)
+Yeny inverted index  →  .yny binaries + SQLite metadata (mmap loading)
 ```
 
 A plain-text query ("luis hotmail 612") is never valid Fernet, so it
@@ -245,7 +245,7 @@ python generate_noise.py --records 100000 --seed 20260801
   re-running only tops up what's missing.
 - ~10 % of rows have `created_at = NULL` (universal-shard testing).
 - Streams from a generator in batches — millions of rows, bounded RAM.
-- Not needed to understand Lucis; it only creates volume.
+- Not needed to understand Yeny; it only creates volume.
 
 ---
 
@@ -275,7 +275,7 @@ Searching `aries`:
 ```text
 2 result(s) in 2.0 ms (shards 75/75):
   1. [0.2174] Aries Meza | ariesmeza@hotmail.com | +526121696226 | 127.168.192.2  (shard: 2026_02)
-  2. [0.1429] Aries Lucis | aries.lucis@lucis.dev | +521551998877 | 127.168.192.0  (shard: 9999_99)
+  2. [0.1429] Aries Yeny | aries.yeny@yeny.dev | +521551998877 | 127.168.192.0  (shard: 9999_99)
 ```
 
 Queries that find `target-luis-aries` (normalization at work):
@@ -287,7 +287,7 @@ Queries that find `target-autos-usados`:
 
 ---
 
-## 10. Visual walkthrough: Lucis in 3 steps
+## 10. Visual walkthrough: Yeny in 3 steps
 
 If you understand examples more easily through images, this walkthrough
 shows the complete flow: prepare the data, build or load the index, and
@@ -295,7 +295,7 @@ search the encrypted fields.
 
 ### Step 1 — Prepare the data
 
-After configuring `.env` and creating the database, in the venv install lucis example ([Check Quickstart](#2-quick-start)) and run the seed scripts:
+After configuring `.env` and creating the database, in the venv install yeny example ([Check Quickstart](#2-quick-start)) and run the seed scripts:
 
 The first image shows the seed command. The second confirms that the
 database contains the example data.
@@ -304,7 +304,7 @@ database contains the example data.
 
 ![Confirm that the database was updated](assets/example_7.png)
 
-### Step 2 — Build or load the Lucis index
+### Step 2 — Build or load the Yeny index
 
 Run the playground:
 
@@ -312,10 +312,10 @@ Run the playground:
 python playground.py
 ```
 
-On the first run, Lucis builds the index from the database, so startup can
-take longer. On later runs, Lucis loads the saved index and starts faster.
+On the first run, Yeny builds the index from the database, so startup can
+take longer. On later runs, Yeny loads the saved index and starts faster.
 
-![Build the Lucis index](assets/example_2.png)
+![Build the Yeny index](assets/example_2.png)
 
 ![Load the saved index](assets/example_3.png)
 
@@ -337,7 +337,7 @@ The timings are local observations, not benchmarks.
 
 ## 11. Worker & health monitor (optional)
 
-`ENABLE_WORKER=true` starts a Lucis `IndexWorker` that re-syncs the index
+`ENABLE_WORKER=true` starts a Yeny `IndexWorker` that re-syncs the index
 when the table changes (interval from `.env`) — insert a lead from the
 menu and watch it become searchable.  `ENABLE_HEALTH_MONITOR=true` prints
 RAM / latency snapshots on exit.  Both sit *after* the main integration
@@ -359,7 +359,7 @@ observations, **not benchmarks**.
 - Normalization is destructive (great recall, possible collisions).
 - Timings printed by the example are local observations, not benchmarks.
 - MySQL-oriented (other SQLAlchemy engines plausible, untested here).
-- `src/lucis/` is **not** modified — Lucis is consumed as a package.
+- `src/yeny/` is **not** modified — Yeny is consumed as a package.
 
 ---
 
@@ -371,7 +371,7 @@ DROP TABLE IF EXISTS leads;          -- or: TRUNCATE TABLE leads;
 ```
 
 ```bash
-rm -rf lucis_data                    # index artifacts (.lcs + metadata)
+rm -rf yeny_data                    # index artifacts (.yny + metadata)
 ```
 
 Your `.env` stays untouched.  Nothing outside this folder is affected.

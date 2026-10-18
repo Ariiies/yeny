@@ -1,8 +1,8 @@
-"""Blind-index preprocessor for Lucis — the only crypto file in this example.
+"""Blind-index preprocessor for Yeny — the only crypto file in this example.
 
 READ THIS SECOND (after playground.py).
 
-Lucis concatenates the selected columns at the SQL level
+Yeny concatenates the selected columns at the SQL level
 (``CONCAT_WS(' ', name, email, number, ip)``), so ``preprocessor()``
 receives ONE string whose fragments are a mix of Fernet ciphertext
 (``name`` / ``email`` / ``number``) and plain text (``ip``).  A search
@@ -15,7 +15,7 @@ Pipeline (per fragment):
       - ciphertext fragments  → become plaintext
       - anything else         → passes through unchanged (ip, user query)
 2. Normalize: lowercase, then strip ``@``, ``+``, ``.`` and inner spaces.
-3. Generate character trigrams (n=3) with Lucis' own tokenizer.
+3. Generate character trigrams (n=3) with Yeny' own tokenizer.
 4. Blind every trigram with a deterministic HMAC-SHA256 (truncated).
 5. Return the flat list of blind tokens — the index never sees plaintext.
 
@@ -41,7 +41,7 @@ import hmac
 import os
 
 from cryptography.fernet import Fernet
-from lucis.utils.nlp import CharNgramTokenizer
+from yeny.utils.nlp import CharNgramTokenizer
 
 TRIGRAM_N = 3
 
@@ -136,7 +136,7 @@ def blind_token(token: str) -> str:
     return _blind_token_cached(_get_token_secret(), token)
 
 
-# ── The Lucis preprocessor ───────────────────────────────────────────────────
+# ── The Yeny preprocessor ───────────────────────────────────────────────────
 
 _trigram_tokenizer = CharNgramTokenizer(n=TRIGRAM_N)
 
@@ -157,9 +157,9 @@ def normalize(value: str) -> str:
 
 
 def preprocessor(text: str) -> list:
-    """Lucis-compatible preprocessor: ``str -> list[str]`` of blind tokens.
+    """Yeny-compatible preprocessor: ``str -> list[str]`` of blind tokens.
 
-    Pass this function to ``Lucis(preprocessor=...)`` — the SAME function
+    Pass this function to ``Yeny(preprocessor=...)`` — the SAME function
     is used while indexing and while searching, so a plaintext query
     produces the same tokens that were stored from decrypted fields.
     """

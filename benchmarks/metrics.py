@@ -1,4 +1,4 @@
-"""Timing and statistical helpers for Lucis benchmarks.
+"""Timing and statistical helpers for Yeny benchmarks.
 
 The module keeps raw nanosecond samples and derives a small robust summary.
 No performance threshold is encoded here; callers decide how to interpret

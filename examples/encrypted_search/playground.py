@@ -1,12 +1,12 @@
-"""Lucis playground — full-text search over Fernet-encrypted MySQL columns.
+"""Yeny playground — full-text search over Fernet-encrypted MySQL columns.
 
     python playground.py
 
 READ THIS FIRST.  The whole point of this example fits in one idea:
 
-    point Lucis at your table, pick your columns, search.
+    point Yeny at your table, pick your columns, search.
 
-Everything below the "LUCIS SETUP" banner is the COMPLETE Lucis
+Everything below the "YENY SETUP" banner is the COMPLETE Yeny
 integration — the rest of the file is just an interactive menu, and the
 other files (database.py, seed_*.py, generate_noise.py) only prepare and
 display data.  The encrypted-search magic itself is one pluggable
@@ -16,14 +16,14 @@ Adapting this to your own table is usually just editing .env:
 
     TABLE_NAME / ID_COLUMN / TEXT_COLUMNS / DATE_COLUMN  (mapping)
     USE_ENCRYPTED_PREPROCESSOR=false                     (plain-text tables)
-    LUCIS_INDEX_NAME                                     (change per table!)
+    YENY_INDEX_NAME                                     (change per table!)
 """
 import os
 import time
 from datetime import datetime
 
-from lucis import Lucis
-from lucis.config import LucisOptions, TableSource
+from yeny import Yeny
+from yeny.config import YenyOptions, TableSource
 
 import database
 import preprocessor as crypto
@@ -42,18 +42,18 @@ ID_COLUMN = os.getenv("ID_COLUMN", "id")
 TEXT_COLUMNS = os.getenv("TEXT_COLUMNS", "name,email,number,ip").split(",")
 DATE_COLUMN = os.getenv("DATE_COLUMN", "created_at") or None  # empty → no sharding
 
-# Lucis settings:
-INDEX_NAME = os.getenv("LUCIS_INDEX_NAME", "encrypted_leads")
-ENGINE = os.getenv("LUCIS_ENGINE", "lite")
-MEMORY_LIMIT_MB = int(os.getenv("LUCIS_MEMORY_LIMIT_MB", "512"))
-STORAGE_DIR = os.getenv("LUCIS_STORAGE_DIR", "./lucis_data")
-OPTIONS = LucisOptions(
+# Yeny settings:
+INDEX_NAME = os.getenv("YENY_INDEX_NAME", "encrypted_leads")
+ENGINE = os.getenv("YENY_ENGINE", "lite")
+MEMORY_LIMIT_MB = int(os.getenv("YENY_MEMORY_LIMIT_MB", "512"))
+STORAGE_DIR = os.getenv("YENY_STORAGE_DIR", "./yeny_data")
+OPTIONS = YenyOptions(
     storage_dir=STORAGE_DIR,
     memory_limit_mb=MEMORY_LIMIT_MB,
 )
 
 # Preprocessor: set USE_ENCRYPTED_PREPROCESSOR=false for plain-text tables
-# → Lucis then uses its built-in tokenizer and preprocessor.py is unused.
+# → Yeny then uses its built-in tokenizer and preprocessor.py is unused.
 USE_ENCRYPTED_PREPROCESSOR = (
     os.getenv("USE_ENCRYPTED_PREPROCESSOR", "true").lower() == "true"
 )
@@ -67,8 +67,8 @@ HEALTH_INTERVAL_SECONDS = int(os.getenv("HEALTH_INTERVAL_SECONDS", "60"))
 
 
 # ------------------------------------------------------------
-# LUCIS SETUP
-# This is the complete Lucis integration used by this example.
+# YENY SETUP
+# This is the complete Yeny integration used by this example.
 # ------------------------------------------------------------
 def load_or_build_index():
     """Load the persisted index, or build it from the MySQL table.
@@ -78,28 +78,28 @@ def load_or_build_index():
     """
     # Path 1 — an index with this name already exists on disk → autoload.
     load_start = time.perf_counter()
-    luc = Lucis(
+    yn = Yeny(
         name=INDEX_NAME,
         engine=ENGINE,
         preprocessor=ACTIVE_PREPROCESSOR,
         options=OPTIONS,
     )
     load_s = time.perf_counter() - load_start
-    if luc.is_indexed:
+    if yn.is_indexed:
         print(
-            f"Index '{INDEX_NAME}' loaded: {luc.total_docs:,} documents "
+            f"Index '{INDEX_NAME}' loaded: {yn.total_docs:,} documents "
             f"in {load_s:.2f}s"
         )
-        return luc
+        return yn
 
     # Path 2 — no saved index → build it straight from the table.
-    # Lucis reads the columns read-only and concatenates TEXT_COLUMNS
+    # Yeny reads the columns read-only and concatenates TEXT_COLUMNS
     # into one searchable document per row; DATE_COLUMN drives the
     # optional temporal sharding (NULL dates → universal shard 9999_99).
     print("No saved index found — building from table "
           f"'{TABLE_NAME}' ({', '.join(TEXT_COLUMNS)})…")
     build_start = time.perf_counter()
-    luc = Lucis.from_table(
+    yn = Yeny.from_table(
         TableSource(
             table=TABLE_NAME,
             connection_url=DB_URL,
@@ -114,16 +114,16 @@ def load_or_build_index():
     )
     build_s = time.perf_counter() - build_start
     print(
-        f"Index built and persisted: {luc.total_docs:,} documents "
+        f"Index built and persisted: {yn.total_docs:,} documents "
         f"in {build_s:.2f}s"
     )
-    return luc
+    return yn
 
 
-def search(luc, query, since=None, until=None):
+def search(yn, query, since=None, until=None):
     """Run a plain-text query and print the matching rows, decrypted."""
     start = time.perf_counter()
-    response = luc.search(query, top_k=10, since=since, until=until)
+    response = yn.search(query, top_k=10, since=since, until=until)
     ms = (time.perf_counter() - start) * 1000
 
     shards = getattr(response, "shards_searched", None)
@@ -144,7 +144,7 @@ def search(luc, query, since=None, until=None):
 
 # ------------------------------------------------------------
 # Everything below is just the interactive menu around the two
-# functions above — no Lucis knowledge required beyond this point.
+# functions above — no Yeny knowledge required beyond this point.
 # ------------------------------------------------------------
 
 def _add_lead():
@@ -177,9 +177,9 @@ def _add_lead():
     print(f"  Row added. The worker picks it up within ~{WORKER_INTERVAL_SECONDS}s.\n")
 
 
-def _show_versions(luc):
-    versions = luc.list_versions()
-    current = luc.storage.get_alias(INDEX_NAME)
+def _show_versions(yn):
+    versions = yn.list_versions()
+    current = yn.storage.get_alias(INDEX_NAME)
     print(f"\n{len(versions)} version(s):")
     for version in versions:
         mark = " ← active" if version == current else ""
@@ -194,7 +194,7 @@ def main():
         if USE_ENCRYPTED_PREPROCESSOR
         else f"full-text search on '{TABLE_NAME}' (plaintext preprocessor off)"
     )
-    print(f"\nLucis Playground — {subtitle}")
+    print(f"\nYeny Playground — {subtitle}")
     print("─" * 60)
     if USE_ENCRYPTED_PREPROCESSOR:
         for warning in crypto.warn_if_demo_secrets():
@@ -216,12 +216,12 @@ def main():
         )
         return
 
-    luc = load_or_build_index()
+    yn = load_or_build_index()
 
     # OPTIONAL: background sync — comment out or set ENABLE_WORKER=false
     worker = None
     if ENABLE_WORKER:
-        worker = luc.create_worker(
+        worker = yn.create_worker(
             interval=WORKER_INTERVAL_SECONDS, connection_url=DB_URL
         )
         worker.start()
@@ -230,7 +230,7 @@ def main():
     # OPTIONAL: health monitor — comment out or set ENABLE_HEALTH_MONITOR=false
     monitor = None
     if ENABLE_HEALTH_MONITOR:
-        monitor = luc.health_monitor(
+        monitor = yn.health_monitor(
             worker=worker,
             interval=HEALTH_INTERVAL_SECONDS,
             benchmark_query="test",
@@ -248,25 +248,25 @@ def main():
             if option == "0":
                 break
             elif option == "1":
-                _show_versions(luc)
+                _show_versions(yn)
             elif option == "2":
                 query = input(f"Query ({', '.join(TEXT_COLUMNS)} — any combo): ").strip()
                 if not query:
                     continue
                 since = input("   Optional since (YYYY-MM-DD): ").strip() or None
                 until = input("   Optional until (YYYY-MM-DD): ").strip() or None
-                search(luc, query, since, until)
+                search(yn, query, since, until)
             elif option == "3":
                 _add_lead()
             elif option == "4":
                 stats = worker.stats if worker else {"cycles": 0, "rebuilds": 0}
                 print(
-                    f"\nDocs: {luc.total_docs:,} | DB rows: {database.count_leads():,} "
-                    f"| Versions: {len(luc.list_versions())} "
+                    f"\nDocs: {yn.total_docs:,} | DB rows: {database.count_leads():,} "
+                    f"| Versions: {len(yn.list_versions())} "
                     f"| Worker cycles: {stats['cycles']} | rebuilds: {stats['rebuilds']}\n"
                 )
             elif option == "5":
-                print(luc.health_check(worker=worker, benchmark_query="test"))
+                print(yn.health_check(worker=worker, benchmark_query="test"))
             else:
                 print("Invalid option\n")
     except (EOFError, KeyboardInterrupt):

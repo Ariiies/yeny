@@ -1,6 +1,6 @@
 # Almacenamiento
 
-Lucis soporta múltiples backends de almacenamiento, todos implementando la misma interfaz (`BaseStorage`). La configuración recomendada para producción usa **archivos binarios `.lcs`** para los datos del índice más **SQLite WAL** para metadatos ligeros — ofreciendo carga con RAM casi nula mediante memory-mapped I/O y acceso concurrente de lectura/escritura.
+Yeny soporta múltiples backends de almacenamiento, todos implementando la misma interfaz (`BaseStorage`). La configuración recomendada para producción usa **archivos binarios `.yny`** para los datos del índice más **SQLite WAL** para metadatos ligeros — ofreciendo carga con RAM casi nula mediante memory-mapped I/O y acceso concurrente de lectura/escritura.
 
 ---
 
@@ -8,33 +8,33 @@ Lucis soporta múltiples backends de almacenamiento, todos implementando la mism
 
 | Backend | Datos del índice | Metadatos | Caso de uso |
 |---|---|---|---|
-| **MetadataStorage** | Binarios `.lcs` (mmap) | SQLite (WAL) | **Por defecto en producción.** Usado automáticamente por `from_table` y al recargar un índice existente. |
+| **MetadataStorage** | Binarios `.yny` (mmap) | SQLite (WAL) | **Por defecto en producción.** Usado automáticamente por `from_table` y al recargar un índice existente. |
 | **JSONStorage** | Archivos `.json` | `.json` | Simple / debugging / datasets pequeños. |
-| **SQLiteStorage** | Tablas `lucis_*` en tu BD | Tablas `lucis_*` | Persistencia completa en SQLite, con versionado y rollback. |
-| **AlchemyStorage** | Tablas `lucis_*` vía SQLAlchemy | Tablas `lucis_*` | Persistencia completa en BD remota (MySQL, PostgreSQL, etc.). |
-| **DatabaseReader** | *Solo lectura* (sin escritura) | *Ninguno* | Ingesta datos desde tu BD sin crear tablas `lucis_*`. |
+| **SQLiteStorage** | Tablas `yeny_*` en tu BD | Tablas `yeny_*` | Persistencia completa en SQLite, con versionado y rollback. |
+| **AlchemyStorage** | Tablas `yeny_*` vía SQLAlchemy | Tablas `yeny_*` | Persistencia completa en BD remota (MySQL, PostgreSQL, etc.). |
+| **DatabaseReader** | *Solo lectura* (sin escritura) | *Ninguno* | Ingesta datos desde tu BD sin crear tablas `yeny_*`. |
 
 ---
 
-## MetadataStorage + `.lcs` (recomendado)
+## MetadataStorage + `.yny` (recomendado)
 
 Esta es la arquitectura de almacenamiento usada al ingerir desde una base de datos vía `from_table()` o `from_query()`. También se auto-descubre al recargar un índice creado previamente de esta forma.
 
-> **Importante:** La persistencia es **automática** con `from_table()` y `from_query()`. El directorio `lucis_data/lcs/`, `lucis_meta.db` y los binarios `.lcs` se crean inmediatamente durante la ingesta — **no** necesitas llamar a `.save()` manualmente ni pasar `binary_dir` explícitamente (por defecto es `"auto"`). Lo mismo aplica para `from_dict()`, `from_list()` y `.index()` — todos persisten por defecto.
+> **Importante:** La persistencia es **automática** con `from_table()` y `from_query()`. El directorio `yeny_data/yny/`, `yeny_meta.db` y los binarios `.yny` se crean inmediatamente durante la ingesta — **no** necesitas llamar a `.save()` manualmente ni pasar `binary_dir` explícitamente (por defecto es `"auto"`). Lo mismo aplica para `from_dict()`, `from_list()` y `.index()` — todos persisten por defecto.
 
 ### Cómo funciona
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                 lucis_data/lcs/                   │
+│                 yeny_data/yny/                   │
 │                                                   │
-│  lucis_meta.db  ←── SQLite WAL                    │
-│  ├─ lucis_metadata     (doc counts, engine name)  │
-│  ├─ lucis_aliases      (alias → nombre físico)    │
-│  ├─ lucis_shard_registry (keys de shards)         │
-│  └─ lucis_metadata.source_* (info de tabla/col)   │
+│  yeny_meta.db  ←── SQLite WAL                    │
+│  ├─ yeny_metadata     (doc counts, engine name)  │
+│  ├─ yeny_aliases      (alias → nombre físico)    │
+│  ├─ yeny_shard_registry (keys de shards)         │
+│  └─ yeny_metadata.source_* (info de tabla/col)   │
 │                                                   │
-│  *.lcs files     ←── binarios mmap                │
+│  *.yny files     ←── binarios mmap                │
 │  ├─ índice invertido (CompactPostings)            │
 │  ├─ longitudes de docs (CompactDocLengths)        │
 │  └─ mapeo de IDs (interno → original)             │
@@ -43,18 +43,18 @@ Esta es la arquitectura de almacenamiento usada al ingerir desde una base de dat
 
 **Puntos clave:**
 
-- Los archivos `.lcs` contienen los **datos reales del índice** (índice invertido, longitudes de documentos, mapeo de IDs). Se cargan vía memory-mapped I/O: el SO mapea el archivo sin copiarlo al heap de Python, dando un overhead de RAM casi nulo.
-- `lucis_meta.db` almacena **solo metadatos ligeros**: conteo de documentos, aliases, registro de shards e información de la tabla fuente (para que el worker sepa qué monitorear). Usa modo WAL para lecturas/escrituras concurrentes.
-- **Tu base de datos de producción nunca se toca** más allá de la ingesta inicial. `DatabaseReader` es de solo lectura — se conecta, lee filas y se desconecta. Cero tablas `lucis_*` creadas en tu BD.
+- Los archivos `.yny` contienen los **datos reales del índice** (índice invertido, longitudes de documentos, mapeo de IDs). Se cargan vía memory-mapped I/O: el SO mapea el archivo sin copiarlo al heap de Python, dando un overhead de RAM casi nulo.
+- `yeny_meta.db` almacena **solo metadatos ligeros**: conteo de documentos, aliases, registro de shards e información de la tabla fuente (para que el worker sepa qué monitorear). Usa modo WAL para lecturas/escrituras concurrentes.
+- **Tu base de datos de producción nunca se toca** más allá de la ingesta inicial. `DatabaseReader` es de solo lectura — se conecta, lee filas y se desconecta. Cero tablas `yeny_*` creadas en tu BD.
 
 ### Cuándo se usa automáticamente
 
 ```python
 # Caso 1: Ingesta desde una tabla de base de datos
 # (auto-persiste — no necesita .save())
-from lucis.config import TableSource
+from yeny.config import TableSource
 
-luc = Lucis.from_table(
+yn = Yeny.from_table(
     TableSource(
         table="articulos",
         connection_url="mysql+pymysql://usuario:pass@host/bd",
@@ -62,31 +62,31 @@ luc = Lucis.from_table(
         id_column="id",
     ),
     name="articulos_idx",
-    # binary_dir="auto" es el default — lucis_data/lcs/ se crea automáticamente
+    # binary_dir="auto" es el default — yeny_data/yny/ se crea automáticamente
 )
 # → MetadataStorage se crea automáticamente
-# → Los datos del índice van a archivos .lcs inmediatamente
-# → Los metadatos van a lucis_data/lcs/lucis_meta.db
+# → Los datos del índice van a archivos .yny inmediatamente
+# → Los metadatos van a yeny_data/yny/yeny_meta.db
 # → Tu BD MySQL no se toca
 
 # Caso 2: Recargar un índice existente (sin storage explícito)
-luc = Lucis(name="articulos_idx", engine="lite")
-# → Lucis auto-descubre lucis_data/lcs/lucis_meta.db
+yn = Yeny(name="articulos_idx", engine="lite")
+# → Yeny auto-descubre yeny_data/yny/yeny_meta.db
 # → MetadataStorage se usa transparentemente
-# → Los archivos .lcs se cargan vía mmap
+# → Los archivos .yny se cargan vía mmap
 ```
 
 ### Creación manual
 
 ```python
-from lucis import Lucis, MetadataStorage
-from lucis.config import LucisOptions
+from yeny import Yeny, MetadataStorage
+from yeny.config import YenyOptions
 
-storage = MetadataStorage(db_path="lucis_data/lcs/lucis_meta.db")
-luc = Lucis(
+storage = MetadataStorage(db_path="yeny_data/yny/yeny_meta.db")
+yn = Yeny(
     name="mi_idx",
     storage=storage,
-    options=LucisOptions(binary_dir="lucis_data/lcs"),
+    options=YenyOptions(binary_dir="yeny_data/yny"),
 )
 ```
 
@@ -94,23 +94,23 @@ luc = Lucis(
 
 ## JSONStorage
 
-Almacena cada índice como un archivo `.json` legible. **Este es el default cuando no se configura otro storage y no existe `lucis_meta.db`.**
+Almacena cada índice como un archivo `.json` legible. **Este es el default cuando no se configura otro storage y no existe `yeny_meta.db`.**
 
-> **Nota:** `from_dict()` y `from_list()` auto-persisten a `lucis_data/mi_indice.json` por defecto. El archivo se crea inmediatamente — no requiere llamar a `.save()`.
+> **Nota:** `from_dict()` y `from_list()` auto-persisten a `yeny_data/mi_indice.json` por defecto. El archivo se crea inmediatamente — no requiere llamar a `.save()`.
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions
+from yeny import Yeny
+from yeny.config import YenyOptions
 
-luc = Lucis.from_dict(datos, name="mi_indice")
+yn = Yeny.from_dict(datos, name="mi_indice")
 # → JSONStorage se usa por defecto
-# → El archivo se guarda automáticamente en lucis_data/mi_indice.json
+# → El archivo se guarda automáticamente en yeny_data/mi_indice.json
 
 # Directorio personalizado
-luc = Lucis.from_dict(
+yn = Yeny.from_dict(
     datos,
     name="mi_indice",
-    options=LucisOptions(storage_dir="mis_datos"),
+    options=YenyOptions(storage_dir="mis_datos"),
 )
 ```
 
@@ -128,39 +128,39 @@ luc = Lucis.from_dict(
 
 ## SQLiteStorage
 
-Backend de persistencia completo usando SQLite. Almacena el índice completo (índice invertido, vectores de documentos, mapeo de IDs) en tablas `lucis_*` junto a tus tablas existentes.
+Backend de persistencia completo usando SQLite. Almacena el índice completo (índice invertido, vectores de documentos, mapeo de IDs) en tablas `yeny_*` junto a tus tablas existentes.
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions
+from yeny import Yeny
+from yeny.config import YenyOptions
 
-luc = Lucis.from_dict(
+yn = Yeny.from_dict(
     datos,
     name="mi_indice",
-    options=LucisOptions(storage_type="sqlite", db_path="mi_app.db"),
+    options=YenyOptions(storage_type="sqlite", db_path="mi_app.db"),
 )
 ```
 
 O directamente desde una tabla SQLite:
 
 ```python
-luc = Lucis.from_sqlite_table(
+yn = Yeny.from_sqlite_table(
     table_name="articulos",
     db_path="blog.db",
     text_column="contenido",
     id_column="id",
     name="blog_search",
 )
-# → Crea tablas lucis_* en blog.db
+# → Crea tablas yeny_* en blog.db
 ```
 
 **Tablas creadas:**
-- `lucis_inverted_index` — Índice invertido serializado
-- `lucis_doc_vectors` — Vectores de documentos
-- `lucis_id_mapping` — Mapeo ID interno → original
-- `lucis_metadata` — Metadatos del índice
-- `lucis_aliases` — Alias lógico → nombre físico
-- `lucis_shard_registry` — Registro de shards
+- `yeny_inverted_index` — Índice invertido serializado
+- `yeny_doc_vectors` — Vectores de documentos
+- `yeny_id_mapping` — Mapeo ID interno → original
+- `yeny_metadata` — Metadatos del índice
+- `yeny_aliases` — Alias lógico → nombre físico
+- `yeny_shard_registry` — Registro de shards
 
 **Características:**
 - Versionado automático (`save()` crea una nueva versión)
@@ -171,34 +171,34 @@ luc = Lucis.from_sqlite_table(
 
 ## AlchemyStorage
 
-Persistencia completa del índice vía SQLAlchemy para MySQL, PostgreSQL, MariaDB y cualquier base de datos compatible con SQLAlchemy. Crea tablas `lucis_*` en la base de datos destino.
+Persistencia completa del índice vía SQLAlchemy para MySQL, PostgreSQL, MariaDB y cualquier base de datos compatible con SQLAlchemy. Crea tablas `yeny_*` en la base de datos destino.
 
 **Instalación:**
 
 ```bash
 # Base
-pip install lucis[alchemy]
+pip install yeny[alchemy]
 
 # MySQL
-pip install lucis[mysql]
+pip install yeny[mysql]
 
 # PostgreSQL
-pip install lucis[postgresql]
+pip install yeny[postgresql]
 ```
 
 **Uso:**
 
 ```python
-luc = Lucis(
+yn = Yeny(
     name="mi_indice",
-    options=LucisOptions(
+    options=YenyOptions(
         storage_type="alchemy",
         connection_url="mysql+pymysql://usuario:pass@localhost/mi_bd",
     ),
 )
-luc.index(datos)
-luc.save()
-# → Crea tablas lucis_* en mi_bd
+yn.index(datos)
+yn.save()
+# → Crea tablas yeny_* en mi_bd
 ```
 
 **Formatos de URL comunes:**
@@ -210,16 +210,16 @@ luc.save()
 | MariaDB | `mariadb+pymysql://user:pass@host/db` |
 | SQLite (vía Alchemy) | `sqlite:///path/to/db.sqlite` |
 
-> **Nota:** `AlchemyStorage` tiene carga lazy — no requiere `sqlalchemy` a menos que uses explícitamente `LucisOptions(storage_type="alchemy", ...)`.
+> **Nota:** `AlchemyStorage` tiene carga lazy — no requiere `sqlalchemy` a menos que uses explícitamente `YenyOptions(storage_type="alchemy", ...)`.
 
 ---
 
 ## DatabaseReader (adaptador de solo lectura)
 
-Adaptador de **solo lectura** que se conecta a tu base de datos de producción para **ingerir datos**. **Nunca** crea ni modifica tablas `lucis_*` — solo lee de tus tablas existentes.
+Adaptador de **solo lectura** que se conecta a tu base de datos de producción para **ingerir datos**. **Nunca** crea ni modifica tablas `yeny_*` — solo lee de tus tablas existentes.
 
 ```python
-from lucis.storage import DatabaseReader
+from yeny.storage import DatabaseReader
 
 reader = DatabaseReader(
     connection_url="mysql+pymysql://user:pass@host/db"
@@ -234,9 +234,9 @@ datos = reader.read_table("articulos", text_columns="contenido", id_column="id")
 
 ---
 
-## Auto-descubrimiento: cómo Lucis elige el storage
+## Auto-descubrimiento: cómo Yeny elige el storage
 
-Cuando creas una instancia `Lucis` sin proporcionar explícitamente un parámetro `storage`, el constructor sigue esta lógica:
+Cuando creas una instancia `Yeny` sin proporcionar explícitamente un parámetro `storage`, el constructor sigue esta lógica:
 
 ```
 1. `options.storage_type="alchemy"` → AlchemyStorage (requiere `connection_url`)
@@ -244,20 +244,20 @@ Cuando creas una instancia `Lucis` sin proporcionar explícitamente un parámetr
 3. `options.storage_type="json"` → JSONStorage (default)
 
 PERO — después de elegir el storage "por defecto", verifica:
-4. Si lucis_data/lcs/lucis_meta.db existe → cambia automáticamente a MetadataStorage
+4. Si yeny_data/yny/yeny_meta.db existe → cambia automáticamente a MetadataStorage
 ```
 
 Esto significa que puedes recargar un índice creado por `from_table()` simplemente con:
 
 ```python
 # Sin necesidad de especificar storage — el auto-descubrimiento lo maneja
-luc = Lucis(name="articulos_idx", engine="lite")
-resultados = luc.search("python")
+yn = Yeny(name="articulos_idx", engine="lite")
+resultados = yn.search("python")
 ```
 
-`LucisOptions.binary_dir` tiene tres estados: `"auto"` (default) deriva
-`<storage_dir>/lcs`, `None` desactiva la persistencia binaria y una ruta
-explícita guarda allí los `.lcs` y sus metadatos. Los factories SQLAlchemy usan
+`YenyOptions.binary_dir` tiene tres estados: `"auto"` (default) deriva
+`<storage_dir>/yny`, `None` desactiva la persistencia binaria y una ruta
+explícita guarda allí los `.yny` y sus metadatos. Los factories SQLAlchemy usan
 storage de solo metadatos, por lo que necesitan `"auto"` o una ruta binaria
 explícita para poder recargarse; `None` solo es apropiado cuando se desactiva la
 persistencia intencionalmente para esa ejecución.
@@ -269,7 +269,7 @@ persistencia intencionalmente para esa ejecución.
 Puedes crear backends personalizados extendiendo `BaseStorage`:
 
 ```python
-from lucis.storage.base import BaseStorage
+from yeny.storage.base import BaseStorage
 
 class MiStorage(BaseStorage):
     def save(self, engine_state: dict, name: str) -> None:
@@ -301,7 +301,7 @@ class MiStorage(BaseStorage):
 
 ```python
 # Inyectar tu storage personalizado
-luc = Lucis(name="mi_indice", storage=MiStorage())
+yn = Yeny(name="mi_indice", storage=MiStorage())
 ```
 
 ---

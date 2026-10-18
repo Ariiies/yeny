@@ -1,4 +1,4 @@
-"""Validation and persistence for Lucis benchmark results.
+"""Validation and persistence for Yeny benchmark results.
 
 Results are stored as readable JSON and never silently overwrite an earlier
 run. Writes use a temporary file followed by ``os.replace`` so readers do not
@@ -74,8 +74,8 @@ _BUILD_PHASE_NAMES = {
     "json_artifact_size",
     "sqlite_save",
     "sqlite_artifact_size",
-    "lcs_write",
-    "lcs_artifact_size",
+    "yny_write",
+    "yny_artifact_size",
     "mmap_load",
     "search_first_mmap",
 }
@@ -585,12 +585,12 @@ def write_result(
     """
     validate_result(result)
     output_dir.mkdir(parents=True, exist_ok=True)
-    target = output_dir / f"lucis-benchmark-{result['run_id']}.json"
+    target = output_dir / f"yeny-benchmark-{result['run_id']}.json"
     if target.exists():
         raise ValueError(f"Result already exists: {target}")
 
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".lucis-benchmark-",
+        prefix=".yeny-benchmark-",
         suffix=".tmp",
         dir=str(output_dir),
         text=True,

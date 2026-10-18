@@ -44,7 +44,7 @@ def test_fingerprint_covers_the_campaign_contract():
 
     assert set(fingerprint) == {
         "schema_version",
-        "lucis_version",
+        "yeny_version",
         "git_commit",
         "python_minor",
         "profile",
@@ -108,7 +108,7 @@ def test_aggregate_rejects_empty_input():
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("lucis_version", "0.2.0"),
+        ("yeny_version", "0.2.0"),
         ("git_commit", "ffffff"),
         ("python_version", "3.13.0"),
     ],
@@ -280,7 +280,7 @@ def test_render_aggregate_markdown_shows_groups_sources_and_warnings():
 
     markdown = render_aggregate_markdown(aggregate)
 
-    assert "# Lucis benchmark aggregate" in markdown
+    assert "# Yeny benchmark aggregate" in markdown
     assert "Linux / x86_64 / Test CPU 9000" in markdown
     assert "run-a" in markdown
     assert "a.json" in markdown
@@ -319,7 +319,7 @@ def test_write_aggregate_writes_markdown_and_json_without_overwriting(
     assert json_path.exists()
     assert json_path.name == "summary.aggregate.json"
     payload = json.loads(json_path.read_text(encoding="utf-8"))
-    assert payload["kind"] == "lucis-benchmark-aggregate"
+    assert payload["kind"] == "yeny-benchmark-aggregate"
     assert payload["groups"][0]["run_ids"] == ["run-a"]
 
     with pytest.raises(AggregateError, match="already exists"):

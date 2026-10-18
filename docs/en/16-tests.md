@@ -1,6 +1,6 @@
 # Tests
 
-This guide explains how to run the Lucis test suite from a local copy of the repository.
+This guide explains how to run the Yeny test suite from a local copy of the repository.
 
 If you just cloned the project, this is the page you should read first to validate that everything works locally.
 
@@ -20,7 +20,7 @@ tests/
 - `tests/test_utils`: tokenization, compaction, serialization, parallelization and mmap.
 - `tests/test_core`: behavior of `CoreEngine` and `LiteEngine`.
 - `tests/test_persistence`: saving, loading, versioning and rollback on SQLite.
-- `tests/test_integration`: End-to-end `Lucis` public API.
+- `tests/test_integration`: End-to-end `Yeny` public API.
 
 ## Preparation
 
@@ -70,7 +70,7 @@ python -m pytest tests/test_persistence -v --tb=short
 
 ## Run by bookmark
 
-Lucis uses markers to separate quick integration tests:
+Yeny uses markers to separate quick integration tests:
 
 ```bash
 python -m pytest -m unit
@@ -80,7 +80,7 @@ python -m pytest -m integration
 ## Coverage
 
 ```bash
-python -m pytest --cov=src/lucis --cov-report=html
+python -m pytest --cov=src/yeny --cov-report=html
 ```
 
 This generates an HTML report with coverage details.
@@ -88,7 +88,7 @@ This generates an HTML report with coverage details.
 To see a quick summary in the console:
 
 ```bash
-python -m pytest --cov=src/lucis --cov-report=term-missing
+python -m pytest --cov=src/yeny --cov-report=term-missing
 ```
 
 ## What to try first
@@ -113,7 +113,7 @@ If you are fixing a specific bug, rerun just the affected folder before running 
 
 - Add edge cases in `tests/test_utils` for pure functions.
 - Use `tests/test_persistence` for save/load, versioning and rollback.
-- Use `tests/test_integration` to validate the `Lucis` public API.
+- Use `tests/test_integration` to validate the `Yeny` public API.
 
 ## Recommended flow for contributors
 

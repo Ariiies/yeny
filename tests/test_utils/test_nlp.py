@@ -1,6 +1,6 @@
 
 import pytest
-from lucis.utils.nlp import (
+from yeny.utils.nlp import (
     SimpleTokenizer,
     WordTokenizer,
     NgramTokenizer,

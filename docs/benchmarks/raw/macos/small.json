@@ -6,8 +6,8 @@
   "environment": {
     "python_version": "3.13.2",
     "python_implementation": "CPython",
-    "python_executable": "<redacted>/lucis/.venv/bin/python",
-    "lucis_version": "0.1.0",
+    "python_executable": "<redacted>/yeny/.venv/bin/python",
+    "yeny_version": "0.1.0",
     "platform": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
     "system": "Darwin",
     "release": "25.6.0",
@@ -33,7 +33,7 @@
     ],
     "warmups": 3,
     "repetitions": 10,
-    "output_dir": "<redacted>/lucis/benchmarks/results",
+    "output_dir": "<redacted>/yeny/benchmarks/results",
     "require_memory": true
   },
   "datasets": [
@@ -513,7 +513,7 @@
       "engine": "core"
     },
     {
-      "name": "lcs_write",
+      "name": "yny_write",
       "unit": "ns",
       "samples": [
         2394125
@@ -528,7 +528,7 @@
       "engine": "core"
     },
     {
-      "name": "lcs_artifact_size",
+      "name": "yny_artifact_size",
       "unit": "bytes",
       "samples": [
         362548
@@ -2555,7 +2555,7 @@
       "engine": "lite"
     },
     {
-      "name": "lcs_write",
+      "name": "yny_write",
       "unit": "ns",
       "samples": [
         2292458
@@ -2570,7 +2570,7 @@
       "engine": "lite"
     },
     {
-      "name": "lcs_artifact_size",
+      "name": "yny_artifact_size",
       "unit": "bytes",
       "samples": [
         354548

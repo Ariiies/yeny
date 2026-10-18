@@ -7,7 +7,7 @@ Complete end-to-end examples for common use cases. All examples are drafts with 
 ## 1. Email search engine
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 emails = {
     "email_001": "Reunión de proyecto mañana a las 10am en la sala de conferencias",
@@ -16,10 +16,10 @@ emails = {
     "email_004": "Recordatorio: entregar informe trimestral antes del viernes",
 }
 
-luc = Lucis(name="emails", engine="lite")
-luc.index(emails)
+yn = Yeny(name="emails", engine="lite")
+yn.index(emails)
 
-response = luc.search("proyecto")
+response = yn.search("proyecto")
 for r in response.results:
     print(f"  #{r.rank} [{r.doc_id}] score={r.score:.4f}")
     print(f"    {emails[r.doc_id][:80]}")
@@ -30,10 +30,10 @@ for r in response.results:
 ## 2. Blog Article Finder with SQLite
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions
+from yeny import Yeny
+from yeny.config import YenyOptions
 
-luc = Lucis.from_sqlite_table(
+yn = Yeny.from_sqlite_table(
     db_path="blog.db",
     table_name="posts",
     text_column="contenido",
@@ -43,15 +43,15 @@ luc = Lucis.from_sqlite_table(
 )
 
 # Buscar
-response = luc.search("tutorial python", top_k=5)
+response = yn.search("tutorial python", top_k=5)
 for r in response.results:
     print(f"  {r.doc_id}: {r.score:.4f}")
 
 # The factory persists automatically; a new process can reopen it:
-luc = Lucis(
+yn = Yeny(
     name="blog_idx",
     engine="core",
-    options=LucisOptions(storage_type="sqlite", db_path="blog.db"),
+    options=YenyOptions(storage_type="sqlite", db_path="blog.db"),
 )
 ```
 
@@ -62,7 +62,7 @@ luc = Lucis(
 Character n-grams allow you to find partial matches and tolerate typos:
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 productos = {
     "p1": "Laptop Dell Inspiron 15",
@@ -71,14 +71,14 @@ productos = {
     "p4": "Teclado Logitech MX Keys",
 }
 
-luc = Lucis(
+yn = Yeny(
     name="productos",
     engine="lite",
 )
-luc.index(productos)
+yn.index(productos)
 
 # "lapto" matchea con "Laptop" gracias a los n-gramas compartidos
-response = luc.search("lapto dell")
+response = yn.search("lapto dell")
 for r in response.results:
     print(f"  {r.doc_id}: {r.score:.4f} → {productos[r.doc_id]}")
 ```
@@ -88,12 +88,12 @@ for r in response.results:
 ## 4. Worker with MySQL database
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions, TableSource
+from yeny import Yeny
+from yeny.config import YenyOptions, TableSource
 
 MYSQL_URL = "mysql+pymysql://user:pass@localhost/mi_db"
 
-luc = Lucis.from_table(
+yn = Yeny.from_table(
     TableSource(
         table="articulos",
         connection_url=MYSQL_URL,
@@ -103,10 +103,10 @@ luc = Lucis.from_table(
     ),
     name="articulos_idx",
     engine="lite",
-    options=LucisOptions(max_loaded_shards=6, memory_limit_mb=2048),
+    options=YenyOptions(max_loaded_shards=6, memory_limit_mb=2048),
 )
 
-worker = luc.create_worker(
+worker = yn.create_worker(
     interval=120,
     connection_url=MYSQL_URL,
     auto_purge=True,
@@ -116,7 +116,7 @@ worker = luc.create_worker(
 )
 worker.start()
 
-# Tu aplicación web usa luc.search() normalmente
+# Tu aplicación web usa yn.search() normalmente
 # El worker actualiza el índice cada 2 minutos sin interrumpir búsquedas
 ```
 
@@ -127,8 +127,8 @@ worker.start()
 To search multiple fields simultaneously, concatenate the fields when indexing:
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions
+from yeny import Yeny
+from yeny.config import YenyOptions
 
 articulos = [
     {"titulo": "Guía de Python", "cuerpo": "Aprende Python desde cero", "tags": "tutorial python"},
@@ -142,24 +142,24 @@ for i, art in enumerate(articulos):
     texto = f"{art['titulo']} {art['cuerpo']} {art['tags']}"
     datos[f"art_{i}"] = texto
 
-luc = Lucis(name="articulos", engine="core")
-luc.index(datos)
+yn = Yeny(name="articulos", engine="core")
+yn.index(datos)
 
 # Busca en todos los campos a la vez
-response = luc.search("python api")
+response = yn.search("python api")
 ```
 
 ---
 
-## 6. Modular use — Standalone function without Lucis
+## 6. Modular use — Standalone function without Yeny
 
-You can use Lucis functions without the main class:
+You can use Yeny functions without the main class:
 
 ```python
-from lucis.utils.index import build_index, get_doc_len
-from lucis.utils.index import compute_tfidf
-from lucis.utils.math.core import sparse_cosine_similarity
-from lucis.utils.nlp import WordTokenizer
+from yeny.utils.index import build_index, get_doc_len
+from yeny.utils.index import compute_tfidf
+from yeny.utils.math.core import sparse_cosine_similarity
+from yeny.utils.nlp import WordTokenizer
 
 # Corpus
 corpus = [
@@ -198,27 +198,27 @@ print(f"Similitud: {sim:.4f}")
 ## 7. Migration between storages
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 # Empezar con JSON (desarrollo)
-luc = Lucis(name="mi_idx", engine="lite")
-luc.index(mis_datos)
-luc.save()
+yn = Yeny(name="mi_idx", engine="lite")
+yn.index(mis_datos)
+yn.save()
 
 # Migrar a SQLite (producción)
-luc_prod = Lucis(
+luc_prod = Yeny(
     name="mi_idx",
     engine="lite",
-    options=LucisOptions(storage_type="sqlite", db_path="prod.db"),
+    options=YenyOptions(storage_type="sqlite", db_path="prod.db"),
 )
 luc_prod.index(mis_datos)  # re-indexar con el nuevo storage
 luc_prod.save()
 
 # O migrar a PostgreSQL
-luc_pg = Lucis(
+luc_pg = Yeny(
     name="mi_idx",
     engine="lite",
-    options=LucisOptions(
+    options=YenyOptions(
         storage_type="alchemy",
         connection_url="postgresql+psycopg2://user:pass@host/db",
     ),
@@ -234,17 +234,17 @@ luc_pg.save()
 ```python
 import json
 import time
-from lucis import Lucis
-from lucis.config import LucisOptions
+from yeny import Yeny
+from yeny.config import YenyOptions
 
-luc = Lucis(
+yn = Yeny(
     name="prod_idx",
     engine="lite",
-    options=LucisOptions(storage_type="sqlite", db_path="prod.db"),
+    options=YenyOptions(storage_type="sqlite", db_path="prod.db"),
 )
 
 # Health check puntual con benchmark
-report = luc.health_check(benchmark_query="test de latencia")
+report = yn.health_check(benchmark_query="test de latencia")
 print(report)
 
 # Exportar para sistema de monitoreo
@@ -252,7 +252,7 @@ data = report.to_dict()
 # enviar_a_datadog(data)  # o prometheus, grafana, etc.
 
 # Monitoreo continuo
-monitor = luc.health_monitor(interval=60)
+monitor = yn.health_monitor(interval=60)
 monitor.start()
 
 # ... aplicación en ejecución ...
@@ -266,8 +266,8 @@ monitor.print_summary()
 ## 9. Custom Preprocessor with Advanced Cleanup
 
 ```python
-from lucis import Lucis
-from lucis.utils.nlp import (
+from yeny import Yeny
+from yeny.utils.nlp import (
     WordTokenizer,
     remove_html_tags,
     remove_urls,
@@ -285,12 +285,12 @@ def mi_preprocesador(text):
     text = lowercase(text)
     return WordTokenizer()(text)
 
-luc = Lucis(
+yn = Yeny(
     name="web_scraping",
     engine="core",
     preprocessor=mi_preprocesador,
 )
-luc.index(datos_web)
+yn.index(datos_web)
 ```
 
 ---
@@ -298,25 +298,25 @@ luc.index(datos_web)
 ## 10. Rollback to previous version
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions
+from yeny import Yeny
+from yeny.config import YenyOptions
 
-luc = Lucis(
+yn = Yeny(
     name="mi_idx",
     engine="lite",
-    options=LucisOptions(storage_type="sqlite", db_path="app.db"),
+    options=YenyOptions(storage_type="sqlite", db_path="app.db"),
 )
 
 # Ver versiones disponibles
-versiones = luc.list_versions()
+versiones = yn.list_versions()
 for v in versiones:
     print(v)
 
 # Volver a la versión anterior y recargarla
-luc.rollback()
+yn.rollback()
 
 # Verificar
-report = luc.health_check()
+report = yn.health_check()
 print(f"Docs: {report.total_docs}")
 ```
 

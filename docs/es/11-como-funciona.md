@@ -1,4 +1,4 @@
-# Cómo funciona Lucis
+# Cómo funciona Yeny
 
 Esta página explica los internos del motor de búsqueda: qué estructuras de datos se construyen, cómo se calcula la relevancia, y cómo se optimiza la memoria.
 
@@ -6,7 +6,7 @@ Esta página explica los internos del motor de búsqueda: qué estructuras de da
 
 ## Índice invertido
 
-El corazón de Lucis es un **índice invertido** (inverted index): un diccionario que mapea cada palabra del vocabulario a la lista de documentos donde aparece, junto con su frecuencia.
+El corazón de Yeny es un **índice invertido** (inverted index): un diccionario que mapea cada palabra del vocabulario a la lista de documentos donde aparece, junto con su frecuencia.
 
 ### Ejemplo conceptual
 
@@ -45,7 +45,7 @@ Cada entrada (`{doc_id: frecuencia}`) se llama **posting list**.
 
 ## CompactPostings — Posting lists eficientes
 
-En lugar de diccionarios Python (`{doc_id: freq}`), Lucis almacena cada posting list como dos arrays paralelos ordenados:
+En lugar de diccionarios Python (`{doc_id: freq}`), Yeny almacena cada posting list como dos arrays paralelos ordenados:
 
 ```
 CompactPostings:
@@ -131,9 +131,9 @@ No calcula IDF ni normas de documento. Esto lo hace más rápido pero menos prec
 
 ---
 
-## Formato binario .lcs
+## Formato binario .yny
 
-Para persistencia ultra-eficiente, Lucis puede guardar shards en formato binario `.lcs` (Lucis Compact Storage) que se carga vía memory-mapped I/O:
+Para persistencia ultra-eficiente, Yeny puede guardar shards en formato binario `.yny` (Yeny Compact Storage) que se carga vía memory-mapped I/O:
 
 ```
 ┌────────────────────────────────────┐
@@ -154,15 +154,15 @@ Para persistencia ultra-eficiente, Lucis puede guardar shards en formato binario
 
 - **Carga casi instantánea**: El OS mapea el archivo sin copiarlo a RAM.
 - **RAM bajo demanda**: Solo las páginas accedidas se cargan en memoria física.
-- **Compartido entre procesos**: Múltiples workers pueden leer el mismo `.lcs`.
+- **Compartido entre procesos**: Múltiples workers pueden leer el mismo `.yny`.
 
-Los archivos `.lcs` se generan automáticamente cuando guardas un índice con `generate_lcs()` o durante la indexación con storage binario.
+Los archivos `.yny` se generan automáticamente cuando guardas un índice con `generate_yny()` o durante la indexación con storage binario.
 
 ---
 
 ## Shadow indexing — Reindexación sin downtime
 
-Cuando llamas a `reindex()`, Lucis no destruye el índice activo. En su lugar:
+Cuando llamas a `reindex()`, Yeny no destruye el índice activo. En su lugar:
 
 1. **Crea una nueva versión** con un nombre físico versionado (ej. `mi_idx__v20240315_120000`).
 2. **Construye el índice** en segundo plano sobre la nueva versión.
@@ -175,7 +175,7 @@ Esto es el mecanismo que subyace tanto a `reindex()` como al `IndexWorker`.
 
 ## Paralelismo
 
-Lucis usa `concurrent.futures.ThreadPoolExecutor` para paralelizar operaciones costosas:
+Yeny usa `concurrent.futures.ThreadPoolExecutor` para paralelizar operaciones costosas:
 
 - **Búsqueda multi-shard**: Cada shard se busca en un thread independiente, los resultados se fusionan y re-rankean.
 - **Persistencia**: Los shards se guardan en paralelo.

@@ -1,18 +1,18 @@
 # Excepciones
 
-Lucis define una jerarquía de excepciones para manejar errores de forma granular. Todas heredan de `LucisError`.
+Yeny define una jerarquía de excepciones para manejar errores de forma granular. Todas heredan de `YenyError`.
 
 ---
 
 ## Jerarquía
 
 ```
-LucisError (base)
-├── LucisEmptyCorpusError      — Corpus vacío
-├── LucisInvalidDocumentError  — Documento inválido
-├── LucisEngineError           — Error del motor
-├── LucisSearchError           — Error en búsqueda
-└── LucisTokenizationError     — Error en tokenización
+YenyError (base)
+├── YenyEmptyCorpusError      — Corpus vacío
+├── YenyInvalidDocumentError  — Documento inválido
+├── YenyEngineError           — Error del motor
+├── YenySearchError           — Error en búsqueda
+└── YenyTokenizationError     — Error en tokenización
 ```
 
 ---
@@ -20,13 +20,13 @@ LucisError (base)
 ## Importación
 
 ```python
-from lucis.exceptions import (
-    LucisError,
-    LucisEmptyCorpusError,
-    LucisInvalidDocumentError,
-    LucisEngineError,
-    LucisSearchError,
-    LucisTokenizationError,
+from yeny.exceptions import (
+    YenyError,
+    YenyEmptyCorpusError,
+    YenyInvalidDocumentError,
+    YenyEngineError,
+    YenySearchError,
+    YenyTokenizationError,
 )
 ```
 
@@ -34,38 +34,38 @@ from lucis.exceptions import (
 
 ## Descripción de cada excepción
 
-### `LucisError`
+### `YenyError`
 
-Excepción base. Atrápala para capturar cualquier error de Lucis:
+Excepción base. Atrápala para capturar cualquier error de Yeny:
 
 ```python
 try:
-    resultado = luc.search("algo")
-except LucisError as e:
-    print(f"Error de Lucis: {e}")
+    resultado = yn.search("algo")
+except YenyError as e:
+    print(f"Error de Yeny: {e}")
 ```
 
-### `LucisEmptyCorpusError`
+### `YenyEmptyCorpusError`
 
 Se lanza cuando intentas indexar un corpus vacío o sin documentos válidos.
 
 ```python
 try:
-    luc.index({})
-except LucisEmptyCorpusError:
+    yn.index({})
+except YenyEmptyCorpusError:
     print("No hay documentos que indexar")
 ```
 
 Mensaje por defecto: `"The corpus is empty or contains no valid documents"`.
 
-### `LucisInvalidDocumentError`
+### `YenyInvalidDocumentError`
 
 Se lanza cuando un documento tiene tipo incorrecto u otro problema de formato.
 
 ```python
 try:
-    luc.index({1: 123})  # valor no es string
-except LucisInvalidDocumentError as e:
+    yn.index({1: 123})  # valor no es string
+except YenyInvalidDocumentError as e:
     print(e)             # "Invalid document at index 0: ..."
     print(e.doc_index)   # 0
 ```
@@ -73,14 +73,14 @@ except LucisInvalidDocumentError as e:
 Atributos:
 - `doc_index` (`int | None`): Índice del documento problemático.
 
-### `LucisEngineError`
+### `YenyEngineError`
 
 Se lanza cuando hay un error interno del motor de cálculo.
 
 ```python
 try:
-    luc.search("algo")
-except LucisEngineError as e:
+    yn.search("algo")
+except YenyEngineError as e:
     print(e)              # "Error in engine 'CoreEngine': ..."
     print(e.engine_name)  # "CoreEngine"
 ```
@@ -88,14 +88,14 @@ except LucisEngineError as e:
 Atributos:
 - `engine_name` (`str`): Nombre del motor que falló.
 
-### `LucisSearchError`
+### `YenySearchError`
 
 Se lanza cuando hay un error durante la búsqueda.
 
 ```python
 try:
-    luc.search("algo")
-except LucisSearchError as e:
+    yn.search("algo")
+except YenySearchError as e:
     print(e)        # "Error during search for query 'algo': ..."
     print(e.query)  # "algo"
 ```
@@ -103,14 +103,14 @@ except LucisSearchError as e:
 Atributos:
 - `query` (`str`): La query que causó el error.
 
-### `LucisTokenizationError`
+### `YenyTokenizationError`
 
 Se lanza cuando hay un error durante la tokenización.
 
 ```python
 try:
-    luc.index(datos)
-except LucisTokenizationError:
+    yn.index(datos)
+except YenyTokenizationError:
     print("Error procesando texto")
 ```
 
@@ -119,19 +119,19 @@ except LucisTokenizationError:
 ## Patrón recomendado
 
 ```python
-from lucis.exceptions import LucisEmptyCorpusError, LucisSearchError, LucisError
+from yeny.exceptions import YenyEmptyCorpusError, YenySearchError, YenyError
 
 try:
-    luc.index(mis_datos)
-    resultados = luc.search("mi consulta")
-except LucisEmptyCorpusError:
+    yn.index(mis_datos)
+    resultados = yn.search("mi consulta")
+except YenyEmptyCorpusError:
     # Manejar caso de corpus vacío
     print("Sin datos para indexar")
-except LucisSearchError as e:
+except YenySearchError as e:
     # Manejar error de búsqueda específicamente
     print(f"Fallo en búsqueda: {e}")
-except LucisError as e:
-    # Catch-all para otros errores de Lucis
+except YenyError as e:
+    # Catch-all para otros errores de Yeny
     print(f"Error inesperado: {e}")
 ```
 

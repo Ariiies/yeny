@@ -1,7 +1,7 @@
 """JSON and SQLite persistence benchmark scenarios.
 
-Saves are measured through ``Lucis.save`` and loads through a fresh
-autoloading ``Lucis`` constructor, which is the boundary a user experiences.
+Saves are measured through ``Yeny.save`` and loads through a fresh
+autoloading ``Yeny`` constructor, which is the boundary a user experiences.
 Artifact sizes are recorded in real bytes; the SQLite size is taken after a
 commit and includes any journal sidecar files.
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Sequence
 
-from lucis import Lucis
+from yeny import Yeny
 
 from ..metrics import make_measurement, measure_once, measure_operation
 from ..queries import GeneratedQueries
@@ -37,7 +37,7 @@ def _sqlite_artifact_size(db_path: Path) -> int:
 
 
 def _warm_category_samples(
-    lucis: Lucis,
+    yeny: Yeny,
     queries: GeneratedQueries,
     *,
     warmups: int,
@@ -46,7 +46,7 @@ def _warm_category_samples(
     """Measure warm public searches grouped by query category.
 
     Args:
-        lucis: Indexed and already loaded Lucis instance.
+        yeny: Indexed and already loaded Yeny instance.
         queries: Deterministic query set used for searches.
         warmups: Unmeasured searches executed before each query.
         repetitions: Measured searches per query; the ``repeated`` category
@@ -58,14 +58,14 @@ def _warm_category_samples(
     category_samples: Dict[str, List[int]] = {}
     for query in queries.items:
         for _ in range(warmups):
-            lucis.search(query.text, top_k=10)
+            yeny.search(query.text, top_k=10)
         measured_repetitions = (
             query.repetitions
             if query.category == "repeated"
             else repetitions
         )
         samples = measure_operation(
-            lambda query_text=query.text: lucis.search(
+            lambda query_text=query.text: yeny.search(
                 query_text,
                 top_k=10,
             ),
@@ -75,11 +75,11 @@ def _warm_category_samples(
     return category_samples
 
 
-def measure_json_save(lucis: Lucis, *, engine: str) -> List[Dict[str, Any]]:
+def measure_json_save(yeny: Yeny, *, engine: str) -> List[Dict[str, Any]]:
     """Measure JSON persistence and artifact size for one indexed instance.
 
     Args:
-        lucis: Indexed instance using ``JSONStorage``.
+        yeny: Indexed instance using ``JSONStorage``.
         engine: Engine key attached to the measurements.
 
     Returns:
@@ -90,8 +90,8 @@ def measure_json_save(lucis: Lucis, *, engine: str) -> List[Dict[str, Any]]:
         FileNotFoundError: If the expected JSON artifact is missing after
             the save.
     """
-    samples = measure_operation(lucis.save)
-    artifact = Path(lucis.storage.directory) / f"{lucis.name}.json"
+    samples = measure_operation(yeny.save)
+    artifact = Path(yeny.storage.directory) / f"{yeny.name}.json"
     size = artifact.stat().st_size
     return [
         make_measurement("json_save", samples, engine=engine),
@@ -104,23 +104,23 @@ def measure_json_save(lucis: Lucis, *, engine: str) -> List[Dict[str, Any]]:
     ]
 
 
-def measure_sqlite_save(lucis: Lucis, *, engine: str) -> List[Dict[str, Any]]:
+def measure_sqlite_save(yeny: Yeny, *, engine: str) -> List[Dict[str, Any]]:
     """Measure SQLite persistence and on-disk artifact size.
 
     The connection is committed before reading file sizes so the reported
     bytes describe a complete, readable database.
 
     Args:
-        lucis: Indexed instance using ``SQLiteStorage``.
+        yeny: Indexed instance using ``SQLiteStorage``.
         engine: Engine key attached to the measurements.
 
     Returns:
         The ``sqlite_save`` duration in nanoseconds and the
         ``sqlite_artifact_size`` in bytes.
     """
-    samples = measure_operation(lucis.save)
-    lucis.storage.conn.commit()
-    size = _sqlite_artifact_size(Path(lucis.storage.db_path))
+    samples = measure_operation(yeny.save)
+    yeny.storage.conn.commit()
+    size = _sqlite_artifact_size(Path(yeny.storage.db_path))
     return [
         make_measurement("sqlite_save", samples, engine=engine),
         make_measurement(
@@ -134,7 +134,7 @@ def measure_sqlite_save(lucis: Lucis, *, engine: str) -> List[Dict[str, Any]]:
 
 def measure_standard_load(
     backend: str,
-    constructor: Callable[[], Lucis],
+    constructor: Callable[[], Yeny],
     *,
     engine: str,
     queries: GeneratedQueries,
@@ -152,7 +152,7 @@ def measure_standard_load(
     Args:
         backend: Storage backend label, such as ``json`` or ``sqlite``.
         constructor: Zero-argument callable returning a freshly loaded,
-            autoloading Lucis instance.
+            autoloading Yeny instance.
         engine: Engine key attached to the measurements.
         queries: Deterministic query set used for searches.
         expected_results: Ranked results collected right after the index

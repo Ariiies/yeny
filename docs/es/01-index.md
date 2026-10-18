@@ -1,8 +1,8 @@
-# Lucis
+# Yeny
 
 > **Un toolkit NLP minimalista y generador de motores de búsqueda para Python.**
 
-Lucis es una librería ligera y flexible diseñada para ayudar a desarrolladores a construir e integrar funcionalidad de búsqueda en sus aplicaciones con cero fricción.
+Yeny es una librería ligera y flexible diseñada para ayudar a desarrolladores a construir e integrar funcionalidad de búsqueda en sus aplicaciones con cero fricción.
 
 Sigue una filosofía de **"poder progresivo"**:
 
@@ -17,32 +17,32 @@ Sigue una filosofía de **"poder progresivo"**:
 
 ```bash
 # Instalar el núcleo (sin dependencias externas)
-pip install lucis
+pip install yeny
 
 # Instalar con soporte para bases de datos SQL (MySQL, PostgreSQL, etc.)
-pip install lucis[alchemy]
+pip install yeny[alchemy]
 
 # MySQL
-pip install lucis[mysql]
+pip install yeny[mysql]
 
 # PostgreSQL
-pip install lucis[postgresql]
+pip install yeny[postgresql]
 ```
 
 ## Ejemplo rápido
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 # Tu dataset (diccionario o lista)
 documentos = {
     "doc1": "Python es increíble para ciencia de datos e IA",
     "doc2": "Los motores de búsqueda son sistemas complejos",
-    "doc3": "Lucis hace simple construir buscadores"
+    "doc3": "Yeny hace simple construir buscadores"
 }
 
 # Inicializar y construir índice
-buscador = Lucis.from_dict(documentos, name="mi_indice")
+buscador = Yeny.from_dict(documentos, name="mi_indice")
 
 # ¡Buscar!
 resultados = buscador.search("python búsqueda", top_k=2)
@@ -71,7 +71,7 @@ SearchResponse(
 
 ### Empezando
 - [Primeros pasos](02-primeros-pasos.md) — Tu primer buscador en 5 líneas
-- [La clase Lucis](03-objeto-lucis.md) — Referencia completa del objeto principal
+- [La clase Yeny](03-objeto-yeny.md) — Referencia completa del objeto principal
 
 ### Conceptos fundamentales
 - [Motores de búsqueda](04-motores.md) — CoreEngine vs LiteEngine
@@ -90,7 +90,7 @@ SearchResponse(
 - [Health Monitoring](10-salud.md) — Monitoreo de RAM, timing y diagnósticos
 
 ### Referencia técnica
-- [Cómo funciona](11-como-funciona.md) — Internos: índice invertido, formato .lcs, matemáticas
+- [Cómo funciona](11-como-funciona.md) — Internos: índice invertido, formato .yny, matemáticas
 - [Modelos de datos](12-modelos-datos.md) — SearchResult, SearchResponse, HealthReport
 - [Excepciones](13-excepciones.md) — Manejo de errores
 - [Recetas](14-recetas.md) — Ejemplos prácticos completos

@@ -1,4 +1,4 @@
-"""Configuration models for the Lucis benchmark suite.
+"""Configuration models for the Yeny benchmark suite.
 
 The module validates both deterministic dataset profiles and the small set of
 options accepted by the benchmark runner. Configuration errors are reported

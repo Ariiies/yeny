@@ -1,11 +1,11 @@
 # Benchmarks
 
-Lucis includes a small, deterministic benchmark suite for answering practical
+Yeny includes a small, deterministic benchmark suite for answering practical
 questions about its two public engines:
 
 - How long does it take to build an index?
 - How long do different kinds of searches take?
-- How long do JSON, SQLite, and `.lcs` persistence operations take?
+- How long do JSON, SQLite, and `.yny` persistence operations take?
 - How large are the generated artifacts?
 - What happens when an index is loaded normally or through `mmap`?
 - Does persistence preserve result IDs, ranking order, and scores?
@@ -16,7 +16,7 @@ throughput, or performance against external search projects.
 
 ## Quick start
 
-Run commands from a local clone of the Lucis repository:
+Run commands from a local clone of the Yeny repository:
 
 ```bash
 python -m pip install -e .
@@ -75,7 +75,7 @@ not mean the measured time will be identical.
 
 `CoreEngine` uses TF-IDF and cosine similarity. `LiteEngine` uses normalized
 term frequency. Their ranking behavior is different, but both are pure-Python
-engines exposed by the same `Lucis` facade.
+engines exposed by the same `Yeny` facade.
 
 For timing fairness, the benchmark gives both engines the exact same corpus,
 query set, `top_k=10`, and `WordTokenizer`. This is important because
@@ -106,21 +106,21 @@ variability range.
 | Metric | Measured boundary |
 |---|---|
 | `dataset_generation` | Deterministic corpus generation only |
-| `index_build` | `Lucis.index(..., persist=False)` |
-| `index_e2e_json` | Construction through `Lucis.from_dict`, including automatic JSON persistence |
-| `search_first` | First public `Lucis.search` after building |
+| `index_build` | `Yeny.index(..., persist=False)` |
+| `index_e2e_json` | Construction through `Yeny.from_dict`, including automatic JSON persistence |
+| `search_first` | First public `Yeny.search` after building |
 | `search_warm` | Public searches after unmeasured warm-ups, grouped by query category |
-| `json_save`, `sqlite_save` | Public `Lucis.save` |
+| `json_save`, `sqlite_save` | Public `Yeny.save` |
 | `*_artifact_size` | Real bytes written on disk |
-| `lcs_write` | Engine `.lcs` serialization |
-| `load_standard` | Autoloading `Lucis` constructor for JSON or SQLite |
+| `yny_write` | Engine `.yny` serialization |
+| `load_standard` | Autoloading `Yeny` constructor for JSON or SQLite |
 | `mmap_load` | Engine `load_mmap` operation |
 | `search_first_*`, `search_warm_*` | Public search after standard or mapped loading |
 | `roundtrip_verified` | Number of queries preserving IDs, ranking order, and scores |
 | `memory_*` | RSS observations for one complete worker phase |
 
 Search time includes query preprocessing and response construction because the
-timer surrounds the public `Lucis.search` call.
+timer surrounds the public `Yeny.search` call.
 
 Round-trip verification compares, for every query and every backend (JSON,
 SQLite, and `mmap`): the number of results, the document ID at each ranking
@@ -139,11 +139,11 @@ engine
 ├── build          generates the corpus, builds, searches, persists everything
 ├── load_json      reloads the JSON artifact in a cold interpreter
 ├── load_sqlite    reloads the SQLite artifact in a cold interpreter
-└── load_mmap      maps the .lcs artifact in a cold interpreter
+└── load_mmap      maps the .yny artifact in a cold interpreter
 ```
 
 The build process writes the dataset manifest, the query set, the expected
-per-query results, and the JSON/SQLite/`.lcs` artifacts into the workspace.
+per-query results, and the JSON/SQLite/`.yny` artifacts into the workspace.
 Each load process reads that contract — without regenerating the corpus — and
 measures exactly one backend, so no backend inherits import caches or engine
 state warmed by a previous one. Process creation time stays outside the
@@ -175,7 +175,7 @@ Each result JSON identifies its machine with:
 | Metadata | Source |
 |---|---|
 | Python version, implementation, executable | Standard library |
-| Lucis version | Package metadata |
+| Yeny version | Package metadata |
 | System, release, platform, architecture | Standard library |
 | CPU model | `/proc/cpuinfo`, `PROCESSOR_IDENTIFIER`, or `sysctl` |
 | Logical CPUs | `os.cpu_count()` |
@@ -202,7 +202,7 @@ python -m benchmarks run --profile small
 Use another output directory if preferred:
 
 ```bash
-python -m benchmarks run --profile small --output /tmp/lucis-results
+python -m benchmarks run --profile small --output /tmp/yeny-results
 ```
 
 Validate the full result contract:
@@ -226,7 +226,7 @@ python -m benchmarks report benchmarks/results/<run>.json
 
 Neither command overwrites an existing result or report.
 
-## Published Lucis 0.1.0 campaign
+## Published Yeny 0.1.0 campaign
 
 The repository includes a complete campaign run on Fedora, Ubuntu, Windows
 11, and macOS. It covers the `tiny`, `small`, `medium`, and `large` profiles
@@ -240,7 +240,7 @@ editorial summaries, and presentation under
 [English summary](../benchmarks/reports/summary.en.md) and its
 caveats before quoting a number.
 
-The results were collected at Lucis 0.1.0 commit `a6ac3de8`. Each profile has
+The results were collected at Yeny 0.1.0 commit `a6ac3de8`. Each profile has
 one run per machine, while CPU, Python version, and operating system differ.
 Core and Lite can therefore be compared within one run, but values across
 machines are not an operating-system ranking. The macOS run is explicitly
@@ -257,7 +257,7 @@ python -m benchmarks aggregate benchmarks/results/*.json --output summary.md
 
 This writes `summary.md` plus a traceable `summary.aggregate.json`. The
 aggregator first validates every file deeply, then refuses to mix runs that
-differ in schema version, Lucis version, commit, Python minor version,
+differ in schema version, Yeny version, commit, Python minor version,
 profile, dataset hash, query hash, engines, warm-ups, repetitions, or memory
 requirement. Runs from different operating systems or machines are reported
 as separate groups, never merged.

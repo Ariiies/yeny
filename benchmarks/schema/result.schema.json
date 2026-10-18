@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Ariiies/lucis/benchmarks/result.schema.json",
-  "title": "Lucis benchmark result",
+  "title": "Yeny benchmark result",
   "description": "Documentation schema for the benchmark result contract. Runtime validation is performed by benchmarks.results.validate_result without external dependencies; this file mirrors that contract for readers and tooling.",
   "type": "object",
   "required": [
@@ -36,7 +36,7 @@
     },
     "environment": {
       "type": "object",
-      "description": "Machine metadata: Python version/implementation/executable, Lucis version, OS fields, CPU model, logical CPUs, total RAM bytes, psutil version, memory mechanisms, perf_counter resolution, git commit/dirty."
+      "description": "Machine metadata: Python version/implementation/executable, Yeny version, OS fields, CPU model, logical CPUs, total RAM bytes, psutil version, memory mechanisms, perf_counter resolution, git commit/dirty."
     },
     "configuration": {
       "type": "object",

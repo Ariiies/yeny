@@ -2,7 +2,7 @@
 
     python seed_controlled_data.py
 
-These 10 records (Luis Aries, Aries Lucis, Cristiano Ronaldo, Real Madrid,
+These 10 records (Luis Aries, Aries Yeny, Cristiano Ronaldo, Real Madrid,
 Leo Messi, Vinicus Junior, My Chemical Romance, Autos Usados, Admin Publica,
 and dev service) exist so you always know **what a search should find**.
 Each one carries a stable ``reference`` and a fixed date (or ``None`` →
@@ -10,7 +10,7 @@ Each one carries a stable ``reference`` and a fixed date (or ``None`` →
 
 Sensitive fields (name/email/number) are encrypted before they touch the
 database; re-running skips duplicates by reference.  This file is small
-on purpose — it is auxiliary tooling, not part of the Lucis lesson.
+on purpose — it is auxiliary tooling, not part of the Yeny lesson.
 """
 from datetime import datetime
 
@@ -26,9 +26,9 @@ TARGET_LEADS: list[dict] = [
         "created_at": datetime(2026, 2, 19),
     },
     {
-        "reference": "target-aries-lucis",
-        "name": "Aries Lucis",
-        "email": "aries.lucis@lucis.dev",
+        "reference": "target-aries-yeny",
+        "name": "Aries Yeny",
+        "email": "aries.yeny@yeny.dev",
         "number": "+521551998877",
         "ip": "127.168.192.0",
         "created_at": None,  # → universal shard (9999_99)
@@ -108,7 +108,7 @@ def main():
         f"Controlled data ready: {inserted} inserted, {skipped} already existed "
         f"(table now holds {database.count_leads()} rows)."
     )
-    print("Try searching:  luis aries | hotmail 612 | aries lucis | 1271681924")
+    print("Try searching:  luis aries | hotmail 612 | aries yeny | 1271681924")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
-"""Small, reproducible benchmark infrastructure for Lucis.
+"""Small, reproducible benchmark infrastructure for Yeny.
 
 The package exposes deterministic data/query generation and the configuration
 models needed by the command-line runner. Benchmark execution remains outside
-the production ``lucis`` package.
+the production ``yeny`` package.
 """
 
 from .config import BenchmarkProfile, BenchmarkRunConfig, load_profiles

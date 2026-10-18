@@ -127,7 +127,7 @@ def ensure_table():
 
     This DDL is leads-specific (used by the seed scripts and by the
     playground when TABLE_NAME=leads).  ``created_at`` is NULL-able by
-    design: rows without a date land in Lucis' universal shard (9999_99).
+    design: rows without a date land in Yeny' universal shard (9999_99).
     """
     ddl = f"""
     CREATE TABLE IF NOT EXISTS {table_name()} (

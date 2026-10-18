@@ -1,17 +1,17 @@
 # Motores de búsqueda
 
-Lucis incluye dos motores de búsqueda con diferentes perfiles de rendimiento. Ambos funcionan en Python puro, sin dependencias externas.
+Yeny incluye dos motores de búsqueda con diferentes perfiles de rendimiento. Ambos funcionan en Python puro, sin dependencias externas.
 
 ---
 
-## CoreEngine — El corazón de Lucis
+## CoreEngine — El corazón de Yeny
 
 `CoreEngine` es el motor principal. Implementa **TF-IDF completo con similitud coseno**, lo que lo hace ideal cuando la precisión de los resultados es lo más importante.
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
-buscador = Lucis.from_dict(datos, name="preciso", engine="core")
+buscador = Yeny.from_dict(datos, name="preciso", engine="core")
 ```
 
 ### ¿Cómo funciona?
@@ -24,7 +24,7 @@ buscador = Lucis.from_dict(datos, name="preciso", engine="core")
 `WordTokenizer` — Extrae solo palabras (ignora números, convierte a minúsculas).
 
 ```python
-from lucis.utils.nlp import WordTokenizer
+from yeny.utils.nlp import WordTokenizer
 
 WordTokenizer()("Python 3.11 es increíble!")
 # → ["python", "es", "increíble"]
@@ -68,9 +68,9 @@ WordTokenizer()("Python 3.11 es increíble!")
 `LiteEngine` es un motor minimalista que usa solo **Term Frequency normalizado**. Sin IDF, sin similitud coseno. Esto lo hace significativamente más ligero en RAM y disco.
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
-buscador = Lucis.from_dict(datos, name="rapido", engine="lite")
+buscador = Yeny.from_dict(datos, name="rapido", engine="lite")
 ```
 
 ### ¿Cómo funciona?
@@ -88,7 +88,7 @@ No hay vectores, no hay IDF. Solo cuenta cuántas veces aparecen los términos d
 `CharNgramTokenizer(3)` con lowercase — Genera trigramas de caracteres, ideal para búsqueda fuzzy.
 
 ```python
-from lucis.utils.nlp import CharNgramTokenizer
+from yeny.utils.nlp import CharNgramTokenizer
 
 tokenizer = CharNgramTokenizer(3)
 tokenizer("python")
@@ -135,10 +135,10 @@ Esto significa que LiteEngine funciona bien con errores tipográficos y coincide
 
 ## Uso standalone del engine
 
-Los motores son componentes independientes. Puedes importarlos y usarlos directamente sin la clase `Lucis`, si solo necesitas las primitivas de búsqueda:
+Los motores son componentes independientes. Puedes importarlos y usarlos directamente sin la clase `Yeny`, si solo necesitas las primitivas de búsqueda:
 
 ```python
-from lucis.engines import CoreEngine
+from yeny.engines import CoreEngine
 
 # Crear engine directamente
 engine = CoreEngine()
@@ -157,7 +157,7 @@ for doc_id, score in resultados:
 ```
 
 ```python
-from lucis.engines import LiteEngine
+from yeny.engines import LiteEngine
 
 engine = LiteEngine()
 engine.build_index(["documento uno", "documento dos", "documento tres"])
@@ -174,14 +174,14 @@ Esto es útil cuando quieres integrar solo la lógica de búsqueda en tu propia 
 <!-- 
 ## 🔮 Próximamente — Motores optimizados (Plus)
 
-En futuras versiones, Lucis incluirá motores optimizados que aprovecharán
+En futuras versiones, Yeny incluirá motores optimizados que aprovecharán
 NumPy para operaciones vectorizadas SIMD y Polars para procesamiento 
 paralelo de grandes corpus:
 
 - **NumpyEngine**: batch_cosine_similarity, TF-IDF matricial
 - **PolarsEngine**: build_index paralelo para corpus masivos
 
-Instalar con: `pip install lucis[plus]`
+Instalar con: `pip install yeny[plus]`
 -->
 
 ## Siguiente paso

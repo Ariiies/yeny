@@ -1,4 +1,4 @@
-# Lucis benchmark report
+# Yeny benchmark report
 
 > These results describe one machine and one execution environment. They
 > are not search-quality measurements or universal performance guarantees.
@@ -20,7 +20,7 @@
 | python_implementation | CPython |
 | platform | macOS-26.6.1-arm64-arm-64bit-Mach-O |
 | machine | arm64 |
-| lucis_version | 0.1.0 |
+| yeny_version | 0.1.0 |
 | cpu_model | Apple M4 |
 | logical_cpu_count | 10 |
 | total_ram_bytes | 17179869184 (16.00 GiB) |
@@ -90,14 +90,14 @@
 | core | json_artifact_size | - | - | 6.06 MiB | 6.06 MiB | 1 |
 | core | sqlite_save | - | - | 56.11 ms | 56.11 ms | 1 |
 | core | sqlite_artifact_size | - | - | 5.18 MiB | 5.18 MiB | 1 |
-| core | lcs_write | - | - | 5.31 ms | 5.31 ms | 1 |
-| core | lcs_artifact_size | - | - | 2.21 MiB | 2.21 MiB | 1 |
+| core | yny_write | - | - | 5.31 ms | 5.31 ms | 1 |
+| core | yny_artifact_size | - | - | 2.21 MiB | 2.21 MiB | 1 |
 | lite | json_save | - | - | 136.62 ms | 136.62 ms | 1 |
 | lite | json_artifact_size | - | - | 5.71 MiB | 5.71 MiB | 1 |
 | lite | sqlite_save | - | - | 58.33 ms | 58.33 ms | 1 |
 | lite | sqlite_artifact_size | - | - | 5.18 MiB | 5.18 MiB | 1 |
-| lite | lcs_write | - | - | 4.91 ms | 4.91 ms | 1 |
-| lite | lcs_artifact_size | - | - | 2.14 MiB | 2.14 MiB | 1 |
+| lite | yny_write | - | - | 4.91 ms | 4.91 ms | 1 |
+| lite | yny_artifact_size | - | - | 2.14 MiB | 2.14 MiB | 1 |
 
 ## Standard loads
 
@@ -213,7 +213,7 @@ Each loaded index returned the same documents, in the same ranking order, with t
 
 ## Limitations
 
-- Search latencies use the public `Lucis.search` boundary and include query preprocessing and response wrapping.
+- Search latencies use the public `Yeny.search` boundary and include query preprocessing and response wrapping.
 - Every backend load (JSON, SQLite, mmap) starts in its own fresh interpreter, so Python state is process-cold; the OS page cache is not controlled and may still warm later runs.
 - Memory values describe the whole phase workflow, not the exclusive size of any engine object.
 - Tree RSS sums resident pages shared by fork (copy-on-write), so it can overstate exclusive usage.

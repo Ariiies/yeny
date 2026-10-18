@@ -1,8 +1,8 @@
-# Lucis
+# Yeny
 
 > **A minimalist NLP toolkit and search engine generator for Python.**
 
-Lucis is a lightweight and flexible library designed to help developers build and integrate search functionality into their applications with zero friction.
+Yeny is a lightweight and flexible library designed to help developers build and integrate search functionality into their applications with zero friction.
 
 Follows a philosophy of **"progressive power"**:
 
@@ -17,32 +17,32 @@ Follows a philosophy of **"progressive power"**:
 
 ```bash
 # Instalar el núcleo (sin dependencias externas)
-pip install lucis
+pip install yeny
 
 # Instalar con soporte para bases de datos SQL (MySQL, PostgreSQL, etc.)
-pip install lucis[alchemy]
+pip install yeny[alchemy]
 
 # MySQL
-pip install lucis[mysql]
+pip install yeny[mysql]
 
 # PostgreSQL
-pip install lucis[postgresql]
+pip install yeny[postgresql]
 ```
 
 ## Quick example
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 # Tu dataset (diccionario o lista)
 documentos = {
     "doc1": "Python es increíble para ciencia de datos e IA",
     "doc2": "Los motores de búsqueda son sistemas complejos",
-    "doc3": "Lucis hace simple construir buscadores"
+    "doc3": "Yeny hace simple construir buscadores"
 }
 
 # Inicializar y construir índice
-buscador = Lucis.from_dict(documentos, name="mi_indice")
+buscador = Yeny.from_dict(documentos, name="mi_indice")
 
 # ¡Buscar!
 resultados = buscador.search("python búsqueda", top_k=2)
@@ -71,7 +71,7 @@ SearchResponse(
 
 ### Getting started
 - [First steps](02-first-steps.md) — Your first search engine in 5 lines
-- [The Lucis class](03-lucis-object.md) — Complete reference of the main object
+- [The Yeny class](03-yeny-object.md) — Complete reference of the main object
 
 ### Fundamental concepts
 - [Search Engines](04-engines.md) — CoreEngine vs LiteEngine
@@ -90,7 +90,7 @@ SearchResponse(
 - [Health Monitoring](10-health.md) — RAM monitoring, timing and diagnostics
 
 ### Technical reference
-- [How it works](11-how-it-works.md) — Internals: inverted index, .lcs format, math
+- [How it works](11-how-it-works.md) — Internals: inverted index, .yny format, math
 - [Data Models](12-data-models.md) — SearchResult, SearchResponse, HealthReport
 - [Exceptions](13-exceptions.md) — Error handling
 - [Recipes](14-recipes.md) — Complete practical examples

@@ -1,7 +1,7 @@
 
 import pytest
 
-from lucis.engines.lite import LiteEngine
+from yeny.engines.lite import LiteEngine
 
 @pytest.mark.unit
 class TestLiteEngine:

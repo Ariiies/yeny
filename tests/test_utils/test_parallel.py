@@ -1,6 +1,6 @@
 
 import pytest
-from lucis.utils.parallel import (
+from yeny.utils.parallel import (
     get_cpu_count,
     get_optimal_workers,
     parallel_preprocess,

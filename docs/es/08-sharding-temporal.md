@@ -1,6 +1,6 @@
 # Sharding temporal
 
-Cuando tu dataset contiene millones de documentos con fechas, cargar todo en RAM no es viable. El **sharding temporal** de Lucis particiona automáticamente los documentos en shards mensuales (`YYYY_MM`), de modo que solo los shards relevantes para una consulta se cargan en memoria.
+Cuando tu dataset contiene millones de documentos con fechas, cargar todo en RAM no es viable. El **sharding temporal** de Yeny particiona automáticamente los documentos en shards mensuales (`YYYY_MM`), de modo que solo los shards relevantes para una consulta se cargan en memoria.
 
 ---
 
@@ -8,7 +8,7 @@ Cuando tu dataset contiene millones de documentos con fechas, cargar todo en RAM
 
 ```
 ┌─────────────┐
-│   Lucis     │
+│   Yeny     │
 │  (Facade)   │
 └──────┬──────┘
        │
@@ -33,10 +33,10 @@ El sharding se activa automáticamente cuando `from_table` resuelve una
 columna de fecha:
 
 ```python
-from lucis import Lucis
-from lucis.config import TableSource
+from yeny import Yeny
+from yeny.config import TableSource
 
-luc = Lucis.from_table(
+yn = Yeny.from_table(
     TableSource(
         table="noticias",
         connection_url=DB_URL,
@@ -62,7 +62,7 @@ el shard global `9999_99`.
 
 ```python
 # Auto-detección: busca "created_at", "updated_at", "timestamp"
-luc = Lucis.from_table(
+yn = Yeny.from_table(
     TableSource("articulos", DB_URL, "contenido", date_column="auto")
 )
 ```
@@ -70,7 +70,7 @@ luc = Lucis.from_table(
 Si prefieres especificar la columna:
 
 ```python
-luc = Lucis.from_table(
+yn = Yeny.from_table(
     TableSource(
         "articulos", DB_URL, "contenido", date_column="fecha_publicacion"
     )
@@ -83,16 +83,16 @@ luc = Lucis.from_table(
 
 ```python
 # Todos los shards
-resultados = luc.search("seguridad")
+resultados = yn.search("seguridad")
 
 # Solo documentos de marzo 2024
-resultados = luc.search("seguridad", since="2024-03", until="2024-03")
+resultados = yn.search("seguridad", since="2024-03", until="2024-03")
 
 # Desde enero 2024 en adelante
-resultados = luc.search("seguridad", since="2024-01")
+resultados = yn.search("seguridad", since="2024-01")
 
 # Hasta febrero 2024
-resultados = luc.search("seguridad", until="2024-02")
+resultados = yn.search("seguridad", until="2024-02")
 ```
 
 Los filtros `since` y `until` aceptan:
@@ -112,13 +112,13 @@ Para datasets muy grandes, puedes limitar cuántos shards se mantienen cargados 
 ### Límite por cantidad
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions
+from yeny import Yeny
+from yeny.config import YenyOptions
 
-luc = Lucis(
+yn = Yeny(
     name="logs_idx",
     engine="lite",
-    options=LucisOptions(max_loaded_shards=6),
+    options=YenyOptions(max_loaded_shards=6),
 )
 ```
 
@@ -127,10 +127,10 @@ Cuando se necesita un shard nuevo y ya hay 6 cargados, el más antiguo (LRU) se 
 ### Límite por RAM
 
 ```python
-luc = Lucis(
+yn = Yeny(
     name="logs_idx",
     engine="lite",
-    options=LucisOptions(memory_limit_mb=2048),
+    options=YenyOptions(memory_limit_mb=2048),
 )
 ```
 
@@ -141,10 +141,10 @@ Los shards se desalojan cuando la suma de su RAM estimada supera el límite.
 Puedes usar ambos límites — el que se alcance primero activa el desalojo:
 
 ```python
-luc = Lucis(
+yn = Yeny(
     name="logs_idx",
     engine="lite",
-    options=LucisOptions(max_loaded_shards=12, memory_limit_mb=4096),
+    options=YenyOptions(max_loaded_shards=12, memory_limit_mb=4096),
 )
 ```
 
@@ -160,10 +160,10 @@ segundos. Se desalojan automáticamente cuando vence.
 Para datasets de más de 100K filas, usa `reindex_streaming` para evitar cargar todo en RAM:
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions, TableConfig, TableSource
+from yeny import Yeny
+from yeny.config import YenyOptions, TableConfig, TableSource
 
-luc = Lucis.from_table(
+yn = Yeny.from_table(
     TableSource(
         "articulos",
         "mysql+pymysql://user:pass@host/db",
@@ -171,7 +171,7 @@ luc = Lucis.from_table(
         date_column="fecha",
     ),
     engine="lite",
-    options=LucisOptions(max_loaded_shards=6, memory_limit_mb=2048),
+    options=YenyOptions(max_loaded_shards=6, memory_limit_mb=2048),
 )
 
 # Streaming: consume filas en lotes, indexa shard por shard
@@ -180,14 +180,14 @@ def row_stream():
         "articulos", text_column="contenido", date_column="fecha"
     )
 
-luc.reindex_streaming(row_stream())
+yn.reindex_streaming(row_stream())
 ```
 
 Si la lectura inicial de la tabla está garantizada **en orden cronológico**,
 habilita el streaming ordenado en la configuración del factory:
 
 ```python
-luc = Lucis.from_table(
+yn = Yeny.from_table(
     TableSource(
         "articulos",
         "mysql+pymysql://user:pass@host/db",
@@ -196,7 +196,7 @@ luc = Lucis.from_table(
     ),
     engine="lite",
     config=TableConfig(stream_ordered=True),
-    options=LucisOptions(memory_limit_mb=2048),
+    options=YenyOptions(memory_limit_mb=2048),
 )
 ```
 
@@ -207,7 +207,7 @@ luc = Lucis.from_table(
 ## Funciones utilitarias
 
 ```python
-from lucis.core.shard import date_to_shard_key, normalize_to_shard_key, shard_key_in_range
+from yeny.core.shard import date_to_shard_key, normalize_to_shard_key, shard_key_in_range
 
 # Convertir fecha a clave de shard
 date_to_shard_key("2024-03-15")          # "2024_03"
@@ -232,7 +232,7 @@ Al guardar un índice sharded, cada shard se persiste independientemente:
 
 ```python
 # Guardar — cada shard se serializa por separado
-luc.save()
+yn.save()
 
 # Los archivos se nombran automáticamente:
 # mi_idx__v20240315_120000__shard__2024_01.json
@@ -240,19 +240,19 @@ luc.save()
 # mi_idx__v20240315_120000__shard__9999_99.json
 
 # Cargar — también carga shard por shard (lazy si hay memory management)
-luc.load()
+yn.load()
 ```
 
-Con almacenamiento binario `.lcs`, cada shard genera su propio archivo:
+Con almacenamiento binario `.yny`, cada shard genera su propio archivo:
 
 ```
-lucis_data/lcs/
-  mi_idx__v20240315_120000__shard__2024_01.lcs
-  mi_idx__v20240315_120000__shard__2024_02.lcs
+yeny_data/yny/
+  mi_idx__v20240315_120000__shard__2024_01.yny
+  mi_idx__v20240315_120000__shard__2024_02.yny
   ...
 ```
 
-Los archivos `.lcs` se cargan por **memory-mapped I/O** (mmap): el sistema operativo los carga bajo demanda, sin consumir RAM adicional del heap Python.
+Los archivos `.yny` se cargan por **memory-mapped I/O** (mmap): el sistema operativo los carga bajo demanda, sin consumir RAM adicional del heap Python.
 
 ---
 

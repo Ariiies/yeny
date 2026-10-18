@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from lucis import __version__ as lucis_version
+from yeny import __version__ as yeny_version
 
 from .memory import memory_mechanisms, psutil_available
 
@@ -211,7 +211,7 @@ def collect_environment() -> Dict[str, Any]:
 
     Returns:
         JSON-compatible dictionary describing the Python interpreter,
-        Lucis, the operating system, the CPU model, the logical CPU count,
+        Yeny, the operating system, the CPU model, the logical CPU count,
         total RAM, the psutil version, the usable memory mechanisms, the
         perf_counter resolution, and the current Git revision. Absent
         capabilities are ``None``, never zero.
@@ -222,7 +222,7 @@ def collect_environment() -> Dict[str, Any]:
         "python_version": platform.python_version(),
         "python_implementation": platform.python_implementation(),
         "python_executable": sys.executable,
-        "lucis_version": lucis_version,
+        "yeny_version": yeny_version,
         "platform": platform.platform(),
         "system": platform.system(),
         "release": platform.release(),

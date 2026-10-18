@@ -7,7 +7,7 @@
     "python_version": "3.11.14",
     "python_implementation": "CPython",
     "python_executable": "<redacted>/corpyplus_env/bin/python",
-    "lucis_version": "0.1.0",
+    "yeny_version": "0.1.0",
     "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
     "system": "Linux",
     "release": "7.0.0-28-generic",
@@ -35,7 +35,7 @@
     ],
     "warmups": 3,
     "repetitions": 10,
-    "output_dir": "<redacted>/lucis/benchmarks/results",
+    "output_dir": "<redacted>/yeny/benchmarks/results",
     "require_memory": true
   },
   "datasets": [
@@ -515,7 +515,7 @@
       "engine": "core"
     },
     {
-      "name": "lcs_write",
+      "name": "yny_write",
       "unit": "ns",
       "samples": [
         3982089
@@ -530,7 +530,7 @@
       "engine": "core"
     },
     {
-      "name": "lcs_artifact_size",
+      "name": "yny_artifact_size",
       "unit": "bytes",
       "samples": [
         79500
@@ -2557,7 +2557,7 @@
       "engine": "lite"
     },
     {
-      "name": "lcs_write",
+      "name": "yny_write",
       "unit": "ns",
       "samples": [
         5651268
@@ -2572,7 +2572,7 @@
       "engine": "lite"
     },
     {
-      "name": "lcs_artifact_size",
+      "name": "yny_artifact_size",
       "unit": "bytes",
       "samples": [
         78700

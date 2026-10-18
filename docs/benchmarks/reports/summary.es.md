@@ -1,4 +1,4 @@
-# Resultados de benchmarks de Lucis 0.1.0
+# Resultados de benchmarks de Yeny 0.1.0
 
 Estado: campaña completa, 16/16 resultados validados  
 Commit medido: `a6ac3de8cf7ca5fdc1e1a07ec539e67660fea61f`  
@@ -7,7 +7,7 @@ Configuración: 3 warm-ups, 10 repeticiones, Core y Lite
 
 ## Resumen ejecutivo
 
-Lucis completó la matriz prevista en Fedora, Ubuntu, Windows 11 y macOS. Los
+Yeny completó la matriz prevista en Fedora, Ubuntu, Windows 11 y macOS. Los
 16 archivos cumplen el schema 1.0 y cada combinación de motor y backend
 conservó los 17 resultados esperados, su orden y sus scores. En total son
 1,632 verificaciones backend-consulta satisfactorias.
@@ -18,7 +18,7 @@ consultas comunes calentadas, Lite redujo la mediana entre 35.1% y 50.3%.
 Esto mide velocidad con el mismo `word_tokenizer`; no mide relevancia ni
 compara los valores predeterminados nativos de ambos motores.
 
-El formato `.lcs` ocupó cerca de 20 MiB en todas las plataformas y redujo el
+El formato `.yny` ocupó cerca de 20 MiB en todas las plataformas y redujo el
 tamaño aproximadamente 66–68% frente a JSON. La carga mediante `mmap` fue de
 36 a 453 veces más rápida que la carga JSON en estas ejecuciones. Esa cifra
 describe el tiempo de carga, no garantiza que todas las búsquedas sobre
@@ -40,7 +40,7 @@ ranking de plataformas.
 
 ## Perfil large: 100,000 documentos
 
-| Plataforma | Motor | Construcción | Búsqueda común mediana / p95 | Carga JSON | Carga `mmap` | `.lcs` |
+| Plataforma | Motor | Construcción | Búsqueda común mediana / p95 | Carga JSON | Carga `mmap` | `.yny` |
 |---|---|---:|---:|---:|---:|---:|
 | Fedora | Core | 4.15 s | 127.09 / 149.50 ms | 1.20 s | 13.48 ms | 20.78 MiB |
 | Fedora | Lite | 1.50 s | 72.32 / 87.81 ms | 1.11 s | 2.44 ms | 20.01 MiB |
@@ -78,7 +78,7 @@ entre 102 y 127 MiB. Son lecturas del proceso o árbol de procesos, no memoria
 exclusiva del índice; las páginas compartidas y la resolución de muestreo
 pueden alterar el valor.
 
-Los artefactos `.lcs` son idénticos en tamaño entre sistemas para un mismo
+Los artefactos `.yny` son idénticos en tamaño entre sistemas para un mismo
 motor porque el corpus y la configuración son deterministas: 20.78 MiB para
 Core y 20.01 MiB para Lite en `large`. Todos los round-trips JSON, SQLite y
 `mmap` conservaron IDs, orden y scores.
@@ -90,7 +90,7 @@ Core y 20.01 MiB para Lite en `large`. Todos los round-trips JSON, SQLite y
 2. Lite ofrece el mejor costo temporal en esta configuración léxica
    controlada; Core conserva su modelo TF-IDF/coseno y no debe evaluarse solo
    por velocidad.
-3. `.lcs` + `mmap` es la vía recomendada cuando importan arranque y tamaño de
+3. `.yny` + `mmap` es la vía recomendada cuando importan arranque y tamaño de
    artefacto, aceptando que el patrón de búsqueda mapeada puede tener otros
    costos.
 4. La persistencia es fiel en toda la matriz medida.
@@ -105,7 +105,7 @@ Core y 20.01 MiB para Lite en `large`. Todos los round-trips JSON, SQLite y
 - macOS registró un árbol Git sucio y no tuvo `psutil`; sus tiempos son útiles
   como exploración, pero no como control oficial de memoria.
 - El repositorio actual puede avanzar después del commit medido; al citar la
-  campaña debe mantenerse la referencia a `a6ac3de8` y Lucis 0.1.0.
+  campaña debe mantenerse la referencia a `a6ac3de8` y Yeny 0.1.0.
 
 ## Evidencia
 

@@ -1,6 +1,6 @@
 # Modelos de datos
 
-Lucis usa dataclasses inmutables (`frozen=True`) para representar los resultados de búsqueda. Esto garantiza integridad después de la creación, autocompletado en el IDE, y serialización JSON directa.
+Yeny usa dataclasses inmutables (`frozen=True`) para representar los resultados de búsqueda. Esto garantiza integridad después de la creación, autocompletado en el IDE, y serialización JSON directa.
 
 ---
 
@@ -9,7 +9,7 @@ Lucis usa dataclasses inmutables (`frozen=True`) para representar los resultados
 Representa un único documento encontrado en una búsqueda.
 
 ```python
-from lucis.models.search import SearchResult
+from yeny.models.search import SearchResult
 ```
 
 | Campo | Tipo | Descripción |
@@ -39,7 +39,7 @@ print(resultado.shard_key)   # "2024_03" o None
 Respuesta completa de una búsqueda, con contexto sobre la query, el motor, tiempos y resultados.
 
 ```python
-from lucis.models.search import SearchResponse
+from yeny.models.search import SearchResponse
 ```
 
 | Campo | Tipo | Descripción |
@@ -56,12 +56,12 @@ from lucis.models.search import SearchResponse
 ### Ejemplo
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
-luc = Lucis(name="demo", engine="core")
-luc.index({"a": "python web framework", "b": "java enterprise"})
+yn = Yeny(name="demo", engine="core")
+yn.index({"a": "python web framework", "b": "java enterprise"})
 
-response = luc.search("python")
+response = yn.search("python")
 
 # Metadata
 print(response.query)            # "python"
@@ -89,10 +89,10 @@ data = response.to_dict()        # dict JSON-ready
 
 ## HealthReport
 
-Snapshot de salud de una instancia Lucis. Documentado en detalle en [Monitoreo de salud](10-salud.md).
+Snapshot de salud de una instancia Yeny. Documentado en detalle en [Monitoreo de salud](10-salud.md).
 
 ```python
-from lucis.core.health import HealthReport
+from yeny.core.health import HealthReport
 ```
 
 | Campo | Tipo | Descripción |
@@ -105,7 +105,7 @@ from lucis.core.health import HealthReport
 | `total_docs` | `int` | Total de documentos |
 | `index_ram_bytes` | `int` | RAM del índice en bytes |
 | `process_rss_bytes` | `Optional[int]` | RSS del proceso |
-| `disk_lcs_bytes` | `int` | Tamaño de archivos .lcs |
+| `disk_yny_bytes` | `int` | Tamaño de archivos .yny |
 | `disk_meta_bytes` | `int` | Tamaño de metadata DB |
 | `shard_count` | `int` | Shards cargados |
 | `shards` | `List[ShardHealth]` | Detalle por shard |
@@ -125,7 +125,7 @@ Propiedades derivadas: `index_ram_human`, `process_rss_human`, `disk_total_bytes
 Estadísticas de RAM para un shard individual. Documentado en [Monitoreo de salud](10-salud.md#shardhealth--detalle-por-shard).
 
 ```python
-from lucis.core.health import ShardHealth
+from yeny.core.health import ShardHealth
 ```
 
 | Campo | Tipo | Descripción |

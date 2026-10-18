@@ -17,7 +17,7 @@ class TestTargetLeads:
         refs = {row["reference"] for row in scd.TARGET_LEADS}
         for expected in (
             "target-aries-meza",
-            "target-aries-lucis",
+            "target-aries-yeny",
             "target-cristiano-ronaldo",
             "target-real-madrid",
             "target-leo-messi",
@@ -31,7 +31,7 @@ class TestTargetLeads:
 
     def test_null_dates_kept_as_none(self):
         rows = {row["reference"]: row for row in scd.TARGET_LEADS}
-        assert rows["target-aries-lucis"]["created_at"] is None
+        assert rows["target-aries-yeny"]["created_at"] is None
         assert rows["target-leo-messi"]["created_at"] is None
         assert rows["target-vinicus-junior"]["created_at"] is None
         # Dated targets keep their fixed, documented dates (reproducibility):

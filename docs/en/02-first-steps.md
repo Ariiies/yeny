@@ -7,7 +7,7 @@ This guide will take you from zero to your first functional search engine in min
 ## Your first search engine in 5 lines
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 datos = {
     "doc1": "Python es un lenguaje versátil para desarrollo web",
@@ -15,21 +15,21 @@ datos = {
     "doc3": "Python y JavaScript son los lenguajes más populares"
 }
 
-buscador = Lucis.from_dict(datos, name="mi_buscador")
+buscador = Yeny.from_dict(datos, name="mi_buscador")
 resultados = buscador.search("python web")
 print(resultados)
 ```
 
-That's all. Lucis is responsible for tokenizing the text, building the inverted index, calculating the TF-IDF vectors and finding the most relevant documents.
+That's all. Yeny is responsible for tokenizing the text, building the inverted index, calculating the TF-IDF vectors and finding the most relevant documents.
 
 ---
 
 ## Working with lists
 
-If you don't have specific IDs, you can use a list. Lucis assigns sequential IDs automatically (0, 1, 2...):
+If you don't have specific IDs, you can use a list. Yeny assigns sequential IDs automatically (0, 1, 2...):
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 articulos = [
     "Cómo aprender machine learning desde cero",
@@ -38,7 +38,7 @@ articulos = [
     "REST APIs con FastAPI y Python"
 ]
 
-buscador = Lucis.from_list(articulos, name="articulos")
+buscador = Yeny.from_list(articulos, name="articulos")
 resultados = buscador.search("machine learning python")
 
 for r in resultados.results:
@@ -78,25 +78,25 @@ The `SearchResult` contains:
 
 ## Saving and loading indexes
 
-Lucis automatically persists indexes. You can save and reload without rebuilding:
+Yeny automatically persists indexes. You can save and reload without rebuilding:
 
 ```python
 # Crear y guardar
-buscador = Lucis.from_dict(datos, name="mi_indice")
+buscador = Yeny.from_dict(datos, name="mi_indice")
 buscador.save()
 
 # ... más tarde, en otro script ...
-buscador = Lucis(name="mi_indice")  # Carga automáticamente
+buscador = Yeny(name="mi_indice")  # Carga automáticamente
 resultados = buscador.search("mi consulta")
 ```
 
-By default, indexes are saved in the `lucis_data/` folder as JSON files. See [Storage](06-storage.md) for other options (SQLite, MySQL, PostgreSQL).
+By default, indexes are saved in the `yeny_data/` folder as JSON files. See [Storage](06-storage.md) for other options (SQLite, MySQL, PostgreSQL).
 
 ---
 
 ## Choosing an engine
 
-Lucis includes two search engines with different profiles:
+Yeny includes two search engines with different profiles:
 
 | Feature | `CoreEngine` | `LiteEngine` |
 |---|---|---|
@@ -111,10 +111,10 @@ Lucis includes two search engines with different profiles:
 
 ```python
 # CoreEngine (default) — mejor precisión
-buscador_core = Lucis.from_dict(datos, name="preciso", engine="core")
+buscador_core = Yeny.from_dict(datos, name="preciso", engine="core")
 
 # LiteEngine — más ligero, búsqueda fuzzy por defecto
-buscador_lite = Lucis.from_dict(datos, name="rapido", engine="lite")
+buscador_lite = Yeny.from_dict(datos, name="rapido", engine="lite")
 ```
 
 See [Search Engines](04-engines.md) for complete details.
@@ -123,11 +123,11 @@ See [Search Engines](04-engines.md) for complete details.
 
 ## Custom preprocessor
 
-Lucis allows you to inject your own text preprocessor. This gives you full control over how the text is tokenized:
+Yeny allows you to inject your own text preprocessor. This gives you full control over how the text is tokenized:
 
 ```python
-from lucis import Lucis
-from lucis.utils.nlp import WordTokenizer, remove_punctuation, remove_accents
+from yeny import Yeny
+from yeny.utils.nlp import WordTokenizer, remove_punctuation, remove_accents
 
 # Pipeline personalizado
 def mi_preprocesador(texto):
@@ -135,12 +135,12 @@ def mi_preprocesador(texto):
     texto = remove_punctuation(texto)
     return WordTokenizer()(texto)
 
-buscador = Lucis.from_dict(datos, name="custom", preprocessor=mi_preprocesador)
+buscador = Yeny.from_dict(datos, name="custom", preprocessor=mi_preprocesador)
 ```
 
 The preprocessor can return:
 - **`list[str]`** — Tokens are used directly.
-- **`str`** — Lucis applies a basic tokenizer as a final step.
+- **`str`** — Yeny applies a basic tokenizer as a final step.
 
 The same preprocessor is used for both indexing and searching, ensuring consistency in the vector space.
 
@@ -152,6 +152,6 @@ See [Preprocessors](05-preprocessors.md) for more details and examples.
 
 Now that you know the basics, explore:
 
-- [The Lucis class](03-lucis-object.md) — All methods and options
+- [The Yeny class](03-yeny-object.md) — All methods and options
 - [Search Engines](04-engines.md) — CoreEngine vs LiteEngine in depth
 - [Recipes](14-recipes.md) — Complete practical examples

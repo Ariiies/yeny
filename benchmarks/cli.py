@@ -1,4 +1,4 @@
-"""Command-line interface for running the Lucis benchmarks.
+"""Command-line interface for running the Yeny benchmarks.
 
 The public command intentionally exposes only a small set of options. It is
 designed to be easy to reproduce on a local machine without installing
@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     profiles = load_profiles()
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks",
-        description="Run small, reproducible Lucis benchmarks.",
+        description="Run small, reproducible Yeny benchmarks.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument(
         "result",
         type=Path,
-        help="Path to a lucis-benchmark-*.json file.",
+        help="Path to a yeny-benchmark-*.json file.",
     )
 
     validate_parser = subparsers.add_parser(
@@ -104,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "result",
         type=Path,
-        help="Path to a lucis-benchmark-*.json file.",
+        help="Path to a yeny-benchmark-*.json file.",
     )
 
     aggregate_parser = subparsers.add_parser(
@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
         "results",
         type=Path,
         nargs="+",
-        help="Paths to lucis-benchmark-*.json files.",
+        help="Paths to yeny-benchmark-*.json files.",
     )
     aggregate_parser.add_argument(
         "--output",

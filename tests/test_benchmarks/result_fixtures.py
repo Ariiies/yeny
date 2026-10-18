@@ -48,8 +48,8 @@ def build_measurements(engine, query_count=EXPECTED_QUERY_COUNT):
     add("json_artifact_size", unit="bytes")
     add("sqlite_save")
     add("sqlite_artifact_size", unit="bytes")
-    add("lcs_write")
-    add("lcs_artifact_size", unit="bytes")
+    add("yny_write")
+    add("yny_artifact_size", unit="bytes")
     for backend in ("json", "sqlite"):
         add("load_standard", backend=backend)
         add(
@@ -101,7 +101,7 @@ def build_valid_result(engines=("core",), profile="tiny"):
             "total_ram_bytes": 16 * 1024**3,
             "psutil_version": "7.2.2",
             "memory_mechanisms": ["psutil", "resource", "proc"],
-            "lucis_version": "0.1.0",
+            "yeny_version": "0.1.0",
             "git_commit": "285320e",
             "git_dirty": False,
         },

@@ -1,10 +1,10 @@
-"""Subprocess orchestration for the Lucis benchmark suite.
+"""Subprocess orchestration for the Yeny benchmark suite.
 
 Each engine runs one build phase plus one load phase per persistence
 backend, every phase in a new interpreter inside one unique temporary
 directory. This prevents CoreEngine and LiteEngine from sharing Python
 state, keeps every backend load process-cold, and avoids accidentally
-autoloading an existing ``lucis_data`` directory.
+autoloading an existing ``yeny_data`` directory.
 """
 
 
@@ -48,7 +48,7 @@ def _run_id() -> str:
 
 
 def _worker_environment() -> Dict[str, str]:
-    """Build an environment that can import Lucis and benchmarks."""
+    """Build an environment that can import Yeny and benchmarks."""
     environment = os.environ.copy()
     paths = [str(PROJECT_ROOT), str(PROJECT_ROOT / "src")]
     current = environment.get("PYTHONPATH")
@@ -176,7 +176,7 @@ def _run_engine(
             a dataset hash different from the build phase.
     """
     with tempfile.TemporaryDirectory(
-        prefix=f"lucis-benchmark-{engine}-"
+        prefix=f"yeny-benchmark-{engine}-"
     ) as temporary:
         temporary_path = Path(temporary)
         workspace = temporary_path / "workspace"

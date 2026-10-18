@@ -1,6 +1,6 @@
 # Funciones útiles — Toolkit Standalone
 
-Los módulos internos de Lucis están diseñados para ser **usables de forma independiente**. Puedes importar funciones individuales para construir tus propios motores de búsqueda, hacer análisis de texto, o calcular similitudes sin usar la clase `Lucis`.
+Los módulos internos de Yeny están diseñados para ser **usables de forma independiente**. Puedes importar funciones individuales para construir tus propios motores de búsqueda, hacer análisis de texto, o calcular similitudes sin usar la clase `Yeny`.
 
 ---
 
@@ -11,7 +11,7 @@ Los módulos internos de Lucis están diseñados para ser **usables de forma ind
 Construye un índice invertido compacto en un solo paso O(n). Retorna `Dict[str, CompactPostings]`.
 
 ```python
-from lucis.utils.index import build_index
+from yeny.utils.index import build_index
 
 corpus = [
     ["hola", "mundo", "hola"],
@@ -51,7 +51,7 @@ indice = build_index([
 Genera un Bag of Words para un documento individual:
 
 ```python
-from lucis.utils.index import get_bow
+from yeny.utils.index import get_bow
 
 bow = get_bow(["python", "es", "genial", "python"])
 # {"python": 2, "es": 1, "genial": 1}
@@ -66,7 +66,7 @@ bow = get_bow("python es genial python")
 Genera Bag of Words para un corpus completo:
 
 ```python
-from lucis.utils.index import get_corpus_bows
+from yeny.utils.index import get_corpus_bows
 
 bows = get_corpus_bows(["hola mundo", "python hola"])
 # [{"hola": 1, "mundo": 1}, {"python": 1, "hola": 1}]
@@ -77,7 +77,7 @@ bows = get_corpus_bows(["hola mundo", "python hola"])
 Extrae el vocabulario único y ordenado del corpus:
 
 ```python
-from lucis.utils.index import get_vocabulary
+from yeny.utils.index import get_vocabulary
 
 vocab = get_vocabulary(["hola mundo", "python mundo"])
 # ["hola", "mundo", "python"]
@@ -92,7 +92,7 @@ Todas las funciones aceptan un índice con estructura `{word: {doc_id: count, ..
 ### Frecuencias raw
 
 ```python
-from lucis.utils.index import get_tf_count, get_df_count, get_cf_count
+from yeny.utils.index import get_tf_count, get_df_count, get_cf_count
 
 indice = build_index(["python es genial", "python domina", "java también existe"])
 
@@ -109,7 +109,7 @@ get_cf_count("python", indice)     # 2
 ### TF-IDF
 
 ```python
-from lucis.utils.index import compute_tf, compute_idf, compute_tfidf, get_doc_len
+from yeny.utils.index import compute_tf, compute_idf, compute_tfidf, get_doc_len
 
 indice = build_index(["python es genial", "python domina la ia", "java también existe"])
 total_docs = 3
@@ -131,7 +131,7 @@ print(f"TF={tf:.4f}, IDF={idf:.4f}, TF-IDF={tfidf:.4f}")
 Reconstruye las longitudes de documento desde el índice invertido:
 
 ```python
-from lucis.utils.index import get_doc_len
+from yeny.utils.index import get_doc_len
 
 lengths = get_doc_len(indice, 3)
 # {0: 3, 1: 4, 2: 3}  — total de tokens por documento
@@ -142,7 +142,7 @@ lengths = get_doc_len(indice, 3)
 Crea un vector sparse TF-IDF para un documento (solo entradas no-cero):
 
 ```python
-from lucis.utils.index import compute_document_vector
+from yeny.utils.index import compute_document_vector
 
 vector = compute_document_vector(0, indice, doc_lengths, total_docs)
 # {"python": 0.1234, "es": 0.5678, "genial": 0.5678}
@@ -157,7 +157,7 @@ Funciones para operaciones con vectores, sin dependencias externas.
 ### Vectores densos
 
 ```python
-from lucis.utils.math.core import (
+from yeny.utils.math.core import (
     dot_product,
     vector_norm,
     cosine_similarity,
@@ -185,7 +185,7 @@ argsort_descending(values)  # [1, 2, 0, 3]
 ### Batch de similitudes
 
 ```python
-from lucis.utils.math.core import batch_cosine_similarity
+from yeny.utils.math.core import batch_cosine_similarity
 
 query = [0.5, 0.3, 0.8]
 documentos = [
@@ -204,7 +204,7 @@ for score in batch_cosine_similarity(query, documentos):
 Para vectores con muchos ceros (como TF-IDF), es más eficiente trabajar con diccionarios:
 
 ```python
-from lucis.utils.math.core import (
+from yeny.utils.math.core import (
     sparse_dot_product,
     sparse_vector_norm,
     sparse_cosine_similarity,
@@ -226,7 +226,7 @@ sparse_cosine_similarity(vec_a, vec_b)  # 0.5678...
 ### Ordenar resultados
 
 ```python
-from lucis.utils.math.core import sort_results
+from yeny.utils.math.core import sort_results
 
 scores = {0: 0.85, 1: 0.32, 2: 0.91, 3: 0.45}
 top = sort_results(scores, limit=2)
@@ -238,8 +238,8 @@ top = sort_results(scores, limit=2)
 <!-- 
 ## 🔮 Próximamente — Funciones aceleradas con NumPy
 
-En futuras versiones, las funciones de `lucis.utils.math.plus` y
-`lucis.utils.index.statsplus` ofrecerán versiones aceleradas con NumPy:
+En futuras versiones, las funciones de `yeny.utils.math.plus` y
+`yeny.utils.index.statsplus` ofrecerán versiones aceleradas con NumPy:
 
 - `dot_product_plus`, `cosine_similarity_plus` — SIMD-optimized
 - `batch_cosine_similarity_plus` — matrix multiplication en una llamada
@@ -248,20 +248,20 @@ En futuras versiones, las funciones de `lucis.utils.math.plus` y
 - `compute_tfidf_plus` — Matriz TF-IDF densa (docs × vocab)
 - `compute_sparse_tfidf_matrix` — Matriz sparse CSR con scipy
 
-Instalar con: `pip install lucis[plus]`
+Instalar con: `pip install yeny[plus]`
 -->
 
 ## Decoradores utilitarios
 
-Lucis incluye decoradores que automatizan la normalización de input:
+Yeny incluye decoradores que automatizan la normalización de input:
 
 ### `@corpus_input(tokenizer)`
 
 Auto-tokeniza el corpus si recibe strings crudos:
 
 ```python
-from lucis.utils.decorators import corpus_input
-from lucis.utils.nlp import WordTokenizer
+from yeny.utils.decorators import corpus_input
+from yeny.utils.nlp import WordTokenizer
 
 @corpus_input(WordTokenizer())
 def mi_funcion(corpus):
@@ -279,8 +279,8 @@ mi_funcion([["hola", "mundo"], ["python", "web"]])
 Auto-tokeniza un documento o query individual:
 
 ```python
-from lucis.utils.decorators import doc_input
-from lucis.utils.nlp import WordTokenizer
+from yeny.utils.decorators import doc_input
+from yeny.utils.nlp import WordTokenizer
 
 @doc_input(WordTokenizer())
 def procesar(tokens):
@@ -295,10 +295,10 @@ procesar(["hola", "mundo"])    # → ["hola", "mundo"]
 
 ## Serialización
 
-Lucis auto-selecciona el serializador JSON más rápido disponible:
+Yeny auto-selecciona el serializador JSON más rápido disponible:
 
 ```python
-from lucis.utils.serialization import dumps, loads, BACKEND
+from yeny.utils.serialization import dumps, loads, BACKEND
 
 print(BACKEND)  # "orjson" si está instalado, sino "json"
 

@@ -1,4 +1,4 @@
-"""Command-line entry point for the Lucis benchmark suite.
+"""Command-line entry point for the Yeny benchmark suite.
 
 This module keeps ``python -m benchmarks`` equivalent to calling
 ``benchmarks.cli.main`` directly.

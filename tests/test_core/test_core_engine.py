@@ -1,8 +1,8 @@
 
 import pytest
 
-from lucis.engines.core import CoreEngine
-from lucis.utils.nlp import WordTokenizer
+from yeny.engines.core import CoreEngine
+from yeny.utils.nlp import WordTokenizer
 
 @pytest.mark.unit
 class TestCoreEngine:

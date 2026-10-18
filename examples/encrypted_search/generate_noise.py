@@ -8,8 +8,8 @@ demo behaves like a real table.  Every value comes from a local
 produces exactly the same rows, so re-running just tops up what is
 missing (duplicates are skipped by reference).
 
-~10% of rows get ``created_at = NULL`` to exercise Lucis' universal
-shard.  This file is NOT needed to understand Lucis — it only creates
+~10% of rows get ``created_at = NULL`` to exercise Yeny' universal
+shard.  This file is NOT needed to understand Yeny — it only creates
 bulk data.
 """
 import argparse
@@ -122,7 +122,7 @@ _LASTNAMES = [
 
 _DOMAINS = [
     "gmail.com", "hotmail.com", "outlook.com", "yahoo.com", "protonmail.com",
-    "icloud.com", "mail.com", "lucis.dev", "mycompany.com", "startup.io",
+    "icloud.com", "mail.com", "yeny.dev", "mycompany.com", "startup.io",
     "company.co", "corp.net", "webmail.co", "fastmail.com", "zoho.com",
     "aol.com", "inbox.com", "yandex.com", "hushmail.com", "gmx.com",
     "tutanota.com", "mail.ru", "qq.com", "163.com", "aliyun.com",

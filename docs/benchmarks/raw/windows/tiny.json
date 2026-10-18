@@ -7,7 +7,7 @@
     "python_version": "3.13.0",
     "python_implementation": "CPython",
     "python_executable": "<redacted>\\Python313\\python.exe",
-    "lucis_version": "0.1.0",
+    "yeny_version": "0.1.0",
     "platform": "Windows-11-10.0.26200-SP0",
     "system": "Windows",
     "release": "11",
@@ -34,7 +34,7 @@
     ],
     "warmups": 3,
     "repetitions": 10,
-    "output_dir": "<redacted>\\lucis\\benchmarks\\results",
+    "output_dir": "<redacted>\\yeny\\benchmarks\\results",
     "require_memory": true
   },
   "datasets": [
@@ -514,7 +514,7 @@
       "engine": "core"
     },
     {
-      "name": "lcs_write",
+      "name": "yny_write",
       "unit": "ns",
       "samples": [
         8603600
@@ -529,7 +529,7 @@
       "engine": "core"
     },
     {
-      "name": "lcs_artifact_size",
+      "name": "yny_artifact_size",
       "unit": "bytes",
       "samples": [
         79500
@@ -2556,7 +2556,7 @@
       "engine": "lite"
     },
     {
-      "name": "lcs_write",
+      "name": "yny_write",
       "unit": "ns",
       "samples": [
         4455900
@@ -2571,7 +2571,7 @@
       "engine": "lite"
     },
     {
-      "name": "lcs_artifact_size",
+      "name": "yny_artifact_size",
       "unit": "bytes",
       "samples": [
         78700

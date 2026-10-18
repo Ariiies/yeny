@@ -1,21 +1,21 @@
 # Preprocesadores y NLP
 
-Lucis incluye un sistema de preprocesamiento de texto completamente personalizable. El preprocesador controla cómo se transforma el texto antes de indexarlo y buscarlo.
+Yeny incluye un sistema de preprocesamiento de texto completamente personalizable. El preprocesador controla cómo se transforma el texto antes de indexarlo y buscarlo.
 
 ---
 
 ## El sistema de preprocesador
 
-Cada instancia de `Lucis` (o cada engine) tiene un preprocesador que se aplica **tanto a la indexación como a la búsqueda**, garantizando que ambos operan en el mismo espacio vectorial.
+Cada instancia de `Yeny` (o cada engine) tiene un preprocesador que se aplica **tanto a la indexación como a la búsqueda**, garantizando que ambos operan en el mismo espacio vectorial.
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 def mi_preprocesador(texto: str) -> list[str]:
     """Mi pipeline personalizado."""
     return texto.lower().split()
 
-buscador = Lucis.from_dict(datos, name="custom", preprocessor=mi_preprocesador)
+buscador = Yeny.from_dict(datos, name="custom", preprocessor=mi_preprocesador)
 ```
 
 ### Reglas del preprocesador
@@ -23,14 +23,14 @@ buscador = Lucis.from_dict(datos, name="custom", preprocessor=mi_preprocesador)
 Un preprocesador es cualquier callable con firma `(str) → str | list[str]`:
 
 - Si retorna **`list[str]`**: Los tokens se usan directamente.
-- Si retorna **`str`**: Lucis aplica `SimpleTokenizer` (split por espacios) como paso final.
+- Si retorna **`str`**: Yeny aplica `SimpleTokenizer` (split por espacios) como paso final.
 
 ```python
 # Opción 1: retornar tokens directamente
 def prep_tokens(texto):
     return texto.lower().split()
 
-# Opción 2: retornar string preprocesado (Lucis tokeniza al final)
+# Opción 2: retornar string preprocesado (Yeny tokeniza al final)
 def prep_texto(texto):
     return texto.lower().strip()
 ```
@@ -39,14 +39,14 @@ def prep_texto(texto):
 
 ## Tokenizadores incluidos
 
-Lucis incluye cuatro clases tokenizadoras en `lucis.utils.nlp`:
+Yeny incluye cuatro clases tokenizadoras en `yeny.utils.nlp`:
 
 ### `SimpleTokenizer()`
 
 Divide por espacios. El más básico.
 
 ```python
-from lucis.utils.nlp import SimpleTokenizer
+from yeny.utils.nlp import SimpleTokenizer
 
 SimpleTokenizer()("Hola mundo cruel")
 # → ["Hola", "mundo", "cruel"]
@@ -57,7 +57,7 @@ SimpleTokenizer()("Hola mundo cruel")
 Extrae solo palabras (regex), ignora números, convierte a minúsculas. Soporta caracteres españoles (áéíóúüñ).
 
 ```python
-from lucis.utils.nlp import WordTokenizer
+from yeny.utils.nlp import WordTokenizer
 
 WordTokenizer()("Python 3.11 es increíble para IA!")
 # → ["python", "es", "increíble", "para", "ia"]
@@ -70,7 +70,7 @@ Este es el tokenizador por defecto de `CoreEngine`.
 Clase invocable que crea un tokenizador de n-gramas de **palabras**:
 
 ```python
-from lucis.utils.nlp import NgramTokenizer
+from yeny.utils.nlp import NgramTokenizer
 
 bigram = NgramTokenizer(2)
 bigram("hola mundo cruel")
@@ -86,7 +86,7 @@ trigram("uno dos tres cuatro")
 Clase invocable que crea un tokenizador de n-gramas de **caracteres**. Ideal para búsqueda fuzzy y tolerancia a errores tipográficos:
 
 ```python
-from lucis.utils.nlp import CharNgramTokenizer
+from yeny.utils.nlp import CharNgramTokenizer
 
 trigram = CharNgramTokenizer(3)
 trigram("python")
@@ -105,12 +105,12 @@ Este es el tokenizador por defecto de `LiteEngine`.
 
 ## Limpiadores de texto
 
-Lucis incluye funciones de limpieza de texto en `lucis.utils.nlp` que puedes combinar en tu preprocesador:
+Yeny incluye funciones de limpieza de texto en `yeny.utils.nlp` que puedes combinar en tu preprocesador:
 
 ### `lowercase(text)` / `uppercase(text)`
 
 ```python
-from lucis.utils.nlp import lowercase, uppercase
+from yeny.utils.nlp import lowercase, uppercase
 
 lowercase("Hola Mundo")  # → "hola mundo"
 uppercase("Hola Mundo")  # → "HOLA MUNDO"
@@ -121,7 +121,7 @@ uppercase("Hola Mundo")  # → "HOLA MUNDO"
 Elimina espacios al inicio/final y normaliza espacios múltiples:
 
 ```python
-from lucis.utils.nlp import strip_whitespace
+from yeny.utils.nlp import strip_whitespace
 
 strip_whitespace("  hola   mundo  ")  # → "hola mundo"
 ```
@@ -131,7 +131,7 @@ strip_whitespace("  hola   mundo  ")  # → "hola mundo"
 Elimina signos de puntuación (incluyendo `¡¿` del español):
 
 ```python
-from lucis.utils.nlp import remove_punctuation
+from yeny.utils.nlp import remove_punctuation
 
 remove_punctuation("¡Hola, mundo! ¿Cómo estás?")
 # → "Hola mundo Cómo estás"
@@ -143,7 +143,7 @@ remove_punctuation("precio: $100.50", keep=".$")
 ### `remove_numbers(text)`
 
 ```python
-from lucis.utils.nlp import remove_numbers
+from yeny.utils.nlp import remove_numbers
 
 remove_numbers("Python 3.11 lanzado en 2022")
 # → "Python . lanzado en "
@@ -152,7 +152,7 @@ remove_numbers("Python 3.11 lanzado en 2022")
 ### `remove_extra_spaces(text)`
 
 ```python
-from lucis.utils.nlp import remove_extra_spaces
+from yeny.utils.nlp import remove_extra_spaces
 
 remove_extra_spaces("hola    mundo   cruel")
 # → "hola mundo cruel"
@@ -161,16 +161,16 @@ remove_extra_spaces("hola    mundo   cruel")
 ### `remove_urls(text)`
 
 ```python
-from lucis.utils.nlp import remove_urls
+from yeny.utils.nlp import remove_urls
 
-remove_urls("Visita https://lucis.dev para más info")
+remove_urls("Visita https://yeny.dev para más info")
 # → "Visita  para más info"
 ```
 
 ### `remove_emails(text)`
 
 ```python
-from lucis.utils.nlp import remove_emails
+from yeny.utils.nlp import remove_emails
 
 remove_emails("Contacto: user@empresa.com para info")
 # → "Contacto:  para info"
@@ -179,7 +179,7 @@ remove_emails("Contacto: user@empresa.com para info")
 ### `remove_html_tags(text)`
 
 ```python
-from lucis.utils.nlp import remove_html_tags
+from yeny.utils.nlp import remove_html_tags
 
 remove_html_tags("<p>Hola <b>mundo</b></p>")
 # → "Hola mundo"
@@ -190,7 +190,7 @@ remove_html_tags("<p>Hola <b>mundo</b></p>")
 Elimina acentos y caracteres diacríticos. Útil para búsquedas donde los acentos no importan.
 
 ```python
-from lucis.utils.nlp import remove_accents
+from yeny.utils.nlp import remove_accents
 
 remove_accents("café résumé naïve")
 # → "cafe resume naive"
@@ -205,8 +205,8 @@ remove_accents("café résumé naïve")
 Encadena funciones para crear tu pipeline:
 
 ```python
-from lucis import Lucis
-from lucis.utils.nlp import (
+from yeny import Yeny
+from yeny.utils.nlp import (
     WordTokenizer,
     remove_accents,
     remove_punctuation,
@@ -220,13 +220,13 @@ def preprocesador_blog(texto):
     texto = remove_punctuation(texto)
     return WordTokenizer()(texto)
 
-buscador = Lucis.from_dict(articulos, name="blog", preprocessor=preprocesador_blog)
+buscador = Yeny.from_dict(articulos, name="blog", preprocessor=preprocesador_blog)
 ```
 
 ### Pipeline con limpieza agresiva
 
 ```python
-from lucis.utils.nlp import (
+from yeny.utils.nlp import (
     WordTokenizer,
     remove_accents,
     remove_punctuation,
@@ -247,26 +247,26 @@ def preprocesador_emails(texto):
     texto = strip_whitespace(texto)
     return WordTokenizer()(texto)
 
-buscador = Lucis.from_dict(emails, name="email_search", preprocessor=preprocesador_emails)
+buscador = Yeny.from_dict(emails, name="email_search", preprocessor=preprocesador_emails)
 ```
 
 ### Preprocesador que retorna string
 
-Si tu preprocesador retorna `str` en lugar de `list[str]`, Lucis aplica `SimpleTokenizer` automáticamente:
+Si tu preprocesador retorna `str` en lugar de `list[str]`, Yeny aplica `SimpleTokenizer` automáticamente:
 
 ```python
 def solo_limpiar(texto):
-    """Solo limpia, no tokeniza. Lucis tokenizará con SimpleTokenizer."""
+    """Solo limpia, no tokeniza. Yeny tokenizará con SimpleTokenizer."""
     return texto.lower().strip()
 
-buscador = Lucis.from_dict(datos, name="limpio", preprocessor=solo_limpiar)
+buscador = Yeny.from_dict(datos, name="limpio", preprocessor=solo_limpiar)
 ```
 
 ---
 
 ## Integración con librerías externas
 
-Puedes usar cualquier librería NLP como preprocesador de Lucis:
+Puedes usar cualquier librería NLP como preprocesador de Yeny:
 
 ### Ejemplo con NLTK
 
@@ -280,7 +280,7 @@ def preprocesador_nltk(texto):
     tokens = nltk.word_tokenize(texto.lower(), language="spanish")
     return [stemmer.stem(t) for t in tokens if t.isalpha()]
 
-buscador = Lucis.from_dict(datos, name="stemmed", preprocessor=preprocesador_nltk)
+buscador = Yeny.from_dict(datos, name="stemmed", preprocessor=preprocesador_nltk)
 ```
 
 ### Ejemplo con spaCy
@@ -293,7 +293,7 @@ def preprocesador_spacy(texto):
     doc = nlp(texto)
     return [token.lemma_.lower() for token in doc if not token.is_stop and token.is_alpha]
 
-buscador = Lucis.from_dict(datos, name="lemmatized", preprocessor=preprocesador_spacy)
+buscador = Yeny.from_dict(datos, name="lemmatized", preprocessor=preprocesador_spacy)
 ```
 
 ---

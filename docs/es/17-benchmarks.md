@@ -1,11 +1,11 @@
 # Benchmarks
 
-Lucis incluye una suite de benchmarks pequeña y determinista para responder
+Yeny incluye una suite de benchmarks pequeña y determinista para responder
 preguntas prácticas sobre sus dos motores públicos:
 
 - ¿Cuánto tarda construirse un índice?
 - ¿Cuánto tardan los distintos tipos de búsqueda?
-- ¿Cuánto tardan las operaciones de persistencia JSON, SQLite y `.lcs`?
+- ¿Cuánto tardan las operaciones de persistencia JSON, SQLite y `.yny`?
 - ¿Qué tan grandes son los artefactos generados?
 - ¿Qué ocurre cuando un índice se carga normalmente o mediante `mmap`?
 - ¿La persistencia conserva IDs, orden del ranking y scores?
@@ -16,7 +16,7 @@ concurrente ni rendimiento frente a proyectos externos de búsqueda.
 
 ## Inicio rápido
 
-Ejecuta los comandos desde un clon local del repositorio de Lucis:
+Ejecuta los comandos desde un clon local del repositorio de Yeny:
 
 ```bash
 python -m pip install -e .
@@ -76,7 +76,7 @@ generadas idénticas; no significan que el tiempo medido deba ser idéntico.
 
 `CoreEngine` usa TF-IDF y similitud coseno. `LiteEngine` usa frecuencia de
 término normalizada. Su comportamiento de ranking es distinto, pero ambos son
-motores Python puro expuestos por la misma fachada `Lucis`.
+motores Python puro expuestos por la misma fachada `Yeny`.
 
 Para comparar tiempos justamente, el benchmark entrega a ambos el mismo
 corpus, consultas, `top_k=10` y `WordTokenizer`. Esto es importante porque
@@ -107,14 +107,14 @@ máximo como rango de variabilidad.
 | Métrica | Frontera medida |
 |---|---|
 | `dataset_generation` | Solo la generación determinista del corpus |
-| `index_build` | `Lucis.index(..., persist=False)` |
-| `index_e2e_json` | Construcción mediante `Lucis.from_dict`, incluida la persistencia JSON automática |
-| `search_first` | Primera `Lucis.search` pública tras construir |
+| `index_build` | `Yeny.index(..., persist=False)` |
+| `index_e2e_json` | Construcción mediante `Yeny.from_dict`, incluida la persistencia JSON automática |
+| `search_first` | Primera `Yeny.search` pública tras construir |
 | `search_warm` | Búsquedas públicas tras warm-ups no medidos, agrupadas por categoría |
-| `json_save`, `sqlite_save` | `Lucis.save` público |
+| `json_save`, `sqlite_save` | `Yeny.save` público |
 | `*_artifact_size` | Bytes reales escritos en disco |
-| `lcs_write` | Serialización `.lcs` del motor |
-| `load_standard` | Constructor `Lucis` con autocarga para JSON o SQLite |
+| `yny_write` | Serialización `.yny` del motor |
+| `load_standard` | Constructor `Yeny` con autocarga para JSON o SQLite |
 | `mmap_load` | Operación `load_mmap` del motor |
 | `search_first_*`, `search_warm_*` | Búsqueda pública tras carga estándar o mapeada |
 | `roundtrip_verified` | Número de consultas que conservan IDs, orden y scores |
@@ -122,7 +122,7 @@ máximo como rango de variabilidad.
 
 El tiempo de búsqueda incluye el preprocesamiento de la consulta y la
 construcción de la respuesta porque el temporizador rodea la llamada pública
-`Lucis.search`.
+`Yeny.search`.
 
 La verificación round-trip compara, para cada consulta y cada backend (JSON,
 SQLite y `mmap`): el número de resultados, el ID de documento en cada
@@ -141,12 +141,12 @@ motor
 ├── build          genera el corpus, construye, busca y persiste todo
 ├── load_json      recarga el artefacto JSON en un intérprete frío
 ├── load_sqlite    recarga el artefacto SQLite en un intérprete frío
-└── load_mmap      mapea el artefacto .lcs en un intérprete frío
+└── load_mmap      mapea el artefacto .yny en un intérprete frío
 ```
 
 El proceso de construcción escribe en el workspace el manifiesto del dataset,
 el conjunto de consultas, los resultados esperados por consulta y los
-artefactos JSON/SQLite/`.lcs`. Cada proceso de carga lee ese contrato —sin
+artefactos JSON/SQLite/`.yny`. Cada proceso de carga lee ese contrato —sin
 regenerar el corpus— y mide exactamente un backend, de modo que ningún
 backend hereda cachés de importación ni estado de motor calentado por otro.
 El tiempo de creación del proceso queda fuera de la frontera medida de carga.
@@ -181,7 +181,7 @@ Cada JSON de resultado identifica su máquina con:
 | Metadato | Fuente |
 |---|---|
 | Versión, implementación y ejecutable de Python | Biblioteca estándar |
-| Versión de Lucis | Metadatos del paquete |
+| Versión de Yeny | Metadatos del paquete |
 | Sistema, release, plataforma y arquitectura | Biblioteca estándar |
 | Modelo de CPU | `/proc/cpuinfo`, `PROCESSOR_IDENTIFIER` o `sysctl` |
 | CPU lógicas | `os.cpu_count()` |
@@ -208,7 +208,7 @@ python -m benchmarks run --profile small
 Usa otro directorio de salida si lo prefieres:
 
 ```bash
-python -m benchmarks run --profile small --output /tmp/lucis-results
+python -m benchmarks run --profile small --output /tmp/yeny-results
 ```
 
 Valida el contrato completo del resultado:
@@ -233,7 +233,7 @@ python -m benchmarks report benchmarks/results/<run>.json
 
 Ningún comando sobrescribe un resultado o reporte existente.
 
-## Campaña publicada de Lucis 0.1.0
+## Campaña publicada de Yeny 0.1.0
 
 El repositorio incluye una campaña completa ejecutada en Fedora, Ubuntu,
 Windows 11 y macOS. Contiene los perfiles `tiny`, `small`, `medium` y `large`
@@ -247,7 +247,7 @@ resumen editorial y presentación en
 las salvedades antes de citar cifras, consulta el
 [resumen en español](../benchmarks/reports/summary.es.md).
 
-Los resultados se obtuvieron en el commit `a6ac3de8` de Lucis 0.1.0. Cada
+Los resultados se obtuvieron en el commit `a6ac3de8` de Yeny 0.1.0. Cada
 perfil tiene una sola ejecución por equipo; además, cambian CPU, versión de
 Python y sistema operativo. Por eso Core y Lite sí se comparan dentro de una
 misma ejecución, pero las cifras entre equipos no forman un ranking de
@@ -264,7 +264,7 @@ python -m benchmarks aggregate benchmarks/results/*.json --output summary.md
 
 Esto escribe `summary.md` más un `summary.aggregate.json` trazable. El
 agregador primero valida cada archivo en profundidad y después se niega a
-mezclar ejecuciones que difieran en versión de schema, versión de Lucis,
+mezclar ejecuciones que difieran en versión de schema, versión de Yeny,
 commit, versión menor de Python, perfil, hash de dataset, hash de consultas,
 motores, warm-ups, repeticiones o requisito de memoria. Las ejecuciones de
 sistemas operativos o máquinas distintos se reportan como grupos separados,

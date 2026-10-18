@@ -1,4 +1,4 @@
-# Lucis benchmark report
+# Yeny benchmark report
 
 > These results describe one machine and one execution environment. They
 > are not search-quality measurements or universal performance guarantees.
@@ -20,7 +20,7 @@
 | python_implementation | CPython |
 | platform | Linux-7.1.3-200.fc44.x86_64-x86_64-with-glibc2.43 |
 | machine | x86_64 |
-| lucis_version | 0.1.0 |
+| yeny_version | 0.1.0 |
 | cpu_model | AMD Ryzen 7 7730U with Radeon Graphics |
 | logical_cpu_count | 16 |
 | total_ram_bytes | 16054988800 (14.95 GiB) |
@@ -90,14 +90,14 @@
 | core | json_artifact_size | - | - | 655.74 KiB | 655.74 KiB | 1 |
 | core | sqlite_save | - | - | 28.61 ms | 28.61 ms | 1 |
 | core | sqlite_artifact_size | - | - | 764.00 KiB | 764.00 KiB | 1 |
-| core | lcs_write | - | - | 8.64 ms | 8.64 ms | 1 |
-| core | lcs_artifact_size | - | - | 354.05 KiB | 354.05 KiB | 1 |
+| core | yny_write | - | - | 8.64 ms | 8.64 ms | 1 |
+| core | yny_artifact_size | - | - | 354.05 KiB | 354.05 KiB | 1 |
 | lite | json_save | - | - | 40.38 ms | 40.38 ms | 1 |
 | lite | json_artifact_size | - | - | 621.75 KiB | 621.75 KiB | 1 |
 | lite | sqlite_save | - | - | 27.07 ms | 27.07 ms | 1 |
 | lite | sqlite_artifact_size | - | - | 764.00 KiB | 764.00 KiB | 1 |
-| lite | lcs_write | - | - | 7.04 ms | 7.04 ms | 1 |
-| lite | lcs_artifact_size | - | - | 346.24 KiB | 346.24 KiB | 1 |
+| lite | yny_write | - | - | 7.04 ms | 7.04 ms | 1 |
+| lite | yny_artifact_size | - | - | 346.24 KiB | 346.24 KiB | 1 |
 
 ## Standard loads
 
@@ -213,7 +213,7 @@ Each loaded index returned the same documents, in the same ranking order, with t
 
 ## Limitations
 
-- Search latencies use the public `Lucis.search` boundary and include query preprocessing and response wrapping.
+- Search latencies use the public `Yeny.search` boundary and include query preprocessing and response wrapping.
 - Every backend load (JSON, SQLite, mmap) starts in its own fresh interpreter, so Python state is process-cold; the OS page cache is not controlled and may still warm later runs.
 - Memory values describe the whole phase workflow, not the exclusive size of any engine object.
 - Tree RSS sums resident pages shared by fork (copy-on-write), so it can overstate exclusive usage.

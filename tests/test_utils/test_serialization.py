@@ -1,5 +1,5 @@
 import pytest
-from lucis.utils.serialization import dumps, loads, BACKEND
+from yeny.utils.serialization import dumps, loads, BACKEND
 
 
 class TestDumps:
@@ -151,13 +151,13 @@ class TestCompatibility:
             "dict": {"nested": "value"},
         }
 
-        lucis_result = dumps(test_data)
+        yeny_result = dumps(test_data)
         json_result = json.dumps(test_data)
 
-        lucis_parsed = loads(lucis_result)
+        yeny_parsed = loads(yeny_result)
         json_parsed = json.loads(json_result)
 
-        assert lucis_parsed == json_parsed
+        assert yeny_parsed == json_parsed
 
     def test_float_handling(self):
         data = {"value": 3.14159}

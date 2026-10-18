@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Mapping, Sequence
 
-from lucis import Lucis
+from yeny import Yeny
 
 from ..queries import GeneratedQueries
 
@@ -22,14 +22,14 @@ SCORE_ABS_TOLERANCE = 1e-12
 
 
 def collect_result_sequence(
-    lucis: Lucis,
+    yeny: Yeny,
     queries: GeneratedQueries,
     top_k: int = 10,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Collect ranked results for every query in returned order.
 
     Args:
-        lucis: Indexed Lucis instance to query.
+        yeny: Indexed Yeny instance to query.
         queries: Deterministic query set used for the collection.
         top_k: Maximum results collected per query.
 
@@ -39,7 +39,7 @@ def collect_result_sequence(
     """
     collected: Dict[str, List[Dict[str, Any]]] = {}
     for query in queries.items:
-        response = lucis.search(query.text, top_k=top_k)
+        response = yeny.search(query.text, top_k=top_k)
         collected[query.query_id] = [
             {"doc_id": str(result.doc_id), "score": float(result.score)}
             for result in response.results

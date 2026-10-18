@@ -2,7 +2,7 @@
 
 The aggregator combines compatible result JSON files without manual
 transcription. Runs are only merged when they share the full campaign
-fingerprint (schema, Lucis version, commit, Python minor version, profile,
+fingerprint (schema, Yeny version, commit, Python minor version, profile,
 dataset/query hashes, engines, warm-ups, repetitions, and memory
 requirement). Different operating systems or machines are always kept in
 separate groups, never blended into a single figure.
@@ -83,7 +83,7 @@ def run_fingerprint(result: Mapping[str, Any]) -> Dict[str, Any]:
     configuration = result["configuration"]
     return {
         "schema_version": result["schema_version"],
-        "lucis_version": environment.get("lucis_version"),
+        "yeny_version": environment.get("yeny_version"),
         "git_commit": environment.get("git_commit"),
         "python_minor": _python_minor(environment.get("python_version")),
         "profile": configuration["profile"],
@@ -308,7 +308,7 @@ def aggregate_results(
     origin = sources if sources is not None else [None] * len(results)
     return {
         "schema_version": AGGREGATE_SCHEMA_VERSION,
-        "kind": "lucis-benchmark-aggregate",
+        "kind": "yeny-benchmark-aggregate",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "fingerprint": fingerprint,
         "sources": [
@@ -343,7 +343,7 @@ def render_aggregate_markdown(aggregate: Mapping[str, Any]) -> str:
     """
     fingerprint = aggregate["fingerprint"]
     lines: List[str] = [
-        "# Lucis benchmark aggregate",
+        "# Yeny benchmark aggregate",
         "",
         "> Aggregated medians of compatible runs. Each environment group is",
         "> reported separately; figures from different systems or machines",
@@ -358,7 +358,7 @@ def render_aggregate_markdown(aggregate: Mapping[str, Any]) -> str:
         f"| warmups | {fingerprint['warmups']} |",
         f"| repetitions | {fingerprint['repetitions']} |",
         f"| require_memory | {fingerprint['require_memory']} |",
-        f"| lucis_version | {fingerprint['lucis_version']} |",
+        f"| yeny_version | {fingerprint['yeny_version']} |",
         f"| python | {fingerprint['python_minor']} |",
         f"| git_commit | {fingerprint['git_commit']} |",
         f"| dataset_sha256 | {fingerprint['dataset_sha256']} |",

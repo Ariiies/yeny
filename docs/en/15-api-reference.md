@@ -1,27 +1,27 @@
 # API Reference
 
-Lucis v0.1.0 Public API Comprehensive Reference. For narrative guides, see previous pages.
+Yeny v0.1.0 Public API Comprehensive Reference. For narrative guides, see previous pages.
 
 ---
 
-## `Lucis` — Main class
+## `Yeny` — Main class
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions, TableConfig, TableSource
+from yeny import Yeny
+from yeny.config import YenyOptions, TableConfig, TableSource
 ```
 
 ### Constructor
 
 ```python
-Lucis(
+Yeny(
     name: str = "default",
     engine: str = "core",
     preprocessor: Optional[Callable] = None,
     *,
     autoload: bool = True,
     storage: Optional[BaseStorage] = None,
-    options: Optional[LucisOptions] = None,
+    options: Optional[YenyOptions] = None,
 )
 ```
 
@@ -32,12 +32,12 @@ Lucis(
 | `preprocessor` | `Callable \| None` | `None` | Custom preprocessor. `None` uses the engine default |
 | `autoload` | `bool` | `True` | If a saved index exists, load it automatically |
 | `storage` | `BaseStorage \| None` | `None` | Injected storage; overrides declarative storage options |
-| `options` | `LucisOptions \| None` | `None` | Advanced infrastructure; `None` uses the defaults below |
+| `options` | `YenyOptions \| None` | `None` | Advanced infrastructure; `None` uses the defaults below |
 
 ```python
 @dataclass(frozen=True)
-class LucisOptions:
-    storage_dir: str = "lucis_data"
+class YenyOptions:
+    storage_dir: str = "yeny_data"
     storage_type: str = "json"
     db_path: Optional[str] = None
     connection_url: Optional[str] = None
@@ -61,9 +61,9 @@ class TableConfig:
     stream_ordered: bool = False
 ```
 
-`binary_dir="auto"` derives `<storage_dir>/lcs`; `None` disables `.lcs`
+`binary_dir="auto"` derives `<storage_dir>/yny`; `None` disables `.yny`
 persistence; any other string is an explicit directory. An injected `storage`
-always takes precedence over `LucisOptions.storage_type`, `db_path`, and
+always takes precedence over `YenyOptions.storage_type`, `db_path`, and
 `connection_url`.
 
 Read-only properties: `is_indexed`, `is_sharded`, `total_docs`,
@@ -73,7 +73,7 @@ Read-only properties: `is_indexed`, `is_sharded`, `total_docs`,
 
 ### Factory methods
 
-#### `Lucis.from_dict(...)`
+#### `Yeny.from_dict(...)`
 
 ```python
 @classmethod
@@ -83,13 +83,13 @@ def from_dict(
     *,
     engine: str = "core",
     preprocessor: Optional[Callable] = None,
-    options: Optional[LucisOptions] = None,
-) -> Lucis
+    options: Optional[YenyOptions] = None,
+) -> Yeny
 ```
 
 Instantiate from a `{id: texto}` dictionary. Preserve the original IDs.
 
-#### `Lucis.from_list(...)`
+#### `Yeny.from_list(...)`
 
 ```python
 @classmethod
@@ -99,13 +99,13 @@ def from_list(
     *,
     engine: str = "core",
     preprocessor: Optional[Callable] = None,
-    options: Optional[LucisOptions] = None,
-) -> Lucis
+    options: Optional[YenyOptions] = None,
+) -> Yeny
 ```
 
 Create instance from a list of texts. Auto-generated IDs (0, 1, 2...).
 
-#### `Lucis.from_sqlite_table(...)`
+#### `Yeny.from_sqlite_table(...)`
 
 ```python
 @classmethod
@@ -119,13 +119,13 @@ def from_sqlite_table(
     *,
     engine: str = "core",
     preprocessor: Optional[Callable] = None,
-    options: Optional[LucisOptions] = None,
-) -> Lucis
+    options: Optional[YenyOptions] = None,
+) -> Yeny
 ```
 
 Reads rows from an SQLite table and builds the index.
 
-#### `Lucis.from_sqlite_query(...)`
+#### `Yeny.from_sqlite_query(...)`
 
 ```python
 @classmethod
@@ -136,13 +136,13 @@ def from_sqlite_query(
     *,
     engine: str = "core",
     preprocessor: Optional[Callable] = None,
-    options: Optional[LucisOptions] = None,
-) -> Lucis
+    options: Optional[YenyOptions] = None,
+) -> Yeny
 ```
 
 Run a SQL query against SQLite and build the index.
 
-#### `Lucis.from_table(...)`
+#### `Yeny.from_table(...)`
 
 ```python
 @classmethod
@@ -153,13 +153,13 @@ def from_table(
     engine: str = "core",
     preprocessor: Optional[Callable] = None,
     config: Optional[TableConfig] = None,
-    options: Optional[LucisOptions] = None,
-) -> Lucis
+    options: Optional[YenyOptions] = None,
+) -> Yeny
 ```
 
 Read from any database supported by SQLAlchemy (MySQL, PostgreSQL, etc.).
 
-#### `Lucis.from_query(...)`
+#### `Yeny.from_query(...)`
 
 ```python
 @classmethod
@@ -170,8 +170,8 @@ def from_query(
     *,
     engine: str = "core",
     preprocessor: Optional[Callable] = None,
-    options: Optional[LucisOptions] = None,
-) -> Lucis
+    options: Optional[YenyOptions] = None,
+) -> Yeny
 ```
 
 Run a SQL query against any SQLAlchemy database and build the index.
@@ -289,9 +289,9 @@ def list_versions(self) -> List[str]
 
 Lists all available physical versions of the index.
 
-#### `generate_lcs()`
+#### `generate_yny()`
 
-Generates binary `.lcs` files for all shards.
+Generates binary `.yny` files for all shards.
 
 ---
 
@@ -363,7 +363,7 @@ Connects to the source database to auto-generate `data_fn` of the worker.
 ## `IndexWorker`
 
 ```python
-from lucis.core.worker import IndexWorker
+from yeny.core.worker import IndexWorker
 ```
 
 | Method | Description |
@@ -390,7 +390,7 @@ from lucis.core.worker import IndexWorker
 TF-IDF engine with cosine similarity. Default tokenizer: `WordTokenizer`.
 
 ```python
-from lucis.engines.core import CoreEngine
+from yeny.engines.core import CoreEngine
 ```
 
 ### `LiteEngine`
@@ -398,7 +398,7 @@ from lucis.engines.core import CoreEngine
 Standardized TF engine. Default tokenizer: `CharNgramTokenizer(3)`.
 
 ```python
-from lucis.engines.lite import LiteEngine
+from yeny.engines.lite import LiteEngine
 ```
 
 Both engines exhibit:
@@ -417,7 +417,7 @@ Both engines exhibit:
 ## Preprocessors
 
 ```python
-from lucis.utils.nlp import (
+from yeny.utils.nlp import (
     # Tokenizer classes (callable)
     SimpleTokenizer,        # split by spaces
     WordTokenizer,          # regex words, lowercase
@@ -443,7 +443,7 @@ from lucis.utils.nlp import (
 ## Index functions
 
 ```python
-from lucis.utils.index import (
+from yeny.utils.index import (
     build_index,            # corpus → índice invertido
     get_bow,                # tokens → bag of words
     get_corpus_bows,        # corpus → lista de BOWs
@@ -464,7 +464,7 @@ from lucis.utils.index import (
 ## Mathematical functions
 
 ```python
-from lucis.utils.math.core import (
+from yeny.utils.math.core import (
     dot_product,                    # producto punto denso
     vector_norm,                    # norma L2
     cosine_similarity,              # similitud coseno densa
@@ -482,7 +482,7 @@ from lucis.utils.math.core import (
 ## Decorators
 
 ```python
-from lucis.utils.decorators import (
+from yeny.utils.decorators import (
     corpus_input,   # auto-tokeniza corpus si recibe strings
     doc_input,      # auto-tokeniza documento si recibe string
 )
@@ -493,7 +493,7 @@ from lucis.utils.decorators import (
 ## Serialization
 
 ```python
-from lucis.utils.serialization import dumps, loads, BACKEND
+from yeny.utils.serialization import dumps, loads, BACKEND
 ```
 
 | Function | Description |
@@ -507,11 +507,11 @@ from lucis.utils.serialization import dumps, loads, BACKEND
 ## Storage backends
 
 ```python
-from lucis.storage.json_storage import JSONStorage
-from lucis.storage.sqlite_storage import SQLiteStorage
-from lucis.storage.alchemy_storage import AlchemyStorage      # requiere sqlalchemy
-from lucis.storage.metadata_storage import MetadataStorage
-from lucis.storage import DatabaseReader                       # requires sqlalchemy
+from yeny.storage.json_storage import JSONStorage
+from yeny.storage.sqlite_storage import SQLiteStorage
+from yeny.storage.alchemy_storage import AlchemyStorage      # requiere sqlalchemy
+from yeny.storage.metadata_storage import MetadataStorage
+from yeny.storage import DatabaseReader                       # requires sqlalchemy
 ```
 
 They all implement `BaseStorage`:
@@ -531,8 +531,8 @@ They all implement `BaseStorage`:
 ## Data models
 
 ```python
-from lucis.models.search import SearchResult, SearchResponse
-from lucis.core.health import HealthReport, ShardHealth
+from yeny.models.search import SearchResult, SearchResponse
+from yeny.core.health import HealthReport, ShardHealth
 ```
 
 Detailed in [Data models](12-data-models.md).
@@ -542,13 +542,13 @@ Detailed in [Data models](12-data-models.md).
 ## Exceptions
 
 ```python
-from lucis.exceptions import (
-    LucisError,                 # base
-    LucisEmptyCorpusError,      # corpus vacío
-    LucisInvalidDocumentError,  # documento inválido
-    LucisEngineError,           # error del motor
-    LucisSearchError,           # error en búsqueda
-    LucisTokenizationError,     # error en tokenización
+from yeny.exceptions import (
+    YenyError,                 # base
+    YenyEmptyCorpusError,      # corpus vacío
+    YenyInvalidDocumentError,  # documento inválido
+    YenyEngineError,           # error del motor
+    YenySearchError,           # error en búsqueda
+    YenyTokenizationError,     # error en tokenización
 )
 ```
 
@@ -559,13 +559,13 @@ Detailed in [Exceptions](13-exceptions.md).
 ## Sharding
 
 ```python
-from lucis.core.shard import (
+from yeny.core.shard import (
     ShardManager,
     date_to_shard_key,
     normalize_to_shard_key,
     shard_key_in_range,
-    LUCIS_GLOBAL_SHARD,              # "9999_99"
-    LUCIS_DEFAULT_DATE_COLUMNS,      # ("created_at", "updated_at", "timestamp")
+    YENY_GLOBAL_SHARD,              # "9999_99"
+    YENY_DEFAULT_DATE_COLUMNS,      # ("created_at", "updated_at", "timestamp")
 )
 ```
 
@@ -576,7 +576,7 @@ Detailed in [Temporary Sharding](08-temporary-sharding.md).
 ##Compact data structures
 
 ```python
-from lucis.utils.compact import CompactPostings, CompactDocLengths
+from yeny.utils.compact import CompactPostings, CompactDocLengths
 ```
 
 | Class | Description |

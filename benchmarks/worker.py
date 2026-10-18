@@ -1,9 +1,9 @@
-"""Isolated benchmark worker for one Lucis engine.
+"""Isolated benchmark worker for one Yeny engine.
 
 The parent runner starts this module four times per engine in fresh Python
 processes. The ``build`` phase generates the deterministic corpus, builds a
 controlled-word index, runs search measurements, persists JSON, SQLite, and
-``.lcs`` artifacts, and writes the dataset/query contract the load phases
+``.yny`` artifacts, and writes the dataset/query contract the load phases
 consume. The ``load_json``, ``load_sqlite``, and ``load_mmap`` phases each
 reload exactly one backend in a new interpreter, so no backend inherits
 Python state warmed by a previous one, and each verifies that result IDs,
@@ -23,9 +23,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
-from lucis import Lucis
-from lucis.config import LucisOptions
-from lucis.utils.nlp import WordTokenizer
+from yeny import Yeny
+from yeny.config import YenyOptions
+from yeny.utils.nlp import WordTokenizer
 
 from .config import (
     BenchmarkProfile,
@@ -41,7 +41,7 @@ from .queries import (
     build_queries,
     queries_from_dict,
 )
-from .scenarios.mmap_load import measure_lcs_write, measure_mmap_load
+from .scenarios.mmap_load import measure_yny_write, measure_mmap_load
 from .scenarios.persistence import (
     measure_json_save,
     measure_sqlite_save,
@@ -115,7 +115,7 @@ def _parse_request(request: Dict[str, Any]) -> _RequestContext:
 
     engine = str(request["engine"])
     if engine not in {"core", "lite"}:
-        raise ValueError(f"Unknown Lucis engine: {engine}")
+        raise ValueError(f"Unknown Yeny engine: {engine}")
 
     warmups = int(request["warmups"])
     repetitions = int(request["repetitions"])
@@ -137,13 +137,13 @@ def _parse_request(request: Dict[str, Any]) -> _RequestContext:
 
 
 def _warm_search(
-    lucis: Lucis,
+    yeny: Yeny,
     query: QuerySpec,
     warmups: int,
 ) -> None:
     """Run unmeasured warm-up searches for one query."""
     for _ in range(warmups):
-        lucis.search(query.text, top_k=10)
+        yeny.search(query.text, top_k=10)
 
 
 def _verify_reference_hashes(
@@ -213,12 +213,12 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
         )
     ]
 
-    build_instance = Lucis(
+    build_instance = Yeny(
         name=f"benchmark_{engine}_build",
         engine=engine,
         preprocessor=WordTokenizer(),
         autoload=False,
-        options=LucisOptions(
+        options=YenyOptions(
             storage_dir=str(context.workspace / "build"),
             binary_dir=None,
         ),
@@ -230,16 +230,16 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
         make_measurement("index_build", build_samples, engine=engine)
     )
 
-    e2e_holder: List[Lucis] = []
+    e2e_holder: List[Yeny] = []
 
     def _index_e2e() -> None:
         e2e_holder.append(
-            Lucis.from_dict(
+            Yeny.from_dict(
                 dataset.documents,
                 name=f"benchmark_{engine}_e2e",
                 engine=engine,
                 preprocessor=WordTokenizer(),
-                options=LucisOptions(
+                options=YenyOptions(
                     storage_dir=str(context.workspace / "e2e"),
                     binary_dir=None,
                 ),
@@ -329,12 +329,12 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
 
     sqlite_dir = context.workspace / "sqlite"
     sqlite_dir.mkdir(parents=True, exist_ok=True)
-    sqlite_instance = Lucis(
+    sqlite_instance = Yeny(
         name=f"benchmark_{engine}_sqlite",
         engine=engine,
         preprocessor=WordTokenizer(),
         autoload=False,
-        options=LucisOptions(
+        options=YenyOptions(
             storage_type="sqlite",
             db_path=str(sqlite_dir / "benchmark.db"),
             binary_dir=None,
@@ -344,9 +344,9 @@ def _execute_build_phase(context: _RequestContext) -> Dict[str, Any]:
     measurements.extend(measure_sqlite_save(sqlite_instance, engine=engine))
     sqlite_instance.storage.close()
 
-    lcs_path = context.workspace / "lcs" / f"benchmark_{engine}.lcs"
+    yny_path = context.workspace / "yny" / f"benchmark_{engine}.yny"
     measurements.extend(
-        measure_lcs_write(build_instance, lcs_path, engine=engine)
+        measure_yny_write(build_instance, yny_path, engine=engine)
     )
 
     build_instance.close()
@@ -446,17 +446,17 @@ def _execute_backend_load_phase(
     engine = context.engine
     if backend == "mmap":
         measurements = measure_mmap_load(
-            lambda: Lucis(
+            lambda: Yeny(
                 name=f"benchmark_{engine}_mmap",
                 engine=engine,
                 preprocessor=WordTokenizer(),
                 autoload=False,
-                options=LucisOptions(
+                options=YenyOptions(
                     storage_dir=str(context.workspace / "mmap"),
                     binary_dir=None,
                 ),
             ),
-            context.workspace / "lcs" / f"benchmark_{engine}.lcs",
+            context.workspace / "yny" / f"benchmark_{engine}.yny",
             engine=engine,
             queries=queries,
             expected_results=expected_results,
@@ -465,22 +465,22 @@ def _execute_backend_load_phase(
         )
     else:
         constructors = {
-            "json": lambda: Lucis(
+            "json": lambda: Yeny(
                 name=f"benchmark_{engine}_build",
                 engine=engine,
                 preprocessor=WordTokenizer(),
                 autoload=True,
-                options=LucisOptions(
+                options=YenyOptions(
                     storage_dir=str(context.workspace / "build"),
                     binary_dir=None,
                 ),
             ),
-            "sqlite": lambda: Lucis(
+            "sqlite": lambda: Yeny(
                 name=f"benchmark_{engine}_sqlite",
                 engine=engine,
                 preprocessor=WordTokenizer(),
                 autoload=True,
-                options=LucisOptions(
+                options=YenyOptions(
                     storage_type="sqlite",
                     db_path=str(context.workspace / "sqlite" / "benchmark.db"),
                     binary_dir=None,

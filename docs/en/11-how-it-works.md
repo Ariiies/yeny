@@ -1,4 +1,4 @@
-# How Lucis works
+# How Yeny works
 
 This page explains the internals of the search engine: what data structures are built, how relevance is calculated, and how memory is optimized.
 
@@ -6,7 +6,7 @@ This page explains the internals of the search engine: what data structures are 
 
 ##Inverted index
 
-The heart of Lucis is an **inverted index**: a dictionary that maps each vocabulary word to the list of documents where it appears, along with its frequency.
+The heart of Yeny is an **inverted index**: a dictionary that maps each vocabulary word to the list of documents where it appears, along with its frequency.
 
 ### Conceptual example
 
@@ -45,7 +45,7 @@ Each entry (`{doc_id: frecuencia}`) is called **posting list**.
 
 ## CompactPostings — Efficient posting lists
 
-Instead of Python dictionaries (`{doc_id: freq}`), Lucis stores each posting list as two ordered parallel arrays:
+Instead of Python dictionaries (`{doc_id: freq}`), Yeny stores each posting list as two ordered parallel arrays:
 
 ```
 CompactPostings:
@@ -131,9 +131,9 @@ It does not calculate IDF or document standards. This makes it faster but less a
 
 ---
 
-## Binary format .lcs
+## Binary format .yny
 
-For ultra-efficient persistence, Lucis can save shards in binary `.lcs` (Lucis Compact Storage) format that is loaded via memory-mapped I/O:
+For ultra-efficient persistence, Yeny can save shards in binary `.yny` (Yeny Compact Storage) format that is loaded via memory-mapped I/O:
 
 ```
 ┌────────────────────────────────────┐
@@ -154,15 +154,15 @@ For ultra-efficient persistence, Lucis can save shards in binary `.lcs` (Lucis C
 
 - **Almost instantaneous loading**: The OS maps the file without copying it to RAM.
 - **RAM on demand**: Only accessed pages are loaded into physical memory.
-- **Shared between processes**: Multiple workers can read the same `.lcs`.
+- **Shared between processes**: Multiple workers can read the same `.yny`.
 
-`.lcs` files are generated automatically when you save an index with `generate_lcs()` or during indexing with binary storage.
+`.yny` files are generated automatically when you save an index with `generate_yny()` or during indexing with binary storage.
 
 ---
 
 ## Shadow indexing — Reindexing without downtime
 
-When you call `reindex()`, Lucis does not destroy the active index. Instead:
+When you call `reindex()`, Yeny does not destroy the active index. Instead:
 
 1. **Create a new version** with a versioned physical name (e.g. `mi_idx__v20240315_120000`).
 2. **Builds the index** in the background on the new version.
@@ -175,7 +175,7 @@ This is the mechanism underlying both `reindex()` and `IndexWorker`.
 
 ## Parallelism
 
-Lucis uses `concurrent.futures.ThreadPoolExecutor` to parallelize expensive operations:
+Yeny uses `concurrent.futures.ThreadPoolExecutor` to parallelize expensive operations:
 
 - **Multi-shard search**: Each shard is searched in an independent thread, the results are merged and re-ranked.
 - **Persistence**: Shards are saved in parallel.

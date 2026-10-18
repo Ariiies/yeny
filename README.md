@@ -1,21 +1,21 @@
 <p align="center">
-  <img src="assets/lucis_lockup.svg" height="120" align="middle" alt="Lucis Logo">
+  <img src="assets/yeny_lockup.svg" height="120" align="middle" alt="Yeny Logo">
 </p>
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github)](https://github.com/sponsors/Ariiies)
-[![PyPI](https://img.shields.io/pypi/v/lucis)](https://pypi.org/project/lucis/)
+[![PyPI](https://img.shields.io/pypi/v/yeny)](https://pypi.org/project/yeny/)
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](https://www.python.org/)
 
 > A lightweight toolkit for building custom search systems in Python.
 
 ### "An easy way to build search engines in Python."
 
-Lucis is a lightweight, production-oriented search toolkit that helps you build full-text search features quickly, while still giving you advanced controls when your dataset grows.
+Yeny is a lightweight, production-oriented search toolkit that helps you build full-text search features quickly, while still giving you advanced controls when your dataset grows.
 
 It follows a progressive-power philosophy:
 - Start with pure Python and zero mandatory external dependencies.
 - Scale to SQL-backed persistence and temporal sharding when needed.
-- Keep API ergonomics simple through a single high-level `Lucis` entrypoint.
+- Keep API ergonomics simple through a single high-level `Yeny` entrypoint.
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ It follows a progressive-power philosophy:
 - [Quick Start](#quick-start)
 - [Examples](#examples)
 - [Architecture Snapshot](#architecture-snapshot)
-- [Why Lucis?](#why-lucis)
+- [Why Yeny?](#why-yeny)
 - [Documentation](#documentation)
 - [Benchmarks](#benchmarks)
 - [Testing](#testing)
@@ -38,8 +38,8 @@ It follows a progressive-power philosophy:
 - Pure Python engines (`core` and `lite`)
 - Built-in NLP preprocessors and tokenizers
 - Ranked retrieval with structured response models
-- **Binary persistence (`.lcs`)** — memory-mapped index files for near-zero RAM loading, plus lightweight SQLite metadata (WAL mode). Persistence is **automatic** — `from_dict()`, `from_list()`, and `from_table()` all save without calling `.save()`.
-- **Direct DB ingestion** — read from SQLite, MySQL, or PostgreSQL tables without polluting your database (read-only adapters, zero `lucis_*` tables on your DB)
+- **Binary persistence (`.yny`)** — memory-mapped index files for near-zero RAM loading, plus lightweight SQLite metadata (WAL mode). Persistence is **automatic** — `from_dict()`, `from_list()`, and `from_table()` all save without calling `.save()`.
+- **Direct DB ingestion** — read from SQLite, MySQL, or PostgreSQL tables without polluting your database (read-only adapters, zero `yeny_*` tables on your DB)
 - Versioned index persistence with rollback support
 - Temporal sharding for large time-series corpora
 - Background reindexing with `IndexWorker` (zero-downtime)
@@ -49,45 +49,45 @@ It follows a progressive-power philosophy:
 
 ## Installation
 
-Install from [PyPI](https://pypi.org/project/lucis/):
+Install from [PyPI](https://pypi.org/project/yeny/):
 
 ```bash
-pip install lucis
+pip install yeny
 ```
 
 Optional SQL support:
 
 ```bash
 # Generic SQLAlchemy support
-pip install lucis[alchemy]
+pip install yeny[alchemy]
 
 # MySQL
-pip install lucis[mysql]
+pip install yeny[mysql]
 
 # PostgreSQL
-pip install lucis[postgresql]
+pip install yeny[postgresql]
 ```
 
 Alternatively, install from source:
 
 ```bash
 git clone https://github.com/Ariiies/lucis.git
-cd lucis
+cd yeny
 pip install .
 ```
 
 ## Quick Start
 
 ```python
-from lucis import Lucis
+from yeny import Yeny
 
 documents = {
     "doc1": "Python is a versatile language for backend systems",
     "doc2": "JavaScript dominates modern frontend development",
-    "doc3": "Lucis makes search implementation straightforward",
+    "doc3": "Yeny makes search implementation straightforward",
 }
 
-searcher = Lucis.from_dict(documents, name="demo_index", engine="core")
+searcher = Yeny.from_dict(documents, name="demo_index", engine="core")
 response = searcher.search("python frontend", top_k=2)
 
 print(response)
@@ -108,18 +108,18 @@ print(response)
 Factories persist automatically. Reload later with the same logical name:
 
 ```python
-loaded = Lucis(name="demo_index")
+loaded = Yeny(name="demo_index")
 response = loaded.search("python")
 ```
 
 Advanced infrastructure stays optional and typed:
 
 ```python
-from lucis import Lucis
-from lucis.config import LucisOptions, TableConfig, TableSource
+from yeny import Yeny
+from yeny.config import YenyOptions, TableConfig, TableSource
 
-options = LucisOptions(storage_dir="search_data", memory_limit_mb=512)
-searcher = Lucis.from_table(
+options = YenyOptions(storage_dir="search_data", memory_limit_mb=512)
+searcher = Yeny.from_table(
     TableSource(
         table="articles",
         connection_url=DB_URL,
@@ -133,8 +133,8 @@ searcher = Lucis.from_table(
 )
 ```
 
-`LucisOptions.binary_dir` accepts `"auto"` (derive `<storage_dir>/lcs`),
-`None` (disable `.lcs` persistence), or an explicit directory.
+`YenyOptions.binary_dir` accepts `"auto"` (derive `<storage_dir>/yny`),
+`None` (disable `.yny` persistence), or an explicit directory.
 
 ## Examples
 
@@ -142,8 +142,8 @@ Runnable, documented end-to-end scenarios live in [`examples/`](examples/):
 
 - **[Encrypted search over MySQL](examples/encrypted_search/README.md)** —
   full-text search over Fernet-encrypted columns (`name`/`email`/`number`)
-  using a blind index of HMAC-trigrams, temporal sharding, `.lcs`
-  persistence and an interactive playground. The whole Lucis integration
+  using a blind index of HMAC-trigrams, temporal sharding, `.yny`
+  persistence and an interactive playground. The whole Yeny integration
   fits in ~15 lines inside `playground.py`.
 
 ```bash
@@ -169,31 +169,31 @@ Documents → Preprocessors → Engine → Storage
                 │                │
                 ▼                ▼
           Tokenizers      ┌──────────────┐
-          (word, char,    │ .lcs binaries │  ← mmap (index data)
+          (word, char,    │ .yny binaries │  ← mmap (index data)
            n-gram)        │  + SQLite WAL │  ← metadata & aliases
                           └──────────────┘
 ```
 
-- `lucis.main.Lucis`: high-level API and orchestration (Facade pattern)
-- `lucis.engines`:
+- `yeny.main.Yeny`: high-level API and orchestration (Facade pattern)
+- `yeny.engines`:
     - `CoreEngine`: TF-IDF + cosine similarity
     - `LiteEngine`: lightweight normalized TF approach
-- `lucis.storage`:
-    - `MetadataStorage` **(recommended)**: SQLite WAL for metadata + `.lcs` binaries for index data
+- `yeny.storage`:
+    - `MetadataStorage` **(recommended)**: SQLite WAL for metadata + `.yny` binaries for index data
     - `JSONStorage`: plain `.json` files (simple / debugging)
     - `SQLiteStorage`: full index serialized in SQLite tables
     - `AlchemyStorage`: full index serialized via SQLAlchemy (MySQL, PostgreSQL, etc.)
-- `lucis.storage.DatabaseReader`: **read-only** adapter for ingesting from your DB without creating any `lucis_*` tables
-- `lucis.worker`: async/periodic reindex worker (zero-downtime)
-- `lucis.health`: system and index health reporting
-- `lucis.utils`: NLP, indexing helpers, math, serialization, mmap helpers
+- `yeny.storage.DatabaseReader`: **read-only** adapter for ingesting from your DB without creating any `yeny_*` tables
+- `yeny.worker`: async/periodic reindex worker (zero-downtime)
+- `yeny.health`: system and index health reporting
+- `yeny.utils`: NLP, indexing helpers, math, serialization, mmap helpers
 
-## Why Lucis?
+## Why Yeny?
 
-> **Note:** The comparison below is qualitative. Lucis benchmarks compare its
+> **Note:** The comparison below is qualitative. Yeny benchmarks compare its
 > own `core` and `lite` engines; they do not benchmark external projects.
 
-| Feature | Lucis | Whoosh | Meilisearch | Elasticsearch |
+| Feature | Yeny | Whoosh | Meilisearch | Elasticsearch |
 |---|---|---|---|---|
 | **Pure Python (zero deps)** | ✅ | ✅ | ❌ (Rust) | ❌ (Java) |
 | **Direct DB table ingestion** | ✅ | ❌ | ❌ | ❌ |
@@ -203,19 +203,19 @@ Documents → Preprocessors → Engine → Storage
 | **Bilingual docs (EN + ES)** | ✅ | ❌ | ❌ | ❌ |
 | **Zero external services** | ✅ | ✅ | ❌ | ❌ |
 
-**Where Lucis shines:**
+**Where Yeny shines:**
 
-Lucis is built for **small to medium projects** that need search without the overhead of a full-blown search infrastructure. You don't need to spin up a separate server, configure clusters, or learn a new query DSL — just `pip install lucis` and you're done.
+Yeny is built for **small to medium projects** that need search without the overhead of a full-blown search infrastructure. You don't need to spin up a separate server, configure clusters, or learn a new query DSL — just `pip install yeny` and you're done.
 
-- **Small projects & prototypes** — When your dataset is in the thousands or low millions of documents, Lucis gives you production-quality search without standing up an Elasticsearch or Meilisearch instance.
+- **Small projects & prototypes** — When your dataset is in the thousands or low millions of documents, Yeny gives you production-quality search without standing up an Elasticsearch or Meilisearch instance.
 - **Embedded use cases** — Ideal for CLI tools, desktop apps, or Python backends (Flask, FastAPI) that need search as a library, not a service.
-- **High customizability** — Swap tokenizers, inject your own preprocessors, or even bring external NLP libraries (spaCy, NLTK). Lucis adapts to your domain, not the other way around.
-- **SQL-native data** — If your data already lives in SQLite, MySQL, or PostgreSQL, Lucis ingests directly from tables or queries — no ETL pipeline needed.
+- **High customizability** — Swap tokenizers, inject your own preprocessors, or even bring external NLP libraries (spaCy, NLTK). Yeny adapts to your domain, not the other way around.
+- **SQL-native data** — If your data already lives in SQLite, MySQL, or PostgreSQL, Yeny ingests directly from tables or queries — no ETL pipeline needed.
 - **Time-series corpora** — Temporal sharding lets you query logs, emails, or articles by date range without loading everything into RAM.
 
 ## Documentation
 
-Lucis includes full documentation in Spanish and English.
+Yeny includes full documentation in Spanish and English.
 
 - [English Index](docs/en/01-index.md)
 - [Índice en Español](docs/es/01-index.md)
@@ -223,14 +223,14 @@ Lucis includes full documentation in Spanish and English.
 Useful entry points:
 
 - Getting started: [English](docs/en/02-first-steps.md), [Español](docs/es/02-primeros-pasos.md)
-- Lucis object reference: [English](docs/en/03-lucis-object.md), [Español](docs/es/03-objeto-lucis.md)
+- Yeny object reference: [English](docs/en/03-yeny-object.md), [Español](docs/es/03-objeto-yeny.md)
 - API reference: [English](docs/en/15-api-reference.md), [Español](docs/es/15-api-referencia.md)
 - Testing guide: [English](docs/en/16-tests.md), [Español](docs/es/16-pruebas.md)
 - Benchmark guide: [English](docs/en/17-benchmarks.md), [Español](docs/es/17-benchmarks.md)
 
 ## Benchmarks
 
-Lucis includes a deterministic local suite for comparing `CoreEngine` and
+Yeny includes a deterministic local suite for comparing `CoreEngine` and
 `LiteEngine` with the same generated corpus, queries, and tokenizer:
 
 ```bash
@@ -238,7 +238,7 @@ python -m benchmarks run --profile tiny
 ```
 
 It measures index construction, public search latency, JSON/SQLite
-persistence, `.lcs` serialization and `mmap` loading, artifact size, and
+persistence, `.yny` serialization and `mmap` loading, artifact size, and
 available RSS memory. Results are saved as timestamped JSON so runs can be
 validated and compared without overwriting previous data.
 
@@ -258,9 +258,9 @@ python -m pytest -q
 
 ## Sponsor
 
-Lucis is an open-source project. If this toolkit has saved you time or helped you build robust search features, consider supporting its ongoing development and maintenance.
+Yeny is an open-source project. If this toolkit has saved you time or helped you build robust search features, consider supporting its ongoing development and maintenance.
 
-💝 [Sponsor Lucis on GitHub](https://github.com/sponsors/Ariiies)
+💝 [Sponsor Yeny on GitHub](https://github.com/sponsors/Ariiies)
 
 ## Contributing
 
@@ -275,7 +275,7 @@ These features are planned for future releases. Contributions and feedback are w
 | Engine | Status | Description |
 |---|---|---|
 | **BM25Engine** | 🧪 Planned | BM25 relevance scoring — better IDF saturation and document length normalization than TF-IDF. Ideal for general-purpose search. |
-| **NumpyEngine** | 🧪 Planned | NumPy-accelerated vector operations — SIMD-optimized `batch_cosine_similarity`, dense TF-IDF matrices, and `top_k` via `argpartition`. Install with `pip install lucis[plus]`. |
+| **NumpyEngine** | 🧪 Planned | NumPy-accelerated vector operations — SIMD-optimized `batch_cosine_similarity`, dense TF-IDF matrices, and `top_k` via `argpartition`. Install with `pip install yeny[plus]`. |
 | **PolarsEngine** | 🔬 Research | Polars-powered parallel index construction for massive corpora. Streaming ingestion with lazy DataFrames. |
 
 ### Features
