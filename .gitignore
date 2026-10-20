@@ -69,6 +69,7 @@ test_data/
 !docs/
 !pyproject.toml
 !README.md
+!README.es.md
 !MANIFEST.in
 !.gitignore
 !LICENSE

@@ -2,9 +2,17 @@
   <img src="assets/yeny_lockup3.png" height="120" align="middle" alt="Yeny Logo">
 </p>
 
-[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github)](https://github.com/sponsors/Ariiies)
-[![PyPI](https://img.shields.io/pypi/v/yeny)](https://pypi.org/project/yeny/)
-[![Python](https://img.shields.io/badge/python-3.10+-blue)](https://www.python.org/)
+<p align="center">
+  <a href="https://github.com/sponsors/Ariiies"><img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github" alt="Sponsor"></a>
+  <a href="https://pypi.org/project/yeny/"><img src="https://img.shields.io/pypi/v/yeny" alt="PyPI"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python"></a>
+</p>
+
+<p align="center">
+  <b>🌐 Language / Idioma:</b> &nbsp;
+  <strong>English</strong> &nbsp;|&nbsp;
+  <a href="https://github.com/Ariiies/yeny/blob/main/README.es.md">Español</a>
+</p>
 
 > A lightweight toolkit for building custom search systems in Python.
 
@@ -31,6 +39,7 @@ It follows a progressive-power philosophy:
 - [Sponsor](#sponsor)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
+- [Dedication](#dedication)
 - [License](#license)
 
 ## Features
@@ -268,25 +277,34 @@ Contributions are welcome. Open an issue or submit a pull request.
 
 ## Roadmap
 
-These features are planned for future releases. Contributions and feedback are welcome!
+Development moves step by step—prioritizing pure-Python ergonomics first, while progressively building optional native acceleration in parallel.
 
-### Engines
+### Planned Engines (Pure Python)
 
 | Engine | Status | Description |
 |---|---|---|
 | **BM25Engine** | 🧪 Planned | BM25 relevance scoring — better IDF saturation and document length normalization than TF-IDF. Ideal for general-purpose search. |
-| **NumpyEngine** | 🧪 Planned | NumPy-accelerated vector operations — SIMD-optimized `batch_cosine_similarity`, dense TF-IDF matrices, and `top_k` via `argpartition`. Install with `pip install yeny[plus]`. |
-| **PolarsEngine** | 🔬 Research | Polars-powered parallel index construction for massive corpora. Streaming ingestion with lazy DataFrames. |
+| **NanoEngine / CountEngine** | 🧪 Planned | Ultra-lightweight raw term-frequency (bag-of-words) engine with zero normalization overhead. Built for maximum speed in simple keyword-matching scenarios alongside `LiteEngine`. |
 
-### Features
+### Parallel Track: Rust Acceleration
 
-| Feature | Status | Description |
+| Component | Status | Description |
 |---|---|---|
-| **Fuzzy & typo-tolerant search** | 🧪 Planned | Built-in Levenshtein/Damerau-Levenshtein matching integrated into both engines. |
-| **Faceted search** | 🔬 Research | Filter results by metadata fields (category, date, author) alongside full-text scoring. |
-| **Multi-language stemming** | 🔬 Research | Stemming support for Spanish, English, French, and more via optional `nltk`/`stanza` integration. |
+| **Rust Core & Tokenizers** | 🦀 In Progress | Gradual integration of optional Rust bindings (via PyO3) developed in parallel to accelerate tokenization, inverted index construction, and scoring kernels while keeping the pure-Python fallback intact. |
 
-> **Legend:** 🧪 Planned = actively planned, 🔬 Research = exploring feasibility
+### Tentative / Future Exploration
+
+- 🔬 **Fuzzy & typo-tolerant search:** Built-in Levenshtein/Damerau-Levenshtein matching integrated into the search pipeline.
+- 🔬 **Faceted search:** Filter results by metadata fields (category, date, author) alongside full-text scoring.
+- 🔬 **Multi-language stemming:** Optional stemming support for Spanish, English, and more.
+
+> **Legend:** 🧪 Planned = next in the pipeline · 🦀 In Progress = parallel track · 🔬 Tentative = long-term exploration
+
+## Dedication
+
+> **In loving memory of my mother, Yeny.**
+>
+> This project is named after her as a tribute to her life, her warmth, and everything she taught me. Every line of code in **Yeny** is shared freely with the developer community in her honor—so that her name continues to build, connect, and help others create. ❤️
 
 ## License
 
