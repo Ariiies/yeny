@@ -1,5 +1,11 @@
 # Encrypted Search with Yeny
 
+<p align="left">
+  <b>🌐 Language / Idioma:</b> &nbsp;
+  <strong>English</strong> &nbsp;|&nbsp;
+  <a href="README.es.md">Español</a>
+</p>
+
 > Full-text search over Fernet-encrypted MySQL columns — with ~15 lines
 > of Yeny-specific code.  *(Reproducible example: blind index of
 > trigrams + HMAC, queried with plain text.)*
@@ -212,13 +218,13 @@ MySQL row:  name(Fernet) email(Fernet) number(Fernet) ip(plain) created_at
 Yeny inverted index  →  .yny binaries + SQLite metadata (mmap loading)
 ```
 
-A plain-text query ("luis hotmail 612") is never valid Fernet, so it
+A plain-text query ("aries hotmail 612") is never valid Fernet, so it
 flows through steps 2–4 and produces the *same* blind tokens → match.
 The index only ever stores blind tokens; rows are fetched by id and
 decrypted **only for display**.
 
 Normalization makes surface forms equivalent:
-`luis.aries@example.com` ≡ `luisariesexamplecom`,
+`ariesmeza@hotmail.com` ≡ `ariesmezahotmailcom`,
 `+52 612 169 6226` ≡ `526121696226`, `127.168.192.4` ≡ `1271681924`.
 
 ---
@@ -229,7 +235,7 @@ Normalization makes surface forms equivalent:
 python seed_controlled_data.py
 ```
 
-Inserts 9 leads with stable references (`target-luis-aries`, …) and
+Inserts 10 leads with stable references (`target-aries-meza`, …) and
 **fixed** dates (three are `NULL` → universal shard `9999_99`).
 Re-running is safe: duplicates are skipped by reference.
 
@@ -278,7 +284,7 @@ Searching `aries`:
   2. [0.1429] Aries Yeny | aries.yeny@yeny.dev | +521551998877 | 127.168.192.0  (shard: 9999_99)
 ```
 
-Queries that find `target-luis-aries` (normalization at work):
+Queries that find `target-aries-meza` (normalization at work):
 `aries` · `Aries Meza` · `ariesmeza` · `hotmail 612` · `hotmail.com` ·
 `6121696226` · `+52 612 169 6226`.
 

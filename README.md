@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/yeny_lockup3.png" height="120" align="middle" alt="Yeny Logo">
+  <img src="https://raw.githubusercontent.com/Ariiies/yeny/main/assets/yeny_lockup3.png" height="120" align="middle" alt="Yeny Logo">
 </p>
 
 <p align="center">
@@ -147,9 +147,9 @@ searcher = Yeny.from_table(
 
 ## Examples
 
-Runnable, documented end-to-end scenarios live in [`examples/`](examples/):
+Runnable, documented end-to-end scenarios live in [`examples/`](https://github.com/Ariiies/yeny/tree/main/examples):
 
-- **[Encrypted search over MySQL](examples/encrypted_search/README.md)** —
+- **[Encrypted search over MySQL](https://github.com/Ariiies/yeny/blob/main/examples/encrypted_search/README.md)** —
   full-text search over Fernet-encrypted columns (`name`/`email`/`number`)
   using a blind index of HMAC-trigrams, temporal sharding, `.yny`
   persistence and an interactive playground. The whole Yeny integration
@@ -161,7 +161,7 @@ pip install "../..[encrypted-search-example]"
 python seed_controlled_data.py && python playground.py
 ```
 
-See [`examples/encrypted_search/README.md`](examples/encrypted_search/README.md)
+See [`examples/encrypted_search/README.md`](https://github.com/Ariiies/yeny/blob/main/examples/encrypted_search/README.md)
 for setup, security model and adaptation guide.
 
 ## Architecture Snapshot
@@ -226,16 +226,16 @@ Yeny is built for **small to medium projects** that need search without the over
 
 Yeny includes full documentation in Spanish and English.
 
-- [English Index](docs/en/01-index.md)
-- [Índice en Español](docs/es/01-index.md)
+- [English Index](https://github.com/Ariiies/yeny/blob/main/docs/en/01-index.md)
+- [Índice en Español](https://github.com/Ariiies/yeny/blob/main/docs/es/01-index.md)
 
 Useful entry points:
 
-- Getting started: [English](docs/en/02-first-steps.md), [Español](docs/es/02-primeros-pasos.md)
-- Yeny object reference: [English](docs/en/03-yeny-object.md), [Español](docs/es/03-objeto-yeny.md)
-- API reference: [English](docs/en/15-api-reference.md), [Español](docs/es/15-api-referencia.md)
-- Testing guide: [English](docs/en/16-tests.md), [Español](docs/es/16-pruebas.md)
-- Benchmark guide: [English](docs/en/17-benchmarks.md), [Español](docs/es/17-benchmarks.md)
+- Getting started: [English](https://github.com/Ariiies/yeny/blob/main/docs/en/02-first-steps.md), [Español](https://github.com/Ariiies/yeny/blob/main/docs/es/02-primeros-pasos.md)
+- Yeny object reference: [English](https://github.com/Ariiies/yeny/blob/main/docs/en/03-yeny-object.md), [Español](https://github.com/Ariiies/yeny/blob/main/docs/es/03-objeto-yeny.md)
+- API reference: [English](https://github.com/Ariiies/yeny/blob/main/docs/en/15-api-reference.md), [Español](https://github.com/Ariiies/yeny/blob/main/docs/es/15-api-referencia.md)
+- Testing guide: [English](https://github.com/Ariiies/yeny/blob/main/docs/en/16-tests.md), [Español](https://github.com/Ariiies/yeny/blob/main/docs/es/16-pruebas.md)
+- Benchmark guide: [English](https://github.com/Ariiies/yeny/blob/main/docs/en/17-benchmarks.md), [Español](https://github.com/Ariiies/yeny/blob/main/docs/es/17-benchmarks.md)
 
 ## Benchmarks
 
@@ -253,11 +253,11 @@ validated and compared without overwriting previous data.
 
 These benchmarks measure speed, resource use, and persistence fidelity—not
 search relevance or performance against other projects. See the
-[English guide](docs/en/17-benchmarks.md), the
-[guía en español](docs/es/17-benchmarks.md), or the
-[runner quick reference](benchmarks/README.md). The published cross-platform
+[English guide](https://github.com/Ariiies/yeny/blob/main/docs/en/17-benchmarks.md), the
+[guía en español](https://github.com/Ariiies/yeny/blob/main/docs/es/17-benchmarks.md), or the
+[runner quick reference](https://github.com/Ariiies/yeny/blob/main/benchmarks/README.md). The published cross-platform
 campaign, raw results, generated reports, and presentation are available in
-the [benchmark documentation package](docs/benchmarks/README.md).
+the [benchmark documentation package](https://github.com/Ariiies/yeny/blob/main/docs/benchmarks/README.md).
 
 ## Testing
 
@@ -308,4 +308,4 @@ Development moves step by step—prioritizing pure-Python ergonomics first, whil
 
 ## License
 
-[MIT License](LICENSE)
+[MIT License](https://github.com/Ariiies/yeny/blob/main/LICENSE)

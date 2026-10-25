@@ -6,7 +6,7 @@ Yeny concatenates the selected columns at the SQL level
 (``CONCAT_WS(' ', name, email, number, ip)``), so ``preprocessor()``
 receives ONE string whose fragments are a mix of Fernet ciphertext
 (``name`` / ``email`` / ``number``) and plain text (``ip``).  A search
-query ("luis hotmail 612") goes through the exact same function — that
+query ("aries hotmail 612") goes through the exact same function — that
 is what makes searching over encrypted fields work.
 
 Pipeline (per fragment):
@@ -21,7 +21,7 @@ Pipeline (per fragment):
 
 Because normalization removes ``@ + .`` and spaces, these are equivalent:
 
-    luis.aries@example.com  ==  luisariesexamplecom
+    ariesmeza@hotmail.com   ==  ariesmezahotmailcom
     +52 612 169 6226        ==  526121696226
     127.168.192.4           ==  1271681924
 
@@ -144,8 +144,8 @@ _trigram_tokenizer = CharNgramTokenizer(n=TRIGRAM_N)
 def normalize(value: str) -> str:
     """Canonical form shared by indexing and querying.
 
-    >>> normalize("Luis.Aries@Example.COM")
-    'luisariesexamplecom'
+    >>> normalize("Aries.Meza@Hotmail.COM")
+    'ariesmezahotmailcom'
     """
     return (
         value.lower()

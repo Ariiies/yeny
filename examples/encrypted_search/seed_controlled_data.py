@@ -2,7 +2,7 @@
 
     python seed_controlled_data.py
 
-These 10 records (Luis Aries, Aries Yeny, Cristiano Ronaldo, Real Madrid,
+These 10 records (Aries Meza, Aries Yeny, Cristiano Ronaldo, Real Madrid,
 Leo Messi, Vinicus Junior, My Chemical Romance, Autos Usados, Admin Publica,
 and dev service) exist so you always know **what a search should find**.
 Each one carries a stable ``reference`` and a fixed date (or ``None`` →
@@ -108,7 +108,7 @@ def main():
         f"Controlled data ready: {inserted} inserted, {skipped} already existed "
         f"(table now holds {database.count_leads()} rows)."
     )
-    print("Try searching:  luis aries | hotmail 612 | aries yeny | 1271681924")
+    print("Try searching:  aries meza | hotmail 612 | aries yeny | 1271681924")
 
 
 if __name__ == "__main__":
