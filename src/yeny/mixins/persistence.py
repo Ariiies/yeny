@@ -32,6 +32,8 @@ class PersistenceMixin:
             name: Optional custom name. Falls back to self.name.
         """
         save_name = name or self.name
+        if getattr(self, "_in_memory", False) and not getattr(self.storage, "_in_memory", False):
+            return
         physical_name = self.storage._generate_versioned_name(save_name)
 
         if self._shard_manager:
@@ -84,6 +86,8 @@ class PersistenceMixin:
             name: Optional custom name. Falls back to self.name.
         """
         load_name = name or self.name
+        if getattr(self, "_in_memory", False) and not getattr(self.storage, "_in_memory", False):
+            return
         physical_name = self.storage.resolve_alias(load_name)
 
         # Check if this is a sharded index

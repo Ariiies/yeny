@@ -25,6 +25,7 @@ from .storage.base import BaseStorage
 from .storage.json_storage import JSONStorage
 from .storage.sqlite_storage import SQLiteStorage
 from .storage.metadata_storage import MetadataStorage
+from .storage.memory_storage import MemoryStorage
 from .exceptions import YenyEngineError
 from .core.shard import ShardManager
 from .sync.source_spec import SourceSpec
@@ -134,22 +135,33 @@ class Yeny(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
         self._user_preprocessor = preprocessor
         self.preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = preprocessor
 
-        # Binary / mmap directory resolution
-        if binary_dir is True or binary_dir == "auto":
-            self._binary_dir: Optional[str] = os.path.join(storage_dir, "yny")
-        elif binary_dir is False or binary_dir is None:
-            self._binary_dir = None
+        # Check in-memory execution mode
+        is_mem_type = storage_type is None or (
+            isinstance(storage_type, str) and storage_type.lower() in ("memory", "none")
+        )
+        self._in_memory: bool = (
+            (getattr(storage, "_in_memory", False) or is_mem_type)
+            if storage is not None
+            else is_mem_type
+        )
+
+        # Binary / mmap directory resolution (single source of truth)
+        if self._in_memory or binary_dir is False or binary_dir is None:
+            self._binary_dir: Optional[str] = None
+        elif binary_dir is True or binary_dir == "auto":
+            self._binary_dir = os.path.join(storage_dir, "yny")
         else:
-            self._binary_dir = binary_dir
+            self._binary_dir = str(binary_dir)
 
         # Background rebuild state (Phase 3)
         self._rebuild_thread: Optional[threading.Thread] = None
         self._rebuild_error: Optional[Exception] = None
 
-        # 1. Configure storage
+        # 1. Configure storage and persistence
         if storage is not None:
-            # Advanced users can inject their own storage instance
             self.storage = storage
+        elif self._in_memory:
+            self.storage = MemoryStorage()
         elif storage_type == "alchemy":
             if connection_url is None:
                 raise ValueError(
@@ -179,6 +191,7 @@ class Yeny(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
         # 1b. Transparent fallback for existing JSON indexes on autoload:
         if (
             autoload
+            and not self._in_memory
             and storage is None
             and not (storage_type in ("sqlite", "alchemy"))
             and not self.storage.exists(name)
@@ -214,6 +227,11 @@ class Yeny(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
     def is_indexed(self) -> bool:
         """``True`` when the index has been built or loaded."""
         return self._is_indexed
+
+    @property
+    def is_in_memory(self) -> bool:
+        """``True`` if this instance runs 100% in RAM without disk persistence."""
+        return self._in_memory
 
     @property
     def is_sharded(self) -> bool:

@@ -2,6 +2,7 @@ from .base import BaseStorage
 from .json_storage import JSONStorage
 from .sqlite_storage import SQLiteStorage
 from .metadata_storage import MetadataStorage
+from .memory_storage import MemoryStorage
 
 # SQLAlchemy-backed adapters are lazy-imported to avoid a hard dependency.
 def __getattr__(name):
@@ -18,6 +19,7 @@ __all__ = [
     "JSONStorage",
     "SQLiteStorage",
     "MetadataStorage",
+    "MemoryStorage",
     "AlchemyStorage",
     "DatabaseReader",
 ]

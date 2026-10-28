@@ -280,3 +280,90 @@ class TestYenyPublicApi:
             assert list(dict_dir.glob("*.json")) == []
         finally:
             yn_dict.close()
+
+    def test_in_memory_mode_leaves_zero_disk_trace(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        docs = ["Python is fast and versatile", "Machine learning search engine"]
+
+        # 1. from_list with persist=False
+        searcher_persist_false = Yeny.from_list(docs, persist=False)
+        try:
+            assert searcher_persist_false.is_in_memory is True
+            res1 = searcher_persist_false.search("python")
+            assert len(res1.results) == 1
+            assert res1.results[0].doc_id == 0
+        finally:
+            searcher_persist_false.close()
+
+        # Temporary working directory must be completely empty
+        assert list(tmp_path.iterdir()) == []
+
+        # 2. from_list with storage_type=None and binary_dir=None
+        options_none = YenyOptions(storage_type=None, binary_dir=None, storage_dir=str(tmp_path))
+        searcher_none_opts = Yeny.from_list(docs, options=options_none)
+        try:
+            assert searcher_none_opts.is_in_memory is True
+            res2 = searcher_none_opts.search("versatile")
+            assert len(res2.results) == 1
+            assert res2.results[0].doc_id == 0
+        finally:
+            searcher_none_opts.close()
+
+        # Still completely empty
+        assert list(tmp_path.iterdir()) == []
+
+        # 3. Yeny constructor with storage_type="memory" and index()
+        options_mem = YenyOptions(storage_type="memory", storage_dir=str(tmp_path))
+        searcher_mem = Yeny(name="in_memory_idx", options=options_mem)
+        try:
+            assert searcher_mem.is_in_memory is True
+            searcher_mem.index(docs)
+            res3 = searcher_mem.search("engine")
+            assert len(res3.results) == 1
+            # save() and load() must be safe no-ops
+            searcher_mem.save()
+            searcher_mem.load()
+        finally:
+            searcher_mem.close()
+
+        assert list(tmp_path.iterdir()) == []
+
+        # 4. from_dict with persist=False
+        searcher_dict_mem = Yeny.from_dict({"k1": "Python in memory"}, persist=False)
+        try:
+            assert searcher_dict_mem.is_in_memory is True
+            res4 = searcher_dict_mem.search("memory")
+            assert len(res4.results) == 1
+            assert res4.results[0].doc_id == "k1"
+        finally:
+            searcher_dict_mem.close()
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_shared_memory_storage_autoload(self, tmp_path):
+        from yeny.storage.memory_storage import MemoryStorage
+        docs = ["Fast ephemeral search", "Zero disk persistence with shared RAM"]
+        mem = MemoryStorage()
+
+        # Build index in shared in-memory storage
+        s1 = Yeny(name="shared_idx", storage=mem)
+        assert s1.is_in_memory is True
+        s1.index(docs)
+        assert s1.is_indexed is True
+        s1.close()  # Must not wipe shared memory storage
+
+        # Reload automatically from shared in-memory storage via autoload=True (default)
+        s2 = Yeny(name="shared_idx", storage=mem)
+        try:
+            assert s2.is_in_memory is True
+            assert s2.is_indexed is True
+            res = s2.search("ephemeral")
+            assert len(res.results) == 1
+            assert res.results[0].doc_id == 0
+        finally:
+            s2.close()
+
+        # Explicit clear clears the store
+        mem.clear()
+        assert mem.exists("shared_idx") is False
+        assert list(tmp_path.iterdir()) == []

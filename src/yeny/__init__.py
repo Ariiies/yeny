@@ -18,6 +18,8 @@ from .models.search import SearchResult, SearchResponse
 # Storage backends
 from .storage.sqlite_storage import SQLiteStorage
 from .storage.metadata_storage import MetadataStorage
+from .storage.json_storage import JSONStorage
+from .storage.memory_storage import MemoryStorage
 
 # Sync layer (Phase 10 — Modular Architecture)
 from .sync.source_spec import SourceSpec
@@ -55,6 +57,8 @@ __all__ = [
     # Storage
     "SQLiteStorage",
     "MetadataStorage",
+    "JSONStorage",
+    "MemoryStorage",
     "AlchemyStorage",
     
     # Exceptions

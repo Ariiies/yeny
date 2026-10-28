@@ -19,8 +19,9 @@ class YenyOptions:
         storage_dir: Directory used by JSON storage and as the base for the
             automatic binary directory.
         storage_type: Declarative storage backend: ``"metadata"`` (default, SQLite WAL
-            yeny_meta.db + .yny binary files), ``"json"``, ``"sqlite"``
-            or ``"alchemy"``.  An explicitly injected ``storage`` object on
+            yeny_meta.db + .yny binary files), ``"json"``, ``"sqlite"``,
+            ``"alchemy"``, ``"memory"`` or ``None`` (ephemeral in-memory execution,
+            zero disk footprint).  An explicitly injected ``storage`` object on
             :class:`yeny.Yeny` takes precedence over these fields.
         db_path: SQLite persistence path.  Required when ``storage_type`` is
             ``"sqlite"`` and no storage object is injected.
@@ -37,7 +38,7 @@ class YenyOptions:
     """
 
     storage_dir: str = "yeny_data"
-    storage_type: str = "metadata"
+    storage_type: Optional[str] = "metadata"
     db_path: Optional[str] = None
     connection_url: Optional[str] = None
     max_loaded_shards: int = 0
@@ -48,6 +49,11 @@ class YenyOptions:
         if self.binary_dir is True:
             object.__setattr__(self, "binary_dir", "auto")
         elif self.binary_dir is False:
+            object.__setattr__(self, "binary_dir", None)
+
+        if self.storage_type is None or (
+            isinstance(self.storage_type, str) and self.storage_type.lower() in ("memory", "none")
+        ):
             object.__setattr__(self, "binary_dir", None)
 
 

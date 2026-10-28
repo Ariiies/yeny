@@ -114,11 +114,18 @@ print(response)
 # )
 ```
 
-Factories persist automatically. Reload later with the same logical name:
+Factories persist automatically by default, generating the `yeny_data/yny/` directory with `.yny` binaries and SQLite metadata (`yeny_meta.db`). Reload later with the same logical name:
 
 ```python
 loaded = Yeny(name="demo_index")
 response = loaded.search("python")
+```
+
+For unit tests, quick prototyping, or zero-disk ephemeral environments, run 100% in-memory:
+
+```python
+searcher = Yeny.from_list(["hello world"], persist=False)  # or options=YenyOptions(storage_type=None)
+response = searcher.search("hello")
 ```
 
 Advanced infrastructure stays optional and typed:

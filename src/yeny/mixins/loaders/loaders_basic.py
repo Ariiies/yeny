@@ -30,6 +30,7 @@ class BasicLoadersMixin:
         engine: str = "core",
         preprocessor: Optional[Callable] = None,
         options: Optional[YenyOptions] = None,
+        persist: bool = True,
     ) -> "Yeny":
         """
         Creates a Yeny instance from a dictionary {id: text}.
@@ -44,6 +45,8 @@ class BasicLoadersMixin:
             engine: Search engine implementation: ``"core"`` or ``"lite"``.
             preprocessor: Optional shared indexing/search preprocessing function.
             options: Advanced storage, binary, and memory configuration.
+            persist: Whether to persist the built index to storage. Set to
+                ``False`` for 100% in-memory execution (zero disk footprint).
 
         Returns:
             A ready-to-search Yeny instance.
@@ -55,15 +58,24 @@ class BasicLoadersMixin:
             })
             results = yn.search("programación python")
         """
+        resolved_options = options
+        if not persist:
+            from dataclasses import replace
+            if resolved_options is None:
+                resolved_options = YenyOptions(storage_type="memory", binary_dir=None)
+            elif resolved_options.storage_type not in ("sqlite", "alchemy"):
+                resolved_options = replace(resolved_options, storage_type="memory", binary_dir=None)
+
         # autoload=False to avoid loading stale data before indexing fresh data
         instance = cls(
             name=name,
             engine=engine,
             preprocessor=preprocessor,
             autoload=False,
-            options=options,
+            options=resolved_options,
         )
-        instance.index(data)
+        should_persist = persist and not getattr(instance, "_in_memory", False)
+        instance.index(data, persist=should_persist)
         return instance
 
     @classmethod
@@ -75,6 +87,7 @@ class BasicLoadersMixin:
         engine: str = "core",
         preprocessor: Optional[Callable] = None,
         options: Optional[YenyOptions] = None,
+        persist: bool = True,
     ) -> "Yeny":
         """
         Creates a Yeny instance from a list of text documents.
@@ -88,6 +101,8 @@ class BasicLoadersMixin:
             engine: Search engine implementation: ``"core"`` or ``"lite"``.
             preprocessor: Optional shared indexing/search preprocessing function.
             options: Advanced storage, binary, and memory configuration.
+            persist: Whether to persist the built index to storage. Set to
+                ``False`` for 100% in-memory execution (zero disk footprint).
 
         Returns:
             A ready-to-search Yeny instance.
@@ -99,12 +114,21 @@ class BasicLoadersMixin:
             ])
             results = yn.search("programación")
         """
+        resolved_options = options
+        if not persist:
+            from dataclasses import replace
+            if resolved_options is None:
+                resolved_options = YenyOptions(storage_type="memory", binary_dir=None)
+            elif resolved_options.storage_type not in ("sqlite", "alchemy"):
+                resolved_options = replace(resolved_options, storage_type="memory", binary_dir=None)
+
         instance = cls(
             name=name,
             engine=engine,
             preprocessor=preprocessor,
             autoload=False,
-            options=options,
+            options=resolved_options,
         )
-        instance.index(data)
+        should_persist = persist and not getattr(instance, "_in_memory", False)
+        instance.index(data, persist=should_persist)
         return instance

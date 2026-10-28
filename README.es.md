@@ -114,11 +114,18 @@ print(response)
 # )
 ```
 
-Las factorías persisten automáticamente. Recarga después con el mismo nombre lógico:
+Las factorías persisten automáticamente por defecto, generando el directorio `yeny_data/yny/` con binarios `.yny` y metadatos SQLite (`yeny_meta.db`). Recarga después con el mismo nombre lógico:
 
 ```python
 loaded = Yeny(name="demo_index")
 response = loaded.search("python")
+```
+
+Para tests unitarios, prototipos o entornos efímeros sin tocar el disco, ejecútalo 100% en memoria:
+
+```python
+searcher = Yeny.from_list(["hello world"], persist=False)  # o options=YenyOptions(storage_type=None)
+response = searcher.search("hello")
 ```
 
 La infraestructura avanzada es opcional y tipada:
