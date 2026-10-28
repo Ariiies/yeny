@@ -18,7 +18,8 @@ class YenyOptions:
     Attributes:
         storage_dir: Directory used by JSON storage and as the base for the
             automatic binary directory.
-        storage_type: Declarative storage backend: ``"json"``, ``"sqlite"``
+        storage_type: Declarative storage backend: ``"metadata"`` (default, SQLite WAL
+            yeny_meta.db + .yny binary files), ``"json"``, ``"sqlite"``
             or ``"alchemy"``.  An explicitly injected ``storage`` object on
             :class:`yeny.Yeny` takes precedence over these fields.
         db_path: SQLite persistence path.  Required when ``storage_type`` is
@@ -30,20 +31,24 @@ class YenyOptions:
             ``0`` keeps the existing eager, unlimited behavior.
         memory_limit_mb: Approximate memory budget for loaded shards, or
             ``None`` for no budget.
-        binary_dir: Tri-state binary persistence setting.  ``"auto"`` derives
-            ``<storage_dir>/yny``; ``None`` disables ``.yny`` persistence; any
-            other string is used as an explicit directory.  SQLAlchemy
-            factories use metadata-only storage, so keep binaries enabled when
-            their indexes must be reloadable.
+        binary_dir: Binary persistence setting.  ``"auto"`` (or ``True``) derives
+            ``<storage_dir>/yny``; ``None`` (or ``False``) disables ``.yny``
+            persistence; any other string is used as an explicit directory.
     """
 
     storage_dir: str = "yeny_data"
-    storage_type: str = "json"
+    storage_type: str = "metadata"
     db_path: Optional[str] = None
     connection_url: Optional[str] = None
     max_loaded_shards: int = 0
     memory_limit_mb: Optional[int] = None
-    binary_dir: Optional[str] = "auto"
+    binary_dir: Optional[Union[str, bool]] = "auto"
+
+    def __post_init__(self) -> None:
+        if self.binary_dir is True:
+            object.__setattr__(self, "binary_dir", "auto")
+        elif self.binary_dir is False:
+            object.__setattr__(self, "binary_dir", None)
 
 
 @dataclass(frozen=True)

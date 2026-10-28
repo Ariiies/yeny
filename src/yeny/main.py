@@ -135,8 +135,10 @@ class Yeny(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
         self.preprocessor: Optional[Callable[[str], Union[str, List[str]]]] = preprocessor
 
         # Binary / mmap directory resolution
-        if binary_dir == "auto":
+        if binary_dir is True or binary_dir == "auto":
             self._binary_dir: Optional[str] = os.path.join(storage_dir, "yny")
+        elif binary_dir is False or binary_dir is None:
+            self._binary_dir = None
         else:
             self._binary_dir = binary_dir
 
@@ -166,20 +168,24 @@ class Yeny(LoaderMixin, SearchMixin, PersistenceMixin, AutomationMixin):
                     "storage_type='sqlite', db_path='my_data.db'))"
                 )
             self.storage = SQLiteStorage(db_path=db_path)
-        else:
-            # Default: lightweight JSON files
+        elif storage_type == "json" or self._binary_dir is None:
+            # Explicit JSON backend request or binary persistence disabled
             self.storage = JSONStorage(directory=storage_dir)
+        else:
+            # Default persistence: MetadataStorage (SQLite WAL yeny_meta.db) + .yny
+            meta_db_path = os.path.join(self._binary_dir, "yeny_meta.db")
+            self.storage = MetadataStorage(db_path=meta_db_path)
 
-        # 1b. Auto-discover MetadataStorage
-        # When no explicit storage was provided and binary_dir points to a
-        # directory that already contains yeny_meta.db (written by
-        # from_table / from_query), transparently switch
-        # to MetadataStorage so the user can reload with just:
-        #     Yeny(name="my_idx", engine="lite")
-        if storage is None and self._binary_dir:
-            _meta_candidate = os.path.join(self._binary_dir, "yeny_meta.db")
-            if os.path.isfile(_meta_candidate):
-                self.storage = MetadataStorage(db_path=_meta_candidate)
+        # 1b. Transparent fallback for existing JSON indexes on autoload:
+        if (
+            autoload
+            and storage is None
+            and not (storage_type in ("sqlite", "alchemy"))
+            and not self.storage.exists(name)
+        ):
+            json_candidate = os.path.join(storage_dir, f"{name}.json")
+            if os.path.isfile(json_candidate):
+                self.storage = JSONStorage(directory=storage_dir)
 
         # 2. Configure engine
         # The registry pattern lets us add engines without touching Yeny's code

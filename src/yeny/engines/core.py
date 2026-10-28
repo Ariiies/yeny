@@ -207,12 +207,27 @@ class CoreEngine(BaseEngine):
     def persist(self, name: str) -> None:
         """Packages the current state and sends it to storage.
 
-        Compact structures are *thawed* back to regular dicts for
+        When the storage backend is :class:`MetadataStorage`, only
+        lightweight metadata (total_docs, id_type, engine_name) is
+        written — heavy index data is skipped because it lives in
+        ``.yny`` files.
+
+        Otherwise, compact structures are *thawed* back to regular dicts for
         serialization.  The in-memory engine keeps the compact
         versions — only the serialization copy is inflated.
         """
         if not self.storage:
             raise ValueError("No storage adapter configured in the engine.")
+
+        from ..storage.metadata_storage import MetadataStorage
+        if isinstance(self.storage, MetadataStorage):
+            state = {
+                "total_docs": self.total_docs,
+                "id_type": self.id_type,
+                "engine_name": self.name,
+            }
+            self.storage.save(state, name)
+            return
 
         # Thaw compact structures → regular dicts for storage
         serializable_index = (

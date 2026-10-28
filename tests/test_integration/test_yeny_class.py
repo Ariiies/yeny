@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 import yeny
 
-from yeny import Yeny, SearchResponse
+from yeny import Yeny, SearchResponse, MetadataStorage
 from yeny.config import YenyOptions, TableConfig, TableSource
 from yeny.engines.core import CoreEngine
 from yeny.engines.lite import LiteEngine
@@ -140,13 +140,15 @@ class TestYenyPublicApi:
         instance = Yeny(name="defaults", autoload=False)
 
         assert defaults.storage_dir == "yeny_data"
-        assert defaults.storage_type == "json"
+        assert defaults.storage_type == "metadata"
         assert defaults.db_path is None
         assert defaults.connection_url is None
         assert defaults.max_loaded_shards == 0
         assert defaults.memory_limit_mb is None
         assert defaults.binary_dir == "auto"
         assert instance._binary_dir == "yeny_data/yny"
+        assert isinstance(instance.storage, MetadataStorage)
+        assert instance.storage.db_path == "yeny_data/yny/yeny_meta.db"
         assert instance._max_loaded_shards == 0
         assert instance._memory_limit_mb is None
         with pytest.raises(FrozenInstanceError):
@@ -191,3 +193,90 @@ class TestYenyPublicApi:
     ):
         with pytest.raises(ValueError, match=message):
             Yeny(name="invalid_storage", autoload=False, options=options)
+
+    def test_default_persistence_generates_yny_and_metadata_storage(self, sample_corpus, tmp_path):
+        options = YenyOptions(storage_dir=str(tmp_path), binary_dir="auto")
+        searcher = Yeny(name="mi_indice", engine="core", options=options)
+        searcher.index(sample_corpus)
+
+        try:
+            assert isinstance(searcher.storage, MetadataStorage)
+            yny_dir = tmp_path / "yny"
+            assert (yny_dir / "yeny_meta.db").exists()
+            yny_files = list(yny_dir.glob("mi_indice__v*.yny"))
+            assert len(yny_files) >= 1
+            # Confirm no .json files were generated
+            assert list(tmp_path.glob("*.json")) == []
+            assert list(yny_dir.glob("*.json")) == []
+        finally:
+            searcher.close()
+
+        # Test reload (autoload)
+        loaded = Yeny(name="mi_indice", engine="core", options=options)
+        try:
+            assert loaded.is_indexed is True
+            assert isinstance(loaded.storage, MetadataStorage)
+            res = loaded.search("versatile", top_k=3)
+            assert res.results
+            assert res.results[0].doc_id == "doc1"
+        finally:
+            loaded.close()
+
+    def test_binary_dir_boolean_normalization(self, tmp_path):
+        opt_true = YenyOptions(storage_dir=str(tmp_path), binary_dir=True)
+        assert opt_true.binary_dir == "auto"
+        inst_true = Yeny(name="bool_true", autoload=False, options=opt_true)
+        try:
+            assert inst_true._binary_dir == str(tmp_path / "yny")
+            assert isinstance(inst_true.storage, MetadataStorage)
+        finally:
+            inst_true.close()
+
+        opt_false = YenyOptions(storage_dir=str(tmp_path), binary_dir=False)
+        assert opt_false.binary_dir is None
+        inst_false = Yeny(name="bool_false", autoload=False, options=opt_false)
+        try:
+            assert inst_false._binary_dir is None
+            assert isinstance(inst_false.storage, JSONStorage)
+        finally:
+            inst_false.close()
+
+    def test_explicit_json_storage_creates_json_file(self, sample_corpus, tmp_path):
+        options = YenyOptions(storage_dir=str(tmp_path), storage_type="json")
+        searcher = Yeny(name="json_idx", options=options, autoload=False)
+        try:
+            assert isinstance(searcher.storage, JSONStorage)
+            searcher.index(sample_corpus)
+            assert (tmp_path / "json_idx.json").exists()
+            assert not (tmp_path / "yny").exists()
+        finally:
+            searcher.close()
+
+    def test_from_list_and_from_dict_default_to_metadata_storage(self, tmp_path):
+        list_dir = tmp_path / "list_data"
+        yn_list = Yeny.from_list(
+            ["hello world", "python search"],
+            name="from_list_idx",
+            options=YenyOptions(storage_dir=str(list_dir)),
+        )
+        try:
+            assert isinstance(yn_list.storage, MetadataStorage)
+            assert (list_dir / "yny" / "yeny_meta.db").exists()
+            assert list((list_dir / "yny").glob("from_list_idx__v*.yny"))
+            assert list(list_dir.glob("*.json")) == []
+        finally:
+            yn_list.close()
+
+        dict_dir = tmp_path / "dict_data"
+        yn_dict = Yeny.from_dict(
+            {"d1": "hello world", "d2": "python search"},
+            name="from_dict_idx",
+            options=YenyOptions(storage_dir=str(dict_dir)),
+        )
+        try:
+            assert isinstance(yn_dict.storage, MetadataStorage)
+            assert (dict_dir / "yny" / "yeny_meta.db").exists()
+            assert list((dict_dir / "yny").glob("from_dict_idx__v*.yny"))
+            assert list(dict_dir.glob("*.json")) == []
+        finally:
+            yn_dict.close()

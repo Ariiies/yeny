@@ -282,3 +282,9 @@ class PersistenceMixin:
             if close_fn is not None:
                 close_fn()
             self._reader = None
+        close_storage = getattr(self.storage, "close", None)
+        if close_storage is not None:
+            try:
+                close_storage()
+            except Exception:
+                pass

@@ -11,6 +11,7 @@ metadata while search threads read concurrently without blocking.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -44,6 +45,10 @@ class MetadataStorage(BaseStorage):
             self.conn = connection
             self._owns_connection = False
         else:
+            if db_path != ":memory:":
+                db_dir = os.path.dirname(os.path.abspath(db_path))
+                if db_dir:
+                    os.makedirs(db_dir, exist_ok=True)
             self.conn = sqlite3.connect(db_path, check_same_thread=False)
             self._owns_connection = True
 
@@ -344,8 +349,12 @@ class MetadataStorage(BaseStorage):
     # Lifecycle managemenT
 
     def close(self) -> None:
-        if self._owns_connection:
-            self.conn.close()
+        if self._owns_connection and getattr(self, "conn", None) is not None:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = None
 
     def __del__(self):
         try:
