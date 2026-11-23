@@ -68,6 +68,7 @@ test_data/
 !tests/
 !docs/
 !pyproject.toml
+!AGENTS.md
 !README.md
 !README.es.md
 !MANIFEST.in
