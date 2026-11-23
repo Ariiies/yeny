@@ -1,14 +1,12 @@
-# AGENTS.md — Operational Contract for AI Agents
+# AGENTS.md — Yeny
 
-This document defines the operational rules, architectural boundaries, and quality gates for AI agents contributing to **Yeny**. All instructions are directive and mandatory.
+Pure-Python (3.10+) modular full-text search toolkit with zero mandatory core dependencies, optional SQL extras, and `.yny` (`mmap`) binary persistence.
 
----
-
-## 1. Project Context
-
-- **Yeny** is a pure-Python (3.10+) modular full-text search toolkit featuring zero mandatory core dependencies, optional SQL storage extras, and binary memory-mapped index persistence (`.yny`).
-- **Architectural Reference:** Read [`docs/ARCHITECT.md`](docs/ARCHITECT.md) for module boundaries, mixin layouts, and design invariants.
-- **Documentation Scope:** Read documentation under [`docs/en/`](docs/en/). **Strictly ignore [`docs/es/`](docs/es/)** (it is a Spanish mirror and consumes context unnecessarily) unless explicitly requested to perform a translation task.
+## 1. Context Routing
+- **Architecture & module map (read first when modifying code):** [`docs/ARCHITECT.md`](docs/ARCHITECT.md)
+- **Active task state (read if present):** `PROGRESS.md`
+- **Human guides (on-demand only — do NOT preload):** [`docs/en/`](docs/en/) — inspect specific files only when clarifying public API behavior.
+- **Ignore:** [`docs/es/`](docs/es/) (Spanish mirror; never read unless explicitly asked to translate).
 
 ---
 
