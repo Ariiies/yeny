@@ -12,7 +12,7 @@ Pure-Python (3.10+) modular full-text search toolkit with zero mandatory core de
 
 ## 2. Standard Commands
 
-Execute commands via bash inside the workspace root:
+Execute commands via bash from the workspace root using the project's active Python 3.10+ environment (package lives under `src/yeny/` and assumes editable install):
 
 ```bash
 # Run full test suite (quiet)
@@ -38,9 +38,12 @@ python -m benchmarks run --profile tiny
 - If `PROGRESS.md` is present, keep it updated after each step.
 - **Scope Discipline:** Focus strictly on the task at hand; do not refactor unrelated code or rewrite legacy docstrings outside the active task scope.
 
-### Data Modeling (`dataclass` vs. `Pydantic`)
-- **Default:** Always use standard-library `dataclasses` (prefer `@dataclass(frozen=True)` as demonstrated in `src/yeny/config.py`) for configs, internal states, and zero-dependency core modules.
-- **Pydantic Policy:** `Pydantic` is **not** a core dependency. If future expansions introduce complex external I/O boundaries, API payloads, or strict schema validation between services, explicitly evaluate whether `Pydantic` is justified. If adopted, it must remain an optional extra (`project.optional-dependencies`) so the core engine stays zero-dependency.
+### Data Modeling & Typing
+Default: Use standard-library dataclasses (prefer @dataclass(frozen=True) as in src/yeny/config.py) for configs, internal states, and core modules.
+
+Pydantic Policy: Never add Pydantic or third-party validation libraries to the core runtime; they may only be introduced as optional extras (project.optional-dependencies) if explicitly approved for complex external I/O boundaries.
+
+Type Annotations: Add concise Python 3.10+ type hints on all new or modified public signatures and avoid repeating them in docstrings.
 
 ### Mandatory Test Gate & Ephemeral Storage
 - Always execute `python -m pytest -q` before declaring any task finished.
